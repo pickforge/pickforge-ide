@@ -252,40 +252,42 @@ export function collectRemoteBindings(projects: RemoteBindingProject[]): Json {
   };
 }
 
+type RemoteBindingMap = Map<string, { remoteHost: string; remoteRoot: string }>;
+
+function readRemoteBindingsV2(bindingsField: unknown): RemoteBindingMap | null {
+  if (!Array.isArray(bindingsField)) return null;
+  const bindings: RemoteBindingMap = new Map();
+  for (const value of bindingsField) {
+    const entry = record(value);
+    const project = str(entry?.project);
+    const remoteHost = str(entry?.remoteHost);
+    const remoteRoot = str(entry?.remoteRoot);
+    if (!project || !remoteHost || !remoteRoot) continue;
+    bindings.set(project, { remoteHost, remoteRoot });
+  }
+  return bindings;
+}
+
+function readRemoteBindingsV1(bindingsField: unknown): RemoteBindingMap | null {
+  const legacy = record(bindingsField);
+  if (!legacy) return null;
+  const bindings: RemoteBindingMap = new Map();
+  for (const [project, value] of Object.entries(legacy)) {
+    const entry = record(value);
+    const remoteHost = str(entry?.remoteHost);
+    const remoteRoot = str(entry?.remoteRoot);
+    if (!remoteHost || !remoteRoot) continue;
+    bindings.set(project, { remoteHost, remoteRoot });
+  }
+  return bindings;
+}
+
 /** Bindings by basename from a v2 (array) or legacy v1 (record) payload. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-function readRemoteBindings(
-  payload: Json,
-): Map<string, { remoteHost: string; remoteRoot: string }> | null {
+function readRemoteBindings(payload: Json): RemoteBindingMap | null {
   const root = record(payload);
   if (!root) return null;
-  const bindings = new Map<string, { remoteHost: string; remoteRoot: string }>();
-
-  if (root.v === REMOTE_BINDINGS_VERSION && Array.isArray(root.bindings)) {
-    for (const value of root.bindings) {
-      const entry = record(value);
-      const project = str(entry?.project);
-      const remoteHost = str(entry?.remoteHost);
-      const remoteRoot = str(entry?.remoteRoot);
-      if (!project || !remoteHost || !remoteRoot) continue;
-      bindings.set(project, { remoteHost, remoteRoot });
-    }
-    return bindings;
-  }
-
-  if (root.v === 1) {
-    const legacy = record(root.bindings);
-    if (!legacy) return null;
-    for (const [project, value] of Object.entries(legacy)) {
-      const entry = record(value);
-      const remoteHost = str(entry?.remoteHost);
-      const remoteRoot = str(entry?.remoteRoot);
-      if (!remoteHost || !remoteRoot) continue;
-      bindings.set(project, { remoteHost, remoteRoot });
-    }
-    return bindings;
-  }
-
+  if (root.v === REMOTE_BINDINGS_VERSION) return readRemoteBindingsV2(root.bindings);
+  if (root.v === 1) return readRemoteBindingsV1(root.bindings);
   return null;
 }
 

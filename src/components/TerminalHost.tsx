@@ -179,8 +179,7 @@ export interface TerminalHostHandle {
   primaryRemotePty: () => RemotePty | null;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function TerminalHost(props: {
+type TerminalHostProps = {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
   /** The chat this host belongs to. When set, panes spawn SESSION-BACKED shells
@@ -223,13 +222,14 @@ export function TerminalHost(props: {
       paneId: string,
     ) => void;
   };
-}) {
-  const first = newLeaf();
-  // The primary pane id — the one (and only one) wired to the chat's recoverable
-  // session. It normally stays fixed as the user splits/rearranges around it, but
-  // if the user CLOSES the primary while other panes remain, we PROMOTE a
-  // survivor to be session-backed so the chat's recovery isn't lost (see close()).
-  // Reactive so the session props re-bind to the promoted pane.
+};
+
+/** The split-tree state (root/primary/focus) plus per-pane bookkeeping (live
+ *  handles, dead/closed tracking, captured remotes, the askpass chip). A
+ *  composable, called synchronously from `createTerminalHostController`'s own
+ *  setup so its signals live under the same reactive owner as if written
+ *  inline. */
+function createPaneTreeState(props: TerminalHostProps, first: Leaf) {
   const [primaryId, setPrimaryId] = createSignal<string>(first.id);
   const [root, setRoot] = createSignal<Node>(first);
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
@@ -250,7 +250,6 @@ export function TerminalHost(props: {
   }
   const handles = new Map<string, TerminalHandle>();
   const closedPanes = new Set<string>();
-  let containerEl!: HTMLDivElement;
 
   const leaves = createMemo(() => collectLeaves(root()));
   const layout = createMemo(() => {
@@ -279,11 +278,41 @@ export function TerminalHost(props: {
     notifyPaneClosed(id);
   };
 
+  return {
+    primaryId,
+    setPrimaryId,
+    root,
+    setRoot,
+    focusedId,
+    setFocusedId,
+    menuFor,
+    setMenuFor,
+    paneRemote,
+    setPaneRemote,
+    deadPanes,
+    askpassStatus,
+    handles,
+    leaves,
+    layout,
+    focus,
+    primarySpawnMode,
+    primaryRemotePty,
+    notifyPaneClosed,
+    markPtyDead,
+  };
+}
+
+/** Split/close/rearrange operations over the pane tree, plus the queued
+ *  commands that flush once a freshly-split (or not-yet-ready primary) pane's
+ *  handle arrives. A composable, called synchronously from
+ *  `createTerminalHostController`'s own setup so its signal lives under the
+ *  same reactive owner as if written inline. */
+function createPaneTreeOperations(props: TerminalHostProps, tree: ReturnType<typeof createPaneTreeState>) {
   const doSplit = (leafId: string, dir: Dir) => {
     const fresh = newLeaf();
-    setRoot((r) => splitTree(r, leafId, dir, fresh));
-    setMenuFor(null);
-    setFocusedId(fresh.id); // its terminal focuses itself once ready
+    tree.setRoot((r) => splitTree(r, leafId, dir, fresh));
+    tree.setMenuFor(null);
+    tree.setFocusedId(fresh.id); // its terminal focuses itself once ready
   };
 
   // Commands queued to run in a freshly-split pane once its shell is ready
@@ -296,25 +325,29 @@ export function TerminalHost(props: {
   let pendingPrimaryCmd: string | null = null;
   const flushPrimaryCmd = () => {
     if (pendingPrimaryCmd === null) return;
-    const id = primaryId();
-    const h = handles.get(id);
+    const id = tree.primaryId();
+    const h = tree.handles.get(id);
     if (!h) return;
     const cmd = pendingPrimaryCmd;
     pendingPrimaryCmd = null;
-    focus(id);
+    tree.focus(id);
     h.typeText(cmd + "\r");
   };
+  const setPendingPrimaryCmd = (cmd: string) => {
+    pendingPrimaryCmd = cmd;
+  };
+
   const openInNewPane = (command: string, options?: PaneSpawnOptions): string => {
     const fresh = newLeaf(options?.forceLocal ? null : options?.remote);
     pendingCmd.set(fresh.id, command);
-    setRoot((r) => splitTree(r, focusedId(), "down", fresh));
-    setFocusedId(fresh.id);
+    tree.setRoot((r) => splitTree(r, tree.focusedId(), "down", fresh));
+    tree.setFocusedId(fresh.id);
     return fresh.id;
   };
 
   const close = (id: string) => {
-    if (leaves().length <= 1) return;
-    let next = removeLeaf(root(), id);
+    if (tree.leaves().length <= 1) return;
+    let next = removeLeaf(tree.root(), id);
     if (!next) return;
     // If the user closed the SESSION-BACKED primary while other panes remain,
     // promote a survivor so the chat's recovery session stays attached to this
@@ -323,28 +356,28 @@ export function TerminalHost(props: {
     // a pane that re-attaches the live dtach/tmux session); without this the
     // session would detach with nothing left to reattach it here, and later
     // agent quick-launches would target a missing primary handle.
-    if (id === primaryId() && props.session && props.chatId) {
+    if (id === tree.primaryId() && props.session && props.chatId) {
       const survivor = collectLeaves(next)[0];
       if (survivor) {
         const promoted = newLeaf();
         next = mapLeaves(next, (l) => (l.id === survivor.id ? promoted : l));
-        handles.delete(survivor.id);
-        setPrimaryId(promoted.id);
+        tree.handles.delete(survivor.id);
+        tree.setPrimaryId(promoted.id);
         props.onPrimaryPaneRemount?.(id, promoted.id);
         // The survivor's raw shell dies in the swap (the promoted pane
         // re-attaches the chat session instead) — report it as closed so any
         // agent ownership it held doesn't outlive the shell.
-        notifyPaneClosed(survivor.id);
-        if (focusedId() === survivor.id) setFocusedId(promoted.id);
+        tree.notifyPaneClosed(survivor.id);
+        if (tree.focusedId() === survivor.id) tree.setFocusedId(promoted.id);
       }
     }
-    setRoot(next);
-    handles.delete(id);
-    notifyPaneClosed(id);
-    setMenuFor((m) => (m === id ? null : m));
-    if (focusedId() === id) {
+    tree.setRoot(next);
+    tree.handles.delete(id);
+    tree.notifyPaneClosed(id);
+    tree.setMenuFor((m) => (m === id ? null : m));
+    if (tree.focusedId() === id) {
       const remaining = collectLeaves(next);
-      if (remaining.length) focus(remaining[remaining.length - 1].id);
+      if (remaining.length) tree.focus(remaining[remaining.length - 1].id);
     }
   };
 
@@ -357,7 +390,7 @@ export function TerminalHost(props: {
     !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   const CLOSE_MS = 260; // matches the --pf-dur-standard close animation
   const requestClose = (id: string) => {
-    if (leaves().length <= 1 || closing().includes(id)) return;
+    if (tree.leaves().length <= 1 || closing().includes(id)) return;
     if (reduceMotion()) {
       close(id);
       return;
@@ -369,11 +402,26 @@ export function TerminalHost(props: {
     }, CLOSE_MS);
   };
 
-  // --- divider drag → live ratio ---
+  return {
+    doSplit,
+    pendingCmd,
+    flushPrimaryCmd,
+    setPendingPrimaryCmd,
+    openInNewPane,
+    close,
+    closing,
+    requestClose,
+  };
+}
+
+/** Divider-drag → live split-ratio. A composable, called synchronously from
+ *  `createTerminalHostController`'s own setup so its `onCleanup` runs under
+ *  the same reactive owner as if written inline. */
+function createDividerDragState(containerEl: () => HTMLDivElement, setRoot: (fn: (r: Node) => Node) => void) {
   let drag: { id: string; dir: "row" | "col"; bounds: Rect } | null = null;
   const onDragMove = (e: PointerEvent) => {
     if (!drag) return;
-    const box = containerEl.getBoundingClientRect();
+    const box = containerEl().getBoundingClientRect();
     const fx = (e.clientX - box.left) / box.width;
     const fy = (e.clientY - box.top) / box.height;
     const local =
@@ -398,19 +446,28 @@ export function TerminalHost(props: {
   };
   onCleanup(endDrag);
 
-  // --- pane rearrange: drag a pane by its top bar onto another pane ---
-  // Drop on the centre swaps the two panes; drop on an edge moves the dragged
-  // pane to that side of the target. Leaf objects are reused throughout, so the
-  // dragged shell is repositioned, never remounted.
+  return { startDrag };
+}
+
+/** Pane rearrange: drag a pane by its top bar onto another pane. Drop on the
+ *  centre swaps the two panes; drop on an edge moves the dragged pane to that
+ *  side of the target. Leaf objects are reused throughout, so the dragged
+ *  shell is repositioned, never remounted. A composable, called synchronously
+ *  from `createTerminalHostController`'s own setup so its signals/`onCleanup`
+ *  run under the same reactive owner as if written inline. */
+function createPaneRearrangeState(
+  containerEl: () => HTMLDivElement,
+  tree: ReturnType<typeof createPaneTreeState>,
+) {
   const [dragId, setDragId] = createSignal<string | null>(null);
   const [drop, setDrop] = createSignal<{ id: string; region: Region } | null>(null);
   let paneDrag: { id: string; startX: number; startY: number; active: boolean } | null = null;
 
   const hitTest = (cx: number, cy: number): { id: string; region: Region } | null => {
-    const box = containerEl.getBoundingClientRect();
+    const box = containerEl().getBoundingClientRect();
     const fx = (cx - box.left) / box.width;
     const fy = (cy - box.top) / box.height;
-    for (const [id, r] of layout().map) {
+    for (const [id, r] of tree.layout().map) {
       if (fx < r.x || fx > r.x + r.w || fy < r.y || fy > r.y + r.h) continue;
       const lx = (fx - r.x) / r.w;
       const ly = (fy - r.y) / r.h;
@@ -430,17 +487,17 @@ export function TerminalHost(props: {
   const rearrange = (sourceId: string, targetId: string, region: Region) => {
     if (sourceId === targetId) return;
     if (region === "center") {
-      const a = leaves().find((l) => l.id === sourceId);
-      const b = leaves().find((l) => l.id === targetId);
+      const a = tree.leaves().find((l) => l.id === sourceId);
+      const b = tree.leaves().find((l) => l.id === targetId);
       if (!a || !b) return;
-      setRoot((r) => mapLeaves(r, (l) => (l.id === sourceId ? b : l.id === targetId ? a : l)));
+      tree.setRoot((r) => mapLeaves(r, (l) => (l.id === sourceId ? b : l.id === targetId ? a : l)));
     } else {
-      const src = leaves().find((l) => l.id === sourceId);
-      const without = removeLeaf(root(), sourceId);
+      const src = tree.leaves().find((l) => l.id === sourceId);
+      const without = removeLeaf(tree.root(), sourceId);
       if (!src || !without) return;
-      setRoot(splitTree(without, targetId, region, src));
+      tree.setRoot(splitTree(without, targetId, region, src));
     }
-    focus(sourceId);
+    tree.focus(sourceId);
   };
 
   const onPaneDragMove = (e: PointerEvent) => {
@@ -469,7 +526,7 @@ export function TerminalHost(props: {
   const startPaneDrag = (e: PointerEvent, leafId: string) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest(".pf-pane-ctls")) return; // controls aren't handles
-    if (leaves().length <= 1) return; // nothing to rearrange against
+    if (tree.leaves().length <= 1) return; // nothing to rearrange against
     paneDrag = { id: leafId, startX: e.clientX, startY: e.clientY, active: false };
     window.addEventListener("pointermove", onPaneDragMove);
     window.addEventListener("pointerup", endPaneDrag);
@@ -478,11 +535,25 @@ export function TerminalHost(props: {
     if (paneDrag) endPaneDrag();
   });
 
+  return { dragId, drop, startPaneDrag };
+}
+
+type TerminalHostController = ReturnType<typeof createTerminalHostController>;
+
+function createTerminalHostController(props: TerminalHostProps) {
+  const first = newLeaf();
+  const tree = createPaneTreeState(props, first);
+  const ops = createPaneTreeOperations(props, tree);
+
+  let containerEl!: HTMLDivElement;
+  const dividerDrag = createDividerDragState(() => containerEl, tree.setRoot);
+  const paneRearrange = createPaneRearrangeState(() => containerEl, tree);
+
   // Close the split menu on any outside pointer-down.
   const onWindowDown = (e: PointerEvent) => {
     const t = e.target as HTMLElement;
     if (!t.closest(".pf-pane-menu") && !t.closest(".pf-pane-ctl--split")) {
-      setMenuFor(null);
+      tree.setMenuFor(null);
     }
   };
   window.addEventListener("pointerdown", onWindowDown);
@@ -490,16 +561,16 @@ export function TerminalHost(props: {
 
   props.onReady?.({
     typeToFocused: (text) => {
-      const id = focusedId();
-      if (deadPanes().includes(id)) return null;
-      const h = handles.get(id);
+      const id = tree.focusedId();
+      if (tree.deadPanes().includes(id)) return null;
+      const h = tree.handles.get(id);
       if (!h) return null;
       h.typeText(text);
       return id;
     },
-    openInNewPane,
-    primarySpawnMode,
-    primaryRemotePty,
+    openInNewPane: ops.openInNewPane,
+    primarySpawnMode: tree.primarySpawnMode,
+    primaryRemotePty: tree.primaryRemotePty,
     runInPrimary: (command) => {
       // The primary pane is the only session-backed one; run the agent there so
       // it lives inside the recoverable dtach/tmux session. If its handle isn't
@@ -507,14 +578,14 @@ export function TerminalHost(props: {
       // onReady), QUEUE the command and flush it when the handle arrives, rather
       // than dropping the launch. The primary pane id is stable and known up
       // front, so callers can still arm auto-naming on it immediately.
-      const id = primaryId();
-      if (deadPanes().includes(id)) return null;
-      const h = handles.get(id);
+      const id = tree.primaryId();
+      if (tree.deadPanes().includes(id)) return null;
+      const h = tree.handles.get(id);
       if (!h) {
-        pendingPrimaryCmd = command;
+        ops.setPendingPrimaryCmd(command);
         return id;
       }
-      focus(id);
+      tree.focus(id);
       h.typeText(command + "\r");
       return id;
     },
@@ -522,173 +593,212 @@ export function TerminalHost(props: {
 
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
 
-  return (
-    <div class="pf-term-host" ref={containerEl}>
-      <For each={leaves()}>
-        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
-        {(leaf) => {
-          const rect = () => layout().map.get(leaf.id) ?? { x: 0, y: 0, w: 1, h: 1 };
-          const focused = () => focusedId() === leaf.id;
-          return (
-            <div
-              class="pf-pane"
-              classList={{ "pf-pane--closing": closing().includes(leaf.id) }}
-              style={{
-                left: pct(rect().x),
-                top: pct(rect().y),
-                width: pct(rect().w),
-                height: pct(rect().h),
+  return {
+    props,
+    setContainerEl: (el: HTMLDivElement) => (containerEl = el),
+    ...tree,
+    ...ops,
+    ...dividerDrag,
+    ...paneRearrange,
+    askSel,
+    setAskSel,
+  };
+}
+
+const PaneSplitMenu = (props: { ctrl: TerminalHostController; leaf: Leaf }) => (
+  <Show when={props.ctrl.menuFor() === props.leaf.id}>
+    <div class="pf-pane-menu" onPointerDown={(e) => e.stopPropagation()}>
+      <div class="pf-pane-menu-grid">
+        <For each={SPLITS}>
+          {(s) => (
+            <button
+              class={`pf-split-tile pf-split-tile--${s.dir}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                props.ctrl.doSplit(props.leaf.id, s.dir);
               }}
             >
-              <div
-                class="pf-pane-frame"
-                classList={{
-                  "pf-pane-frame--focused": focused(),
-                  "pf-pane-frame--dragging": dragId() === leaf.id,
-                }}
-                onPointerDown={() => focus(leaf.id)}
-              >
-                {/* A real top bar: its own row above the terminal, never an
-                    overlay — the shell prompt below it is never covered. The
-                    whole bar is the drag handle for rearranging panes. */}
-                <div
-                  class="pf-pane-bar"
-                  title="Drag to move this pane"
-                  onPointerDown={(e) => startPaneDrag(e, leaf.id)}
-                >
-                  <div class="pf-pane-bar-id">
-                    <span class="pf-pane-grip"><IconGrip size={13} /></span>
-                    <span class="pf-pane-dot" classList={{ "pf-pane-dot--live": focused() }} />
-                    <span class="pf-pane-callsign">{leaf.callsign}</span>
-                    <Show when={baseName(props.cwd)}>
-                      <span class="pf-pane-cwd">{baseName(props.cwd)}</span>
-                    </Show>
-                    <Show when={paneRemote()[leaf.id]}>
-                      {(remote) => <span class="pf-pane-cwd">ssh:{remote().host}</span>}
-                    </Show>
-                    <Show when={deadPanes().includes(leaf.id)}>
-                      <span class="pf-pane-cwd">closed</span>
-                    </Show>
-                    <Show
-                      when={
-                        props.session &&
-                        leaf.id === primaryId() &&
-                        askpassNotice(askpassStatus())
-                      }
-                    >
-                      {(notice) => (
-                        <span class="pf-pane-cwd" title="Graphical sudo (askpass) is unavailable for this session">
-                          {notice()}
-                        </span>
-                      )}
-                    </Show>
-                  </div>
-                  <div class="pf-pane-ctls">
-                    <button
-                      class="pf-pane-ctl pf-pane-ctl--split"
-                      classList={{ "pf-pane-ctl--active": menuFor() === leaf.id }}
-                      title="Split this pane"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuFor((m) => (m === leaf.id ? null : leaf.id));
-                      }}
-                    >
-                      <IconSplitTrigger size={14} />
-                    </button>
-                    <button
-                      class="pf-pane-ctl pf-pane-ctl--close"
-                      title="Close pane"
-                      disabled={leaves().length <= 1}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        requestClose(leaf.id);
-                      }}
-                    >
-                      <IconClose size={14} />
-                    </button>
+              <IconSplit dir={s.dir} size={26} />
+              <span class="pf-split-tile-label">{s.label}</span>
+            </button>
+          )}
+        </For>
+      </div>
+    </div>
+  </Show>
+);
 
-                    <Show when={menuFor() === leaf.id}>
-                      <div class="pf-pane-menu" onPointerDown={(e) => e.stopPropagation()}>
-                        <div class="pf-pane-menu-grid">
-                          <For each={SPLITS}>
-                            {(s) => (
-                              <button
-                                class={`pf-split-tile pf-split-tile--${s.dir}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  doSplit(leaf.id, s.dir);
-                                }}
-                              >
-                                <IconSplit dir={s.dir} size={26} />
-                                <span class="pf-split-tile-label">{s.label}</span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
-                  </div>
-                </div>
+const PaneBar = (props: { ctrl: TerminalHostController; leaf: Leaf; focused: () => boolean }) => {
+  const ctrl = props.ctrl;
+  const leaf = props.leaf;
+  return (
+    <div
+      class="pf-pane-bar"
+      title="Drag to move this pane"
+      onPointerDown={(e) => ctrl.startPaneDrag(e, leaf.id)}
+    >
+      <div class="pf-pane-bar-id">
+        <span class="pf-pane-grip"><IconGrip size={13} /></span>
+        <span class="pf-pane-dot" classList={{ "pf-pane-dot--live": props.focused() }} />
+        <span class="pf-pane-callsign">{leaf.callsign}</span>
+        <Show when={baseName(ctrl.props.cwd)}>
+          <span class="pf-pane-cwd">{baseName(ctrl.props.cwd)}</span>
+        </Show>
+        <Show when={ctrl.paneRemote()[leaf.id]}>
+          {(remote) => <span class="pf-pane-cwd">ssh:{remote().host}</span>}
+        </Show>
+        <Show when={ctrl.deadPanes().includes(leaf.id)}>
+          <span class="pf-pane-cwd">closed</span>
+        </Show>
+        <Show
+          when={
+            ctrl.props.session &&
+            leaf.id === ctrl.primaryId() &&
+            askpassNotice(ctrl.askpassStatus())
+          }
+        >
+          {(notice) => (
+            <span class="pf-pane-cwd" title="Graphical sudo (askpass) is unavailable for this session">
+              {notice()}
+            </span>
+          )}
+        </Show>
+      </div>
+      <div class="pf-pane-ctls">
+        <button
+          class="pf-pane-ctl pf-pane-ctl--split"
+          classList={{ "pf-pane-ctl--active": ctrl.menuFor() === leaf.id }}
+          title="Split this pane"
+          onClick={(e) => {
+            e.stopPropagation();
+            ctrl.setMenuFor((m) => (m === leaf.id ? null : leaf.id));
+          }}
+        >
+          <IconSplitTrigger size={14} />
+        </button>
+        <button
+          class="pf-pane-ctl pf-pane-ctl--close"
+          title="Close pane"
+          disabled={ctrl.leaves().length <= 1}
+          onClick={(e) => {
+            e.stopPropagation();
+            ctrl.requestClose(leaf.id);
+          }}
+        >
+          <IconClose size={14} />
+        </button>
 
-                <div class="pf-pane-inner">
-                  <TerminalPane
-                    cwd={props.cwd}
-                    projectRoot={props.session?.projectRoot ?? props.cwd}
-                    remote={leaf.remote}
-                    env={props.env}
-                    onSpawn={(remote) =>
-                      setPaneRemote((panes) => captureRemotePtyForPane(panes, leaf.id, remote))
-                    }
-                    chat={
-                      props.session && props.chatId && leaf.id === primaryId()
-                        ? {
-                            chatId: props.chatId,
-                            projectRoot: props.session.projectRoot,
-                            sessionId: props.session.sessionId,
-                            backend: props.session.backend,
-                            onSession: (info) => props.session?.onSession?.(info, leaf.id),
-                          }
-                        : undefined
-                    }
-                    onOutput={
-                      props.onOutput ? (chunk) => props.onOutput?.(chunk, leaf.id) : undefined
-                    }
-                    onBell={props.onBell ? () => props.onBell?.(leaf.id) : undefined}
-                    onNotification={
-                      props.onNotification
-                        ? (message) => props.onNotification?.(message, leaf.id)
-                        : undefined
-                    }
-                    onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
-                    onTitle={(title) => props.onTitle?.(title, leaf.id)}
-                    onSelectionChange={setAskSel}
-                    onReady={(handle) => {
-                      handles.set(leaf.id, handle);
-                      if (focusedId() === leaf.id) handle.focus();
-                      const cmd = pendingCmd.get(leaf.id);
-                      if (cmd) {
-                        pendingCmd.delete(leaf.id);
-                        handle.typeText(cmd + "\r");
-                      }
-                      // The session-backed (primary) pane just came up — flush any
-                      // agent launch queued before its handle existed.
-                      if (leaf.id === primaryId()) flushPrimaryCmd();
-                    }}
-                    onExit={(exit) => {
-                      props.onPaneExited?.(leaf.id);
-                      if (exit.preserveBuffer) markPtyDead(leaf.id);
-                      else requestClose(leaf.id);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
+        <PaneSplitMenu ctrl={ctrl} leaf={leaf} />
+      </div>
+    </div>
+  );
+};
+
+const PaneTerminal = (props: { ctrl: TerminalHostController; leaf: Leaf }) => {
+  const ctrl = props.ctrl;
+  const leaf = props.leaf;
+  const hostProps = ctrl.props;
+  return (
+    <TerminalPane
+      cwd={hostProps.cwd}
+      projectRoot={hostProps.session?.projectRoot ?? hostProps.cwd}
+      remote={leaf.remote}
+      env={hostProps.env}
+      onSpawn={(remote) =>
+        ctrl.setPaneRemote((panes) => captureRemotePtyForPane(panes, leaf.id, remote))
+      }
+      chat={
+        hostProps.session && hostProps.chatId && leaf.id === ctrl.primaryId()
+          ? {
+              chatId: hostProps.chatId,
+              projectRoot: hostProps.session.projectRoot,
+              sessionId: hostProps.session.sessionId,
+              backend: hostProps.session.backend,
+              onSession: (info) => hostProps.session?.onSession?.(info, leaf.id),
+            }
+          : undefined
+      }
+      onOutput={
+        hostProps.onOutput ? (chunk) => hostProps.onOutput?.(chunk, leaf.id) : undefined
+      }
+      onBell={hostProps.onBell ? () => hostProps.onBell?.(leaf.id) : undefined}
+      onNotification={
+        hostProps.onNotification
+          ? (message) => hostProps.onNotification?.(message, leaf.id)
+          : undefined
+      }
+      onUserSubmit={(line) => hostProps.onUserSubmit?.(line, leaf.id)}
+      onTitle={(title) => hostProps.onTitle?.(title, leaf.id)}
+      onSelectionChange={ctrl.setAskSel}
+      onReady={(handle) => {
+        ctrl.handles.set(leaf.id, handle);
+        if (ctrl.focusedId() === leaf.id) handle.focus();
+        const cmd = ctrl.pendingCmd.get(leaf.id);
+        if (cmd) {
+          ctrl.pendingCmd.delete(leaf.id);
+          handle.typeText(cmd + "\r");
+        }
+        // The session-backed (primary) pane just came up — flush any
+        // agent launch queued before its handle existed.
+        if (leaf.id === ctrl.primaryId()) ctrl.flushPrimaryCmd();
+      }}
+      onExit={(exit) => {
+        hostProps.onPaneExited?.(leaf.id);
+        if (exit.preserveBuffer) ctrl.markPtyDead(leaf.id);
+        else ctrl.requestClose(leaf.id);
+      }}
+    />
+  );
+};
+
+const PaneItem = (props: { ctrl: TerminalHostController; leaf: Leaf }) => {
+  const ctrl = props.ctrl;
+  const leaf = props.leaf;
+  const rect = () => ctrl.layout().map.get(leaf.id) ?? { x: 0, y: 0, w: 1, h: 1 };
+  const focused = () => ctrl.focusedId() === leaf.id;
+  return (
+    <div
+      class="pf-pane"
+      classList={{ "pf-pane--closing": ctrl.closing().includes(leaf.id) }}
+      style={{
+        left: pct(rect().x),
+        top: pct(rect().y),
+        width: pct(rect().w),
+        height: pct(rect().h),
+      }}
+    >
+      <div
+        class="pf-pane-frame"
+        classList={{
+          "pf-pane-frame--focused": focused(),
+          "pf-pane-frame--dragging": ctrl.dragId() === leaf.id,
         }}
+        onPointerDown={() => ctrl.focus(leaf.id)}
+      >
+        {/* A real top bar: its own row above the terminal, never an
+            overlay — the shell prompt below it is never covered. The
+            whole bar is the drag handle for rearranging panes. */}
+        <PaneBar ctrl={ctrl} leaf={leaf} focused={focused} />
+
+        <div class="pf-pane-inner">
+          <PaneTerminal ctrl={ctrl} leaf={leaf} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export function TerminalHost(props: TerminalHostProps) {
+  const ctrl = createTerminalHostController(props);
+
+  return (
+    <div class="pf-term-host" ref={ctrl.setContainerEl}>
+      <For each={ctrl.leaves()}>
+        {(leaf) => <PaneItem ctrl={ctrl} leaf={leaf} />}
       </For>
 
       {/* draggable seams */}
-      <For each={layout().divs}>
+      <For each={ctrl.layout().divs}>
         {(d) => (
           <div
             class="pf-divider"
@@ -698,7 +808,7 @@ export function TerminalHost(props: {
                 ? { left: pct(d.rect.x), top: pct(d.rect.y), height: pct(d.rect.h) }
                 : { left: pct(d.rect.x), top: pct(d.rect.y), width: pct(d.rect.w) }
             }
-            onPointerDown={(e) => startDrag(e, d)}
+            onPointerDown={(e) => ctrl.startDrag(e, d)}
           >
             <span class="pf-divider-grip" />
           </div>
@@ -706,9 +816,9 @@ export function TerminalHost(props: {
       </For>
 
       {/* drop indicator: highlights the side/centre the dragged pane will land */}
-      <Show when={drop()}>
+      <Show when={ctrl.drop()}>
         {(d) => {
-          const rect = () => layout().map.get(d().id);
+          const rect = () => ctrl.layout().map.get(d().id);
           return (
             <Show when={rect()}>
               <div
@@ -727,8 +837,8 @@ export function TerminalHost(props: {
         }}
       </Show>
 
-      <Show when={askSel()}>
-        {(s) => <AskAiMenu selection={s()} onClose={() => setAskSel(null)} />}
+      <Show when={ctrl.askSel()}>
+        {(s) => <AskAiMenu selection={s()} onClose={() => ctrl.setAskSel(null)} />}
       </Show>
     </div>
   );

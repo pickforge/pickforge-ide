@@ -29,6 +29,15 @@ pub struct ClaudeBridgeOptions {
     pub app_root: PathBuf,
 }
 
+/// The writer channel plus the writer/reader/stderr-drain thread handles
+/// started for a bridge client's stdio pipes.
+type BridgeIoThreads = (
+    mpsc::Sender<WriterMessage>,
+    JoinHandle<()>,
+    JoinHandle<()>,
+    JoinHandle<()>,
+);
+
 pub struct ClaudeBridgeClient {
     state: Arc<ClientState>,
     writer_tx: Mutex<Option<mpsc::Sender<WriterMessage>>>,
@@ -76,8 +85,43 @@ pub fn spawn(opts: ClaudeBridgeOptions) -> Result<ClaudeBridgeClient, ClaudeBrid
 }
 
 impl ClaudeBridgeClient {
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(opts: ClaudeBridgeOptions) -> Result<Self, ClaudeBridgeError> {
+        let (child, stdin, stdout, stderr) = Self::spawn_child_process(opts)?;
+        let state = Arc::new(ClientState {
+            child: Mutex::new(Some(child)),
+            pending: Mutex::new(HashMap::new()),
+            starts: Mutex::new(HashMap::new()),
+            chats: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
+            next_id: AtomicI64::new(1),
+        });
+        let (writer_tx, writer_thread, reader_thread, stderr_thread) =
+            Self::spawn_io_threads(&state, stdin, stdout, stderr)?;
+
+        Ok(Self {
+            state,
+            writer_tx: Mutex::new(Some(writer_tx)),
+            writer_thread: Mutex::new(Some(writer_thread)),
+            reader_thread: Mutex::new(Some(reader_thread)),
+            stderr_thread: Mutex::new(Some(stderr_thread)),
+        })
+    }
+
+    /// Resolves the bridge runtime/script (or standalone binary), spawns the
+    /// sidecar process with the enriched shell environment (a packaged GUI
+    /// app doesn't inherit the login-shell PATH), and takes ownership of its
+    /// stdio pipes.
+    fn spawn_child_process(
+        opts: ClaudeBridgeOptions,
+    ) -> Result<
+        (
+            Child,
+            std::process::ChildStdin,
+            std::process::ChildStdout,
+            std::process::ChildStderr,
+        ),
+        ClaudeBridgeError,
+    > {
         let ClaudeBridgeOptions {
             runtime,
             script,
@@ -136,38 +180,41 @@ impl ClaudeBridgeClient {
             kill_and_wait_child(child);
             return Err(ClaudeBridgeError::MissingPipe("stderr"));
         };
+        Ok((child, stdin, stdout, stderr))
+    }
 
-        let state = Arc::new(ClientState {
-            child: Mutex::new(Some(child)),
-            pending: Mutex::new(HashMap::new()),
-            starts: Mutex::new(HashMap::new()),
-            chats: Mutex::new(HashMap::new()),
-            closed: AtomicBool::new(false),
-            next_id: AtomicI64::new(1),
-        });
+    /// Starts the writer/reader/stderr-drain threads over the bridge's stdio
+    /// pipes, unwinding (killing the child, draining already-started
+    /// threads) if any `Builder::spawn` fails.
+    fn spawn_io_threads(
+        state: &Arc<ClientState>,
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+        stderr: std::process::ChildStderr,
+    ) -> Result<BridgeIoThreads, ClaudeBridgeError> {
         let (writer_tx, writer_rx) = mpsc::channel();
 
         let writer_thread = match std::thread::Builder::new()
             .name("claude-bridge-writer".to_string())
             .spawn({
-                let writer_state = Arc::clone(&state);
+                let writer_state = Arc::clone(state);
                 move || write_loop(stdin, writer_rx, writer_state)
             }) {
             Ok(thread) => thread,
             Err(error) => {
-                kill_state_child(&state);
+                kill_state_child(state);
                 return Err(ClaudeBridgeError::Thread(error));
             }
         };
 
-        let reader_state = Arc::clone(&state);
+        let reader_state = Arc::clone(state);
         let reader_thread = match std::thread::Builder::new()
             .name("claude-bridge-reader".to_string())
             .spawn(move || read_loop(stdout, reader_state))
         {
             Ok(thread) => thread,
             Err(error) => {
-                kill_state_child(&state);
+                kill_state_child(state);
                 let _ = writer_tx.send(WriterMessage::Shutdown);
                 let _ = writer_thread.join();
                 return Err(ClaudeBridgeError::Thread(error));
@@ -180,7 +227,7 @@ impl ClaudeBridgeClient {
         {
             Ok(thread) => thread,
             Err(error) => {
-                kill_state_child(&state);
+                kill_state_child(state);
                 let _ = writer_tx.send(WriterMessage::Shutdown);
                 let _ = writer_thread.join();
                 let _ = reader_thread.join();
@@ -188,13 +235,7 @@ impl ClaudeBridgeClient {
             }
         };
 
-        Ok(Self {
-            state,
-            writer_tx: Mutex::new(Some(writer_tx)),
-            writer_thread: Mutex::new(Some(writer_thread)),
-            reader_thread: Mutex::new(Some(reader_thread)),
-            stderr_thread: Mutex::new(Some(stderr_thread)),
-        })
+        Ok((writer_tx, writer_thread, reader_thread, stderr_thread))
     }
 
     #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
@@ -1231,37 +1272,12 @@ done
             .count()
     }
 
+    /// Asserts the event snapshot from
+    /// `maps_bridge_events_writes_ops_and_pairs_list_sessions` maps every
+    /// bridge event kind (session start, turn lifecycle, text delta/final,
+    /// usage, approval request) as expected.
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
-    fn maps_bridge_events_writes_ops_and_pairs_list_sessions() {
-        let script = test_script();
-        let client = spawn_test_client(&script);
-        let (events, sink) = event_sink();
-
-        client
-            .chat_start(
-                "chat-1",
-                script.dir.clone(),
-                Some("sonnet".to_string()),
-                Some("high".to_string()),
-                Some("session-0".to_string()),
-                Some("acceptEdits".to_string()),
-                Some(vec!["Bash".to_string()]),
-                sink,
-            )
-            .unwrap();
-        client
-            .chat_send("chat-1", "hello", &["/tmp/pickforge-shot.png".to_string()])
-            .unwrap();
-
-        let snapshot = wait_for_events(&events, |events| {
-            terminal_event_count(events) == 1
-                && events
-                    .iter()
-                    .any(|event| matches!(event, AgentEvent::ApprovalRequest { .. }))
-        });
-
+    fn assert_bridge_flow_events(snapshot: &[AgentEvent]) {
         assert!(matches!(
             snapshot.first(),
             Some(AgentEvent::SessionStarted {
@@ -1311,6 +1327,39 @@ done
                     && detail.contains(r#""command":"cargo check""#)
             )
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn maps_bridge_events_writes_ops_and_pairs_list_sessions() {
+        let script = test_script();
+        let client = spawn_test_client(&script);
+        let (events, sink) = event_sink();
+
+        client
+            .chat_start(
+                "chat-1",
+                script.dir.clone(),
+                Some("sonnet".to_string()),
+                Some("high".to_string()),
+                Some("session-0".to_string()),
+                Some("acceptEdits".to_string()),
+                Some(vec!["Bash".to_string()]),
+                sink,
+            )
+            .unwrap();
+        client
+            .chat_send("chat-1", "hello", &["/tmp/pickforge-shot.png".to_string()])
+            .unwrap();
+
+        let snapshot = wait_for_events(&events, |events| {
+            terminal_event_count(events) == 1
+                && events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::ApprovalRequest { .. }))
+        });
+
+        assert_bridge_flow_events(&snapshot);
 
         client
             .chat_approve("chat-1", "approval-1", "acceptForSession")

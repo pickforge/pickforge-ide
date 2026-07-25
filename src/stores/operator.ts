@@ -350,7 +350,12 @@ function isVisiblePrimaryChat(chat: Chat): boolean {
   return !isChatArchived(chat.chatId) && isPrimaryChat(chat);
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+// OperatorAction's discriminated union has 16 "action" variants and every case body is already
+// a single, non-branching return — there is no internal complexity left to extract. A switch is
+// the standard exhaustiveness-checked way to dispatch a TS discriminated union (ESLint counts
+// every case uniformly regardless of body size); a lookup-table dispatch would trade
+// compiler-enforced exhaustiveness for a runtime lookup plus an unsafe cast for no real gain here.
+// eslint-disable-next-line complexity -- TODO(#263): see comment above.
 function summaryFor(intent: OperatorIntent): string {
   const action = intent.action;
   switch (action.action) {
@@ -981,7 +986,119 @@ async function takeScreenshotIntent(facts: ExecutionFacts): Promise<DispatchResu
   return { status: "noop", summary: "no device or VM session to capture" };
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+async function runOpenProjectIntent(facts: ExecutionFacts): Promise<DispatchResultDraft> {
+  const project = facts.project;
+  if (!project.ok) return { status: "failed", message: project.message };
+  await selectProject(project.value.projectRoot);
+  return { status: "done", summary: `Opened project ${project.value.displayName}` };
+}
+
+async function runOpenChatIntent(
+  facts: ExecutionFacts,
+  inputText: string | undefined,
+  action: Extract<OperatorIntent["action"], { action: "openChat" }>,
+): Promise<DispatchResultDraft> {
+  const fallbackRef = openChatFallbackRef(inputText);
+  let chat: Resolution<Chat> | null = null;
+  if (fallbackRef && fallbackRef !== action.chat) {
+    const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
+    if (fallback.ok) chat = fallback;
+  }
+  chat ??= await chatToOpenIn(facts.project, action.chat);
+  if (!chat.ok && facts.intent.projectRef && fallbackRef && fallbackRef !== action.chat) {
+    const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
+    if (fallback.ok) chat = fallback;
+  }
+  if (!chat.ok) return { status: "failed", message: chat.message };
+  selectChat(chat.value.chatId);
+  return { status: "done", summary: `Opened chat ${chat.value.title}` };
+}
+
+async function runCreateChatIntent(
+  facts: ExecutionFacts,
+  action: Extract<OperatorIntent["action"], { action: "createChat" }>,
+): Promise<DispatchResultDraft> {
+  const project = facts.project;
+  if (!project.ok) return { status: "failed", message: project.message };
+  const provider = agentProviderFromIntent(action.provider);
+  const model = normalizeNativeModel(
+    provider,
+    action.model ? action.model : nativeChatModel(provider, loadAgentModels()[provider] ?? null),
+  );
+  if (!model.ok) return { status: "failed", message: model.message };
+  const chatId = await addChat("Operator chat", provider, project.value.projectRoot, "agent");
+  if (!chatId) return { status: "failed", message: "Could not create operator chat" };
+  await ensureAgentChat(chatId, project.value.projectRoot, provider, model.value, {
+    engine: loadAgentEngine(),
+    effort: loadAgentEfforts()[provider] ?? null,
+    mode: loadAgentModes()[provider] ?? null,
+  });
+  return { status: "done", summary: "Created Operator chat" };
+}
+
+async function runSendPromptIntent(
+  facts: ExecutionFacts,
+  action: Extract<OperatorIntent["action"], { action: "sendPrompt" }>,
+): Promise<DispatchResultDraft> {
+  if (action.chat) {
+    const chat = await chatForFacts(facts, action.chat);
+    if (!chat.ok) return { status: "failed", message: chat.message };
+    return sendToChat(chat.value, action.prompt);
+  }
+  const chat = activeChatForFacts(facts);
+  if (!chat.ok) return { status: "failed", message: chat.message };
+  return sendToChat(chat.value, action.prompt);
+}
+
+async function runStartSwarmIntent(
+  facts: ExecutionFacts,
+  action: Extract<OperatorIntent["action"], { action: "startSwarm" }>,
+): Promise<DispatchResultDraft> {
+  const project = facts.project;
+  if (!project.ok) return { status: "failed", message: project.message };
+  const providerPreference = action.provider === "claude" ? "claudeCode" : action.provider;
+  const runId = await startSwarmRun(project.value.projectRoot, action.goal, {
+    mode: action.mode,
+    count: action.count,
+    providerPreference,
+  });
+  return { status: "done", summary: `Started swarm ${runId}` };
+}
+
+async function runInterruptRunIntent(
+  facts: ExecutionFacts,
+  action: Extract<OperatorIntent["action"], { action: "interruptRun" }>,
+): Promise<DispatchResultDraft> {
+  const chat = await resolveRunChatFacts(facts, action.run);
+  if (!chat.ok) return { status: "failed", message: chat.message };
+  const target = agentTarget(chat.value);
+  if (!target.ok) return { status: "failed", message: target.message };
+  const state = agentChat(chat.value.chatId);
+  if (!state?.sessionId || !state.turnActive) {
+    return { status: "noop", summary: "nothing to interrupt" };
+  }
+  await interruptAgentChat(chat.value.chatId);
+  return { status: "done", summary: `Interrupted ${chat.value.title}` };
+}
+
+async function runSteerRunIntent(
+  facts: ExecutionFacts,
+  action: Extract<OperatorIntent["action"], { action: "steerRun" }>,
+): Promise<DispatchResultDraft> {
+  const chat = await resolveRunChatFacts(facts, action.run);
+  if (!chat.ok) return { status: "failed", message: chat.message };
+  const target = agentTarget(chat.value);
+  if (!target.ok) return { status: "failed", message: target.message };
+  await steerAgentChat(chat.value.chatId, action.instruction);
+  return { status: "done", summary: `Steered ${chat.value.title}` };
+}
+
+// OperatorAction's discriminated union has 16 "action" variants; a switch is the standard
+// exhaustiveness-checked way to dispatch one in TypeScript (ESLint counts every case uniformly
+// regardless of body size), and every case with real branching is already extracted into its own
+// run*Intent helper above. A lookup-table dispatch would trade compiler-enforced exhaustiveness
+// for a runtime lookup plus an unsafe cast — a real design tradeoff, not just more extraction effort.
+// eslint-disable-next-line complexity -- TODO(#263): see comment above.
 async function runIntent(
   facts: ExecutionFacts,
   inputText: string | undefined,
@@ -990,100 +1107,25 @@ async function runIntent(
   const action = facts.intent.action;
 
   switch (action.action) {
-    case "openProject": {
-      const project = facts.project;
-      if (!project.ok) return { status: "failed", message: project.message };
-      await selectProject(project.value.projectRoot);
-      return { status: "done", summary: `Opened project ${project.value.displayName}` };
-    }
-    case "openChat": {
-      const fallbackRef = openChatFallbackRef(inputText);
-      let chat: Resolution<Chat> | null = null;
-      if (fallbackRef && fallbackRef !== action.chat) {
-        const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
-        if (fallback.ok) chat = fallback;
-      }
-      chat ??= await chatToOpenIn(facts.project, action.chat);
-      if (!chat.ok && facts.intent.projectRef && fallbackRef && fallbackRef !== action.chat) {
-        const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
-        if (fallback.ok) chat = fallback;
-      }
-      if (!chat.ok) return { status: "failed", message: chat.message };
-      selectChat(chat.value.chatId);
-      return { status: "done", summary: `Opened chat ${chat.value.title}` };
-    }
-    case "createChat": {
-      const project = facts.project;
-      if (!project.ok) return { status: "failed", message: project.message };
-      const provider = agentProviderFromIntent(action.provider);
-      const model = normalizeNativeModel(
-        provider,
-        action.model
-          ? action.model
-          : nativeChatModel(provider, loadAgentModels()[provider] ?? null),
-      );
-      if (!model.ok) return { status: "failed", message: model.message };
-      const chatId = await addChat("Operator chat", provider, project.value.projectRoot, "agent");
-      if (!chatId) return { status: "failed", message: "Could not create operator chat" };
-      await ensureAgentChat(
-        chatId,
-        project.value.projectRoot,
-        provider,
-        model.value,
-        {
-          engine: loadAgentEngine(),
-          effort: loadAgentEfforts()[provider] ?? null,
-          mode: loadAgentModes()[provider] ?? null,
-        },
-      );
-      return { status: "done", summary: "Created Operator chat" };
-    }
-    case "sendPrompt": {
-      if (action.chat) {
-        const chat = await chatForFacts(facts, action.chat);
-        if (!chat.ok) return { status: "failed", message: chat.message };
-        return sendToChat(chat.value, action.prompt);
-      }
-      const chat = activeChatForFacts(facts);
-      if (!chat.ok) return { status: "failed", message: chat.message };
-      return sendToChat(chat.value, action.prompt);
-    }
-    case "startSwarm": {
-      const project = facts.project;
-      if (!project.ok) return { status: "failed", message: project.message };
-      const providerPreference = action.provider === "claude" ? "claudeCode" : action.provider;
-      const runId = await startSwarmRun(project.value.projectRoot, action.goal, {
-        mode: action.mode,
-        count: action.count,
-        providerPreference,
-      });
-      return { status: "done", summary: `Started swarm ${runId}` };
-    }
+    case "openProject":
+      return runOpenProjectIntent(facts);
+    case "openChat":
+      return runOpenChatIntent(facts, inputText, action);
+    case "createChat":
+      return runCreateChatIntent(facts, action);
+    case "sendPrompt":
+      return runSendPromptIntent(facts, action);
+    case "startSwarm":
+      return runStartSwarmIntent(facts, action);
     case "swarmStatus": {
       const project = facts.project;
       if (!project.ok) return { status: "failed", message: project.message };
       return { status: "done", summary: swarmSummary(project.value.projectRoot) };
     }
-    case "interruptRun": {
-      const chat = await resolveRunChatFacts(facts, action.run);
-      if (!chat.ok) return { status: "failed", message: chat.message };
-      const target = agentTarget(chat.value);
-      if (!target.ok) return { status: "failed", message: target.message };
-      const state = agentChat(chat.value.chatId);
-      if (!state?.sessionId || !state.turnActive) {
-        return { status: "noop", summary: "nothing to interrupt" };
-      }
-      await interruptAgentChat(chat.value.chatId);
-      return { status: "done", summary: `Interrupted ${chat.value.title}` };
-    }
-    case "steerRun": {
-      const chat = await resolveRunChatFacts(facts, action.run);
-      if (!chat.ok) return { status: "failed", message: chat.message };
-      const target = agentTarget(chat.value);
-      if (!target.ok) return { status: "failed", message: target.message };
-      await steerAgentChat(chat.value.chatId, action.instruction);
-      return { status: "done", summary: `Steered ${chat.value.title}` };
-    }
+    case "interruptRun":
+      return runInterruptRunIntent(facts, action);
+    case "steerRun":
+      return runSteerRunIntent(facts, action);
     case "launchEmulator":
       return launchEmulatorIntent(facts, action.device);
     case "launchRun":

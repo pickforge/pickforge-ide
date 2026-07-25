@@ -124,7 +124,56 @@ export async function refreshRecent(): Promise<void> {
   }
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+/** Routes free-text through the hosted router, reconciles billing, and
+ * dispatches the routed outcome (proposal/needsCredits/unclear/error/
+ * unconfigured). Billing is reconciled BEFORE the epoch guard: a hosted
+ * route that completed server-side already charged, so the balance must
+ * refresh even if the dock was closed mid-flight — only the dropped UI is
+ * gated on the epoch. */
+async function submitViaRouter(text: string): Promise<void> {
+  const epoch = ++requestEpoch;
+  setBusy(true);
+  setRouteMeta(null);
+  setView({ kind: "needsRouter", reason: "routing…" });
+  try {
+    const routed = await routeCommand(text);
+    const cost = billedCost(routed);
+    if (cost !== undefined) await refreshCreditBalance();
+    if (epoch !== requestEpoch) return;
+    if (cost !== undefined) {
+      setRouteMeta({ costCents: cost, balanceCents: creditBalanceCents() });
+    }
+    switch (routed.kind) {
+      case "proposal":
+        await submitIntent(
+          routed.intent,
+          text,
+          epoch,
+          routed.confidence < 1 ? routed.confidence : undefined,
+        );
+        return;
+      case "needsCredits":
+        setView({ kind: "needsCredits", balance: routed.balance });
+        return;
+      case "unclear":
+        setView({ kind: "needsRouter", reason: routed.reason });
+        return;
+      case "error":
+        setView({ kind: "needsRouter", reason: routed.message });
+        return;
+      case "unconfigured":
+        setView({
+          kind: "needsRouter",
+          reason: "Operator router is off. Choose a backend in Settings.",
+        });
+        return;
+    }
+  } finally {
+    if (epoch === requestEpoch) setBusy(false);
+    void refreshRecent();
+  }
+}
+
 export async function submitOperatorCommand(): Promise<void> {
   if (busy()) return;
   const text = input().trim();
@@ -135,50 +184,7 @@ export async function submitOperatorCommand(): Promise<void> {
     return;
   }
   if (parsed.kind === "needsRouter") {
-    const epoch = ++requestEpoch;
-    setBusy(true);
-    setRouteMeta(null);
-    setView({ kind: "needsRouter", reason: "routing…" });
-    try {
-      const routed = await routeCommand(text);
-      // Reconcile billing before the epoch guard: a hosted route that completed
-      // server-side already charged, so the balance must refresh even if the
-      // dock was closed mid-flight. Only the dropped UI is gated on the epoch.
-      const cost = billedCost(routed);
-      if (cost !== undefined) await refreshCreditBalance();
-      if (epoch !== requestEpoch) return;
-      if (cost !== undefined) {
-        setRouteMeta({ costCents: cost, balanceCents: creditBalanceCents() });
-      }
-      switch (routed.kind) {
-        case "proposal":
-          await submitIntent(
-            routed.intent,
-            text,
-            epoch,
-            routed.confidence < 1 ? routed.confidence : undefined,
-          );
-          return;
-        case "needsCredits":
-          setView({ kind: "needsCredits", balance: routed.balance });
-          return;
-        case "unclear":
-          setView({ kind: "needsRouter", reason: routed.reason });
-          return;
-        case "error":
-          setView({ kind: "needsRouter", reason: routed.message });
-          return;
-        case "unconfigured":
-          setView({
-            kind: "needsRouter",
-            reason: "Operator router is off. Choose a backend in Settings.",
-          });
-          return;
-      }
-    } finally {
-      if (epoch === requestEpoch) setBusy(false);
-      void refreshRecent();
-    }
+    await submitViaRouter(text);
     return;
   }
 

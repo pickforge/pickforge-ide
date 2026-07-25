@@ -314,7 +314,69 @@ function setAccountError(value: unknown) {
   setError(errorText(value));
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+/** Post-await decision for a resolved auth session: `null` means the caller
+ * should stop (a superseded generation, or a sign-in already in flight).
+ * Pure/synchronous — deliberately called right after the `await` that
+ * produced `authSession`, not wrapped around it, so extracting this doesn't
+ * add a microtask tick to the awaited chain (tests assert on a fixed number
+ * of flushes). */
+function resolveSessionFromAuthResult(
+  authSession: unknown,
+  generation: number,
+  options: RefreshOptions,
+): AccountSession | null {
+  if (generation !== refreshGeneration) return null;
+  if (!options.refreshSession && status() === "signingIn") return null;
+  const nextSession = sessionFromAuth(authSession);
+  if (!nextSession) {
+    setSignedOut({ clearPending: false });
+    return null;
+  }
+  return nextSession;
+}
+
+/** Same microtask-timing note as `resolveSessionFromAuthResult`: called
+ * synchronously right after the session-fetch `await` rejects, not wrapping
+ * it. */
+function handleSessionResolutionError(
+  value: unknown,
+  generation: number,
+  options: RefreshOptions,
+): void {
+  if (generation !== refreshGeneration) return;
+  if (options.silent && !options.refreshSession && status() === "signingIn") return;
+  if (options.silent && networkLikeError(value)) return;
+  if (options.silent && session() !== null) setSignedOut({ clearCache: true });
+  setAccountError(value);
+}
+
+/** Same microtask-timing note as `resolveSessionFromAuthResult`, for the
+ * entitlements-refresh `await`. */
+function applyRefreshedEntitlements(
+  nextEntitlements: AccountEntitlement[],
+  nextSession: AccountSession,
+  generation: number,
+  options: RefreshOptions,
+): void {
+  if (generation !== refreshGeneration) return;
+  if (!options.refreshSession && status() === "signingIn") return;
+  setSignedIn(nextSession, nextEntitlements);
+}
+
+function handleEntitlementsRefreshError(
+  value: unknown,
+  nextSession: AccountSession,
+  generation: number,
+  options: RefreshOptions,
+): void {
+  if (generation !== refreshGeneration) return;
+  if (options.silent && networkLikeError(value)) return;
+  setEntitlements([]);
+  setVerifiedAt(null);
+  persistCache(nextSession, [], null);
+  setAccountError(value);
+}
+
 async function refreshFromAuth(options: RefreshOptions = {}) {
   if (!accountsEnabled()) return;
   const generation = ++refreshGeneration;
@@ -322,22 +384,12 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
   try {
     const auth = getProAuthClient();
     const authSession = options.refreshSession ? await auth.refreshSession() : await auth.getSession();
-    if (generation !== refreshGeneration) return;
-    if (!options.refreshSession && status() === "signingIn") return;
-    nextSession = sessionFromAuth(authSession);
-    if (!nextSession) {
-      setSignedOut({ clearPending: false });
-      return;
-    }
+    nextSession = resolveSessionFromAuthResult(authSession, generation, options);
+    if (!nextSession) return;
   } catch (value) {
-    if (generation !== refreshGeneration) return;
-    if (options.silent && !options.refreshSession && status() === "signingIn") return;
-    if (options.silent && networkLikeError(value)) return;
-    if (options.silent && session() !== null) setSignedOut({ clearCache: true });
-    setAccountError(value);
+    handleSessionResolutionError(value, generation, options);
     return;
   }
-  if (!nextSession) return;
   if (generation !== refreshGeneration) return;
 
   const cachedEntitlements = session()?.userId === nextSession.userId ? entitlements() : [];
@@ -350,16 +402,9 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
   try {
     const auth = getProAuthClient();
     const nextEntitlements = await auth.getEntitlements({ forceRefresh: options.forceRefresh });
-    if (generation !== refreshGeneration) return;
-    if (!options.refreshSession && status() === "signingIn") return;
-    setSignedIn(nextSession, nextEntitlements);
+    applyRefreshedEntitlements(nextEntitlements, nextSession, generation, options);
   } catch (value) {
-    if (generation !== refreshGeneration) return;
-    if (options.silent && networkLikeError(value)) return;
-    setEntitlements([]);
-    setVerifiedAt(null);
-    persistCache(nextSession, [], null);
-    setAccountError(value);
+    handleEntitlementsRefreshError(value, nextSession, generation, options);
   }
 }
 

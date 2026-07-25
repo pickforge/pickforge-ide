@@ -47,7 +47,7 @@ use pickforge_core::ios::{
     built_app_path, bundle_id_of_app, capture_screenshot as ios_capture_screenshot,
     dump_accessibility, dump_recent as ios_dump_recent, find_container as ios_find_container,
     install_app, launch_app, list_devices as ios_list_devices, terminate_app, IosError, SimDevice,
-    SimState, XcodeContainerKind,
+    SimState, XcodeContainer, XcodeContainerKind,
 };
 
 // ── Shared gating ───────────────────────────────────────────────────────────
@@ -959,8 +959,109 @@ fn ios_tier_a_device_roundtrip_macos() {
     eprintln!("[native-ios] os_log ok: parsed {} events", events.len());
 }
 
+/// Runs `xcodebuild` for `container`/`scheme` targeting `udid` into `derived`,
+/// panicking with a captured-output tail on timeout/failure. Returns the
+/// built `.app` path (panicking on the `xcodebuild`-not-found skip signal is
+/// the caller's job — this only returns `None` for that one case).
 #[cfg(target_os = "macos")]
-#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy integration test.
+fn build_ios_fixture_app(
+    test: &str,
+    container: &XcodeContainer,
+    scheme: &str,
+    udid: &str,
+    derived: &TempDir,
+) -> Option<PathBuf> {
+    let destination = format!("id={udid}");
+    let mut args = match container.kind {
+        XcodeContainerKind::Workspace => vec![
+            "-workspace".to_string(),
+            container.path.to_string_lossy().into_owned(),
+        ],
+        XcodeContainerKind::Project => vec![
+            "-project".to_string(),
+            container.path.to_string_lossy().into_owned(),
+        ],
+    };
+    args.extend([
+        "-scheme".to_string(),
+        scheme.to_string(),
+        "-destination".to_string(),
+        destination,
+        "-derivedDataPath".to_string(),
+        derived.path().to_string_lossy().into_owned(),
+        "CODE_SIGNING_ALLOWED=NO".to_string(),
+        "build".to_string(),
+    ]);
+
+    eprintln!(
+        "[ios-heavy] building {} scheme `{scheme}` into {}",
+        container.path.display(),
+        derived.path().display()
+    );
+    let output = match run_bounded_output("xcodebuild", &args, XCODEBUILD_TIMEOUT) {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: {test} — xcodebuild unavailable (install Xcode or configure xcode-select)");
+            return None;
+        }
+        Err(e) => panic!("[ios-heavy] spawn xcodebuild: {e}"),
+    };
+    if output.timed_out {
+        panic!(
+            "[ios-heavy] xcodebuild timed out after {:?}\n{}",
+            XCODEBUILD_TIMEOUT,
+            output_tail(&output, 80)
+        );
+    }
+    if !output.success {
+        panic!(
+            "[ios-heavy] xcodebuild failed with {:?}\n{}",
+            output.code,
+            output_tail(&output, 80)
+        );
+    }
+
+    let app = built_app_path(derived.path(), scheme);
+    assert!(
+        app.is_dir(),
+        "[ios-heavy] built app missing at {}",
+        app.display()
+    );
+    Some(app)
+}
+
+/// Installs and launches `app` on `udid`, captures + verifies a screenshot
+/// and the fixture's accessibility tree, then terminates it.
+#[cfg(target_os = "macos")]
+fn install_launch_verify_and_terminate_ios_app(udid: &str, app: &Path) {
+    let bundle_id = match std::env::var("PICKFORGE_E2E_IOS_BUNDLE_ID") {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => bundle_id_of_app(app)
+            .unwrap_or_else(|e| panic!("[ios-heavy] read bundle id from app: {e}")),
+    };
+
+    install_app(udid, app).unwrap_or_else(|e| panic!("[ios-heavy] install_app failed: {e}"));
+    let pid = launch_app(udid, &bundle_id)
+        .unwrap_or_else(|e| panic!("[ios-heavy] launch_app failed: {e}"));
+    assert!(pid > 0, "[ios-heavy] launch returned invalid pid {pid}");
+    let app_guard = IosOnDeviceApp {
+        udid: udid.to_string(),
+        bundle_id: bundle_id.clone(),
+    };
+
+    std::thread::sleep(Duration::from_secs(1));
+    let bytes = ios_capture_screenshot(udid)
+        .unwrap_or_else(|e| panic!("[ios-heavy] capture_screenshot failed: {e}"));
+    assert_ios_png(&bytes, "ios-heavy");
+    assert_ios_a11y_fixture_tree(udid);
+
+    terminate_app(udid, &bundle_id)
+        .unwrap_or_else(|e| panic!("[ios-heavy] terminate_app failed: {e}"));
+    drop(app_guard);
+    eprintln!("[ios-heavy] launched pid {pid}, captured screenshot, terminated {bundle_id}");
+}
+
+#[cfg(target_os = "macos")]
 fn ios_tier_b_real_launch_macos() {
     let test = "ios_tier_b_real_launch";
     if !launch_enabled() {
@@ -999,85 +1100,9 @@ fn ios_tier_b_real_launch_macos() {
     let scheme =
         std::env::var("PICKFORGE_E2E_IOS_SCHEME").unwrap_or_else(|_| container.name.clone());
     let derived = TempDir::new("ios-derived");
-    let destination = format!("id={udid}");
-    let mut args = match container.kind {
-        XcodeContainerKind::Workspace => vec![
-            "-workspace".to_string(),
-            container.path.to_string_lossy().into_owned(),
-        ],
-        XcodeContainerKind::Project => vec![
-            "-project".to_string(),
-            container.path.to_string_lossy().into_owned(),
-        ],
+
+    let Some(app) = build_ios_fixture_app(test, &container, &scheme, &udid, &derived) else {
+        return;
     };
-    args.extend([
-        "-scheme".to_string(),
-        scheme.clone(),
-        "-destination".to_string(),
-        destination,
-        "-derivedDataPath".to_string(),
-        derived.path().to_string_lossy().into_owned(),
-        "CODE_SIGNING_ALLOWED=NO".to_string(),
-        "build".to_string(),
-    ]);
-
-    eprintln!(
-        "[ios-heavy] building {} scheme `{scheme}` into {}",
-        container.path.display(),
-        derived.path().display()
-    );
-    let output = match run_bounded_output("xcodebuild", &args, XCODEBUILD_TIMEOUT) {
-        Ok(output) => output,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("skipped: {test} — xcodebuild unavailable (install Xcode or configure xcode-select)");
-            return;
-        }
-        Err(e) => panic!("[ios-heavy] spawn xcodebuild: {e}"),
-    };
-    if output.timed_out {
-        panic!(
-            "[ios-heavy] xcodebuild timed out after {:?}\n{}",
-            XCODEBUILD_TIMEOUT,
-            output_tail(&output, 80)
-        );
-    }
-    if !output.success {
-        panic!(
-            "[ios-heavy] xcodebuild failed with {:?}\n{}",
-            output.code,
-            output_tail(&output, 80)
-        );
-    }
-
-    let app = built_app_path(derived.path(), &scheme);
-    assert!(
-        app.is_dir(),
-        "[ios-heavy] built app missing at {}",
-        app.display()
-    );
-    let bundle_id = match std::env::var("PICKFORGE_E2E_IOS_BUNDLE_ID") {
-        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
-        _ => bundle_id_of_app(&app)
-            .unwrap_or_else(|e| panic!("[ios-heavy] read bundle id from app: {e}")),
-    };
-
-    install_app(&udid, &app).unwrap_or_else(|e| panic!("[ios-heavy] install_app failed: {e}"));
-    let pid = launch_app(&udid, &bundle_id)
-        .unwrap_or_else(|e| panic!("[ios-heavy] launch_app failed: {e}"));
-    assert!(pid > 0, "[ios-heavy] launch returned invalid pid {pid}");
-    let app_guard = IosOnDeviceApp {
-        udid: udid.clone(),
-        bundle_id: bundle_id.clone(),
-    };
-
-    std::thread::sleep(Duration::from_secs(1));
-    let bytes = ios_capture_screenshot(&udid)
-        .unwrap_or_else(|e| panic!("[ios-heavy] capture_screenshot failed: {e}"));
-    assert_ios_png(&bytes, "ios-heavy");
-    assert_ios_a11y_fixture_tree(&udid);
-
-    terminate_app(&udid, &bundle_id)
-        .unwrap_or_else(|e| panic!("[ios-heavy] terminate_app failed: {e}"));
-    drop(app_guard);
-    eprintln!("[ios-heavy] launched pid {pid}, captured screenshot, terminated {bundle_id}");
+    install_launch_verify_and_terminate_ios_app(&udid, &app);
 }

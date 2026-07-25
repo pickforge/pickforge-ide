@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -151,7 +151,6 @@ enum WriterMessage {
 }
 
 impl OmpAcpClient {
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(options: OmpAcpOptions) -> Result<Self, OmpAcpError> {
         if !options.project_root.is_absolute() {
             return Err(OmpAcpError::Protocol(
@@ -160,7 +159,40 @@ impl OmpAcpClient {
         }
         validate_omp_mcp_servers(&options.mcp_servers)?;
 
-        let mut command = Command::new(&options.binary);
+        let state = Self::spawn_client_state(&options.binary, options.sink)?;
+        let client = Self { state };
+        client.initialize_handshake()?;
+        let (method, session_id, opened) =
+            client.open_session(options.session, &options.project_root, &options.mcp_servers)?;
+        if let Some(model) = options.model.as_deref().filter(|model| !model.trim().is_empty()) {
+            client.set_model(model)?;
+        }
+        emit(
+            &client.state,
+            AgentEvent::SessionStarted {
+                provider_session_id: session_id,
+            },
+        );
+        emit(
+            &client.state,
+            AgentEvent::ProviderPayload {
+                provider: "omp".to_string(),
+                method,
+                payload: opened,
+            },
+        );
+        client.replay_queued_updates();
+        Ok(client)
+    }
+
+    /// Spawns the `omp acp` child process (piped stdio, always-ask approval
+    /// mode, no extensions/config discovery beyond the allowlisted home
+    /// roots) and starts its writer/reader/stderr-drain threads.
+    fn spawn_client_state(
+        binary: &Path,
+        sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    ) -> Result<Arc<ClientState>, OmpAcpError> {
+        let mut command = Command::new(binary);
         command
             .arg("acp")
             .arg("--no-extensions")
@@ -215,7 +247,7 @@ impl OmpAcpClient {
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             session_id: Mutex::new(None),
-            sink: Mutex::new(options.sink),
+            sink: Mutex::new(sink),
             queued_updates: Mutex::new(Vec::new()),
             permissions: Mutex::new(HashMap::new()),
             tools: Mutex::new(HashMap::new()),
@@ -230,9 +262,13 @@ impl OmpAcpClient {
         let reader_state = Arc::clone(&state);
         thread::spawn(move || read_loop(stdout, reader_state));
         thread::spawn(move || drain(stderr));
+        Ok(state)
+    }
 
-        let client = Self { state };
-        let initialize = client.request(
+    /// Performs the ACP `initialize` handshake and stores the negotiated
+    /// handshake info.
+    fn initialize_handshake(&self) -> Result<(), OmpAcpError> {
+        let initialize = self.request(
             "initialize",
             json!({
                 "protocolVersion": ACP_PROTOCOL_VERSION,
@@ -244,14 +280,26 @@ impl OmpAcpClient {
             "initialize",
         )?;
         let handshake = validate_initialize(&initialize)?;
-        *client
+        *self
             .state
             .handshake
             .lock()
             .map_err(|_| OmpAcpError::Closed("handshake state poisoned".to_string()))? =
             Some(handshake);
+        Ok(())
+    }
 
-        let (method, requested_session_id) = match options.session {
+    /// Opens (new/resume/load) the ACP session, validates the returned
+    /// session id against what was requested, and stores the advertised
+    /// modes/models/session id. Returns the method used, the resolved
+    /// session id, and the raw open-session response payload.
+    fn open_session(
+        &self,
+        session: OmpAcpSessionOpen,
+        project_root: &Path,
+        mcp_servers: &[Value],
+    ) -> Result<(String, String, Value), OmpAcpError> {
+        let (method, requested_session_id) = match session {
             OmpAcpSessionOpen::New => ("session/new", None),
             OmpAcpSessionOpen::Resume(session_id) => ("session/resume", Some(session_id)),
             OmpAcpSessionOpen::Load(session_id) => ("session/load", Some(session_id)),
@@ -265,13 +313,13 @@ impl OmpAcpClient {
             ));
         }
         let mut params = json!({
-            "cwd": options.project_root,
-            "mcpServers": options.mcp_servers,
+            "cwd": project_root,
+            "mcpServers": mcp_servers,
         });
         if let Some(provider_session_id) = requested_session_id.as_ref() {
             params["sessionId"] = Value::String(provider_session_id.clone());
         }
-        let opened = client
+        let opened = self
             .request(method, params, "open session")
             .map_err(|error| OmpAcpError::SessionOpen(error.to_string()))?;
         let session_id = if let Some(requested) = requested_session_id {
@@ -301,43 +349,25 @@ impl OmpAcpClient {
                 })?
                 .to_string()
         };
-        *client
+        *self
             .state
             .available_modes
             .lock()
             .map_err(|_| OmpAcpError::Closed("mode state poisoned".to_string()))? =
             advertised_modes(&opened);
-        *client
+        *self
             .state
             .available_models
             .lock()
             .map_err(|_| OmpAcpError::Closed("model state poisoned".to_string()))? =
             advertised_models(&opened);
-        *client
+        *self
             .state
             .session_id
             .lock()
             .map_err(|_| OmpAcpError::Closed("session state poisoned".to_string()))? =
             Some(session_id.clone());
-        if let Some(model) = options.model.as_deref().filter(|model| !model.trim().is_empty()) {
-            client.set_model(model)?;
-        }
-        emit(
-            &client.state,
-            AgentEvent::SessionStarted {
-                provider_session_id: session_id,
-            },
-        );
-        emit(
-            &client.state,
-            AgentEvent::ProviderPayload {
-                provider: "omp".to_string(),
-                method: method.to_string(),
-                payload: opened,
-            },
-        );
-        client.replay_queued_updates();
-        Ok(client)
+        Ok((method.to_string(), session_id, opened))
     }
 
     pub fn handshake(&self) -> Result<OmpAcpHandshake, OmpAcpError> {
@@ -2216,9 +2246,56 @@ done"#,
         .unwrap();
     }
 
+    /// Fires a deliberately slow request on `client` in a scoped thread,
+    /// waits for the fixture to acknowledge receiving it (via `slow_requested`),
+    /// asserts the request is not yet resolved, then releases it (via
+    /// `release_slow`) and asserts it resolves as a timeout.
+    #[cfg(unix)]
+    fn assert_slow_request_times_out(
+        client: &OmpAcpClient,
+        slow_requested: &Path,
+        release_slow: &Path,
+    ) {
+        thread::scope(|scope| {
+            let (result_tx, result_rx) = mpsc::channel();
+            scope.spawn(move || {
+                let _ = result_tx.send(client.request_inner(
+                    "test/slow",
+                    json!({}),
+                    "deliberately slow request",
+                    Duration::from_secs(1),
+                ));
+            });
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !slow_requested.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let marker_seen = slow_requested.exists();
+            let before_release = result_rx.try_recv();
+            let unavailable_before_release =
+                matches!(&before_release, Err(mpsc::TryRecvError::Empty));
+            let slow_result = match before_release {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => result_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .ok(),
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            };
+            fs::write(release_slow, "").unwrap();
+            assert!(marker_seen, "slow request never reached fixture");
+            assert!(
+                unavailable_before_release,
+                "slow request completed before its release marker"
+            );
+            assert!(matches!(
+                slow_result,
+                Some(Err(OmpAcpError::Timeout("deliberately slow request")))
+            ));
+        });
+    }
+
     #[cfg(unix)]
     #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn late_duplicate_and_unknown_responses_do_not_close_an_active_prompt() {
         let marker_sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let slow_requested = std::env::temp_dir().join(format!(
@@ -2263,43 +2340,7 @@ done"#
         let events = Arc::new(Mutex::new(Vec::new()));
         let client = spawn_fixture(options(&fixture, Arc::clone(&events), None)).unwrap();
 
-        thread::scope(|scope| {
-            let (result_tx, result_rx) = mpsc::channel();
-            let client = &client;
-            scope.spawn(move || {
-                let _ = result_tx.send(client.request_inner(
-                    "test/slow",
-                    json!({}),
-                    "deliberately slow request",
-                    Duration::from_secs(1),
-                ));
-            });
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while !slow_requested.exists() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            let marker_seen = slow_requested.exists();
-            let before_release = result_rx.try_recv();
-            let unavailable_before_release =
-                matches!(&before_release, Err(mpsc::TryRecvError::Empty));
-            let slow_result = match before_release {
-                Ok(result) => Some(result),
-                Err(mpsc::TryRecvError::Empty) => result_rx
-                    .recv_timeout(Duration::from_secs(2))
-                    .ok(),
-                Err(mpsc::TryRecvError::Disconnected) => None,
-            };
-            fs::write(&release_slow, "").unwrap();
-            assert!(marker_seen, "slow request never reached fixture");
-            assert!(
-                unavailable_before_release,
-                "slow request completed before its release marker"
-            );
-            assert!(matches!(
-                slow_result,
-                Some(Err(OmpAcpError::Timeout("deliberately slow request")))
-            ));
-        });
+        assert_slow_request_times_out(&client, &slow_requested, &release_slow);
         client.prompt("first", &[]).unwrap();
         wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { .. }));
         assert!(!client.is_closed());
@@ -2351,29 +2392,14 @@ done"#
         }
     }
 
+    /// Asserts a response buffered for an id no longer pending (after the
+    /// crash drain) is ignored, and that calls rejected after close don't
+    /// resurrect a turn.
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
-    fn crash_during_prompt_closes_transport_drains_races_and_reaps_child() {
-        let fixture = standard_script("exit 9");
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let sink_events = Arc::clone(&events);
-        let (event_tx, event_rx) = mpsc::channel();
-        let mut opts = options(&fixture, Arc::clone(&events), None);
-        opts.sink = Arc::new(move |event| {
-            if let Ok(mut events) = sink_events.lock() {
-                events.push(event.clone());
-            }
-            let _ = event_tx.send(event);
-        });
-        let client = spawn_fixture(opts).unwrap();
-        client.prompt("crash", &[]).unwrap();
-        wait_for_event(&event_rx, |event| matches!(event, AgentEvent::TurnFailed { .. }));
-        assert!(client.is_closed());
-        assert!(client.state.child.lock().unwrap().is_none());
-        assert!(client.state.writer.lock().unwrap().is_none());
-        assert!(client.state.pending.lock().unwrap().is_empty());
-
+    fn assert_closed_client_ignores_stale_response_and_rejects_calls(
+        client: &OmpAcpClient,
+        events: &Arc<Mutex<Vec<AgentEvent>>>,
+    ) {
         let events_before_buffered_response = events.lock().unwrap().len();
         handle_response(
             &client.state,
@@ -2409,7 +2435,16 @@ done"#
                 .count(),
             starts_before
         );
+    }
 
+    /// Asserts a second transport failure on an already-closed client drains
+    /// pending requests without re-emitting events, then reaps the
+    /// writer/reader ownership cycle so the state Arc drops to one owner.
+    #[cfg(unix)]
+    fn assert_repeated_transport_failure_reaps(
+        client: &OmpAcpClient,
+        event_rx: &mpsc::Receiver<AgentEvent>,
+    ) {
         let (wait_tx, wait_rx) = mpsc::channel();
         {
             let mut pending = client.state.pending.lock().unwrap();
@@ -2437,6 +2472,32 @@ done"#
             1,
             "writer/reader transport ownership cycle survived failure"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn crash_during_prompt_closes_transport_drains_races_and_reaps_child() {
+        let fixture = standard_script("exit 9");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = Arc::clone(&events);
+        let (event_tx, event_rx) = mpsc::channel();
+        let mut opts = options(&fixture, Arc::clone(&events), None);
+        opts.sink = Arc::new(move |event| {
+            if let Ok(mut events) = sink_events.lock() {
+                events.push(event.clone());
+            }
+            let _ = event_tx.send(event);
+        });
+        let client = spawn_fixture(opts).unwrap();
+        client.prompt("crash", &[]).unwrap();
+        wait_for_event(&event_rx, |event| matches!(event, AgentEvent::TurnFailed { .. }));
+        assert!(client.is_closed());
+        assert!(client.state.child.lock().unwrap().is_none());
+        assert!(client.state.writer.lock().unwrap().is_none());
+        assert!(client.state.pending.lock().unwrap().is_empty());
+
+        assert_closed_client_ignores_stale_response_and_rejects_calls(&client, &events);
+        assert_repeated_transport_failure_reaps(&client, &event_rx);
     }
 
     #[cfg(unix)]

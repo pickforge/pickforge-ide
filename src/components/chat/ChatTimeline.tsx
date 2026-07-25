@@ -80,7 +80,47 @@ function resolveChangesReceiptStatus(
   return "unavailable";
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function expansionOpen(expansion: RowExpansion | undefined, rowKey: string): boolean | undefined {
+  return expansion ? expansion.get(rowKey) : undefined;
+}
+
+function expansionToggle(
+  expansion: RowExpansion | undefined,
+  rowKey: string,
+): (() => void) | undefined {
+  return expansion ? () => expansion.toggle(rowKey) : undefined;
+}
+
+// An in-progress turn keeps the existing raw per-event card; only a
+// COMPLETED turn collapses to the compact receipt (#231 PR3) — and only
+// when the flag is on. Flag off: the reducer never sets
+// `turnComplete`/groups events either, so this is already the legacy
+// per-event card; the explicit flag check here is defense in depth.
+function renderFileChangeItem(
+  item: Extract<AgentTimelineItem, { type: "fileChange" }>,
+  rowKey: string,
+  chatId: string | undefined,
+  expansion: RowExpansion | undefined,
+  projectRoot: string | undefined,
+  changesReceipts: ChangesReceiptSource | undefined,
+): JSX.Element {
+  if (!item.turnComplete || !flagEnabled("changesReview")) {
+    return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
+  }
+  return (
+    <ChangesReceiptCard
+      status={resolveChangesReceiptStatus(item.ordinal, changesReceipts)}
+      changeSet={changesReceipts?.changeSetAt(item.ordinal) ?? null}
+      open={expansionOpen(expansion, rowKey)}
+      onToggle={expansionToggle(expansion, rowKey)}
+      onReviewChanges={() => {
+        const changeSet = changesReceipts?.changeSetAt(item.ordinal);
+        if (changeSet && chatId && projectRoot) reviewTurnChanges(chatId, projectRoot, changeSet);
+      }}
+    />
+  );
+}
+
 function renderItem(
   item: AgentTimelineItem,
   rowKey: string,
@@ -102,8 +142,8 @@ function renderItem(
         <ThinkingBubble
           text={item.text}
           streaming={item.streaming}
-          open={expansion ? expansion.get(rowKey) : undefined}
-          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
+          open={expansionOpen(expansion, rowKey)}
+          onToggle={expansionToggle(expansion, rowKey)}
         />
       );
     case "command":
@@ -113,31 +153,12 @@ function renderItem(
           status={item.status}
           exitCode={item.exitCode}
           outputTail={item.outputTail}
-          open={expansion ? expansion.get(rowKey) : undefined}
-          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
+          open={expansionOpen(expansion, rowKey)}
+          onToggle={expansionToggle(expansion, rowKey)}
         />
       );
     case "fileChange":
-      // An in-progress turn keeps the existing raw per-event card; only a
-      // COMPLETED turn collapses to the compact receipt (#231 PR3) — and only
-      // when the flag is on. Flag off: the reducer never sets
-      // `turnComplete`/groups events either, so this is already the legacy
-      // per-event card; the explicit flag check here is defense in depth.
-      if (!item.turnComplete || !flagEnabled("changesReview")) {
-        return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
-      }
-      return (
-        <ChangesReceiptCard
-          status={resolveChangesReceiptStatus(item.ordinal, changesReceipts)}
-          changeSet={changesReceipts?.changeSetAt(item.ordinal) ?? null}
-          open={expansion ? expansion.get(rowKey) : undefined}
-          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
-          onReviewChanges={() => {
-            const changeSet = changesReceipts?.changeSetAt(item.ordinal);
-            if (changeSet && chatId && projectRoot) reviewTurnChanges(chatId, projectRoot, changeSet);
-          }}
-        />
-      );
+      return renderFileChangeItem(item, rowKey, chatId, expansion, projectRoot, changesReceipts);
     case "toolUse":
       return <ToolUseCard name={item.name} detail={item.detail} />;
     case "mcpToolCall":
@@ -186,7 +207,16 @@ function WorkingRow(): JSX.Element {
   );
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+// ChatTimeline is a virtualized-scroll engine with ~12 tightly-coupled mutable locals (stick,
+// lastTop, programmaticTarget, pinFrame/scrollFrame/measureFrame, pendingScrollTop,
+// scrollIdleTimer, userScrolling, lastContentWidth) plus three height Maps threaded through
+// applyRowHeights/pin/onScroll/the ResizeObserver callback — extracting pieces into composables
+// (the pattern used elsewhere in this pass) would require passing most of that state across the
+// boundary and risks reordering the scroll-jank-sensitive commit timing documented inline (see
+// flushQueuedRowHeights). There is no unit test for this component (only for the pure layout math
+// in lib/chatTimelineVirtual.ts, already de-suppressed) to verify a deeper split against, so it
+// isn't forced here — a real design change (e.g. a class-based controller), not extraction effort.
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): see comment above.
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
@@ -310,7 +340,10 @@ export function ChatTimeline(props: {
     });
   };
 
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+  // Same justification as the component-level suppression above: this reads/writes the shared
+  // scroll-anchor state (stick, userScrolling, rowHeights, deferredRowHeights) that the rest of
+  // the virtualization engine depends on in a specific order.
+  // eslint-disable-next-line complexity -- TODO(#263): see comment above.
   const applyRowHeights = (updates: Iterable<[string, number]>, deferAboveViewport: boolean) => {
     const currentLayout = layout();
     const currentTop = scroller.scrollTop;

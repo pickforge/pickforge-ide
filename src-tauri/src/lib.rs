@@ -147,18 +147,18 @@ fn start_crash_containment() {
     }
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy Tauri bootstrap.
-pub fn run() {
-    start_crash_containment();
-    let context = tauri::generate_context!();
-    let release = format!(
-        "pickforge@{}",
-        context
-            .config()
-            .version
-            .clone()
-            .expect("version in tauri.conf.json")
-    );
+/// Initializes Sentry (crash reporting + minidumps), gated on the user's
+/// telemetry consent (or a debug override). Returns the client init guard
+/// (must be kept alive for the process lifetime so it flushes on drop), the
+/// minidump handle (also kept alive; `None` if disabled or init failed), and
+/// whether Sentry ended up enabled.
+fn init_sentry(
+    release: String,
+) -> (
+    sentry::ClientInitGuard,
+    Option<tauri_plugin_sentry::minidump::Handle>,
+    bool,
+) {
     let consent = load_telemetry_config().crash_reports;
     let debug_override = std::env::var("PICKFORGE_SENTRY_DEBUG").ok();
     let enabled = sentry_enabled(consent, debug_override.as_deref());
@@ -170,7 +170,7 @@ pub fn run() {
             ..Default::default()
         },
     ));
-    let _minidump_guard = if enabled {
+    let minidump_guard = if enabled {
         match tauri_plugin_sentry::minidump::init(&client) {
             Ok(guard) => Some(guard),
             Err(error) => {
@@ -181,6 +181,97 @@ pub fn run() {
     } else {
         None
     };
+    (client, minidump_guard, enabled)
+}
+
+/// Wires the plugin chain used at every startup: single-instance (desktop
+/// only), deep links, Sentry event capture (gated on `enabled`), dialog,
+/// process, and the desktop-only updater.
+fn build_plugins(
+    builder: tauri::Builder<tauri::Wry>,
+    client: &sentry::ClientInitGuard,
+    enabled: bool,
+) -> tauri::Builder<tauri::Wry> {
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    let builder = builder
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(if enabled {
+            tauri_plugin_sentry::init(client)
+        } else {
+            tauri_plugin_sentry::init_with_no_injection(client)
+        })
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init());
+
+    // The updater is desktop-only (no mobile self-update).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
+}
+
+/// The Tauri `.setup()` hook: registers deep-link schemes, manages the
+/// `AgentChatManager`, and admits the resolved stash directory into the
+/// asset-protocol scope (the static scope only covers the default
+/// `~/.pickforge`; a `PICKFORGE_HOME` override relocates the stash, so this
+/// must happen at runtime or its thumbnails 404).
+fn setup_app(
+    app: &mut tauri::App<tauri::Wry>,
+    manager_database: Arc<Database>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
+    if let Err(error) = app.deep_link().register_all() {
+        eprintln!("failed to register deep link schemes: {error}");
+    }
+
+    let agent_app_root = resolve_agent_app_root(app);
+    let pi_session_root = resolve_pi_session_root(app);
+    app.manage(AgentChatManager::new(
+        manager_database,
+        agent_app_root,
+        pi_session_root,
+    ));
+    let _ = app
+        .asset_protocol_scope()
+        .allow_directory(agent_chat_commands::stash_image_dir(), true);
+    Ok(())
+}
+
+/// The Tauri `.run()` event hook: runs the shutdown sequence once on exit.
+fn handle_run_event(app: &tauri::AppHandle, event: RunEvent) {
+    if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+        shutdown::run_once(app);
+    }
+}
+
+// `run()` stays over the line cap solely because of the irreducible
+// `tauri::generate_handler![...]` command registry below (~160 lines) —
+// Tauri's invoke_handler takes exactly one generate_handler! call, and
+// splitting the command list across multiple calls would need a custom
+// dispatch layer (a real architecture change, out of scope here). Every
+// other part of the legacy bootstrap (sentry init, plugin wiring, setup
+// state, run-event handling) is extracted into the helpers above.
+#[allow(clippy::too_many_lines)] // TODO(#263): see comment above; the command registry is irreducible.
+pub fn run() {
+    start_crash_containment();
+    let context = tauri::generate_context!();
+    let release = format!(
+        "pickforge@{}",
+        context
+            .config()
+            .version
+            .clone()
+            .expect("version in tauri.conf.json")
+    );
+    let (client, _minidump_guard, enabled) = init_sentry(release);
 
     // Linux/Wayland: force the window's app_id to the bundle identifier. GTK derives
     // xdg_toplevel.set_app_id from g_get_prgname(), which defaults to the binary name
@@ -194,30 +285,7 @@ pub fn run() {
         gtk::glib::set_application_name("PickForge");
     }
 
-    let builder = tauri::Builder::default();
-
-    #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }));
-
-    let builder = builder
-        .plugin(tauri_plugin_deep_link::init())
-        .plugin(if enabled {
-            tauri_plugin_sentry::init(&client)
-        } else {
-            tauri_plugin_sentry::init_with_no_injection(&client)
-        })
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init());
-
-    // The updater is desktop-only (no mobile self-update).
-    #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = build_plugins(tauri::Builder::default(), &client, enabled);
 
     let database = open_database();
     // Allowlist of filesystem roots the renderer may browse/read/open: PickForge
@@ -232,25 +300,7 @@ pub fn run() {
     let manager_database = Arc::clone(&database);
 
     builder
-        .setup(move |app| {
-            #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
-            if let Err(error) = app.deep_link().register_all() {
-                eprintln!("failed to register deep link schemes: {error}");
-            }
-
-            app.manage(AgentChatManager::new(
-                Arc::clone(&manager_database),
-                resolve_agent_app_root(app),
-                resolve_pi_session_root(app),
-            ));
-            // The static assetProtocol scope only covers the default
-            // ~/.pickforge; a PICKFORGE_HOME override relocates the stash, so
-            // admit the resolved directory at runtime or its thumbnails 404.
-            let _ = app
-                .asset_protocol_scope()
-                .allow_directory(agent_chat_commands::stash_image_dir(), true);
-            Ok(())
-        })
+        .setup(move |app| setup_app(app, manager_database))
         .manage(PtyManager::new())
         .manage(pickforge_core::android::EmulatorManager::new())
         .manage(Arc::new(VoiceSessionManager::new()))
@@ -432,11 +482,7 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building pickforge")
-        .run(|app, event| {
-            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                shutdown::run_once(app);
-            }
-        });
+        .run(handle_run_event);
 }
 
 #[cfg(test)]

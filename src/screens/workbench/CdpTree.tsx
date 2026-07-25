@@ -69,16 +69,233 @@ function findPath(root: DomNode, id: string, acc: DomNode[] = []): DomNode[] | n
   return null;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function CdpTree(props: {
-  // Capability gates from the active web target (adapters.rs). Web declares both
-  // inspectSelection + mapSelectionToSource, but the props keep the component
-  // honest if a future profile drops one.
-  canInspect?: boolean;
-  canMapSource?: boolean;
+/** Resolves a node's framework source attribute through the page source map,
+ *  falling back to the raw attribute when unmapped/missing (best-effort). */
+async function resolveCdpNodeSource(
+  node: DomNode,
+  endpoint: string,
+  canMapSource: boolean,
+): Promise<string | null> {
+  const rawSource = canMapSource ? nodeSource(node) : null;
+  const ep = parseEndpoint(endpoint);
+  const mapped = rawSource && ep ? await cdpResolveSource(ep.host, ep.port, rawSource) : null;
+  return mapped ?? rawSource;
+}
+
+function cdpSourceNote(source: string | null): string {
+  return source ? `mapped source ${source}` : `NO exact source — search by selector / text / class`;
+}
+
+/** Persists the dispatch (pick + agent run) for the forge audit — best
+ *  effort, a write failure must not affect the launched agent. When a
+ *  source mapped, records it as the creation file:line so the audit row
+ *  carries the same source the agent received. */
+function recordCdpCaptureDispatch(
+  paneId: string,
+  root: string,
+  node: DomNode,
+  chatId: string,
+  item: QuickLaunchItem,
+  command: string,
+  md: string,
+  source: string | null,
+): void {
+  const loc = source ? parseFileLine(source) : null;
+  void recordForgeDispatch(
+    {
+      id: 0,
+      projectRoot: root,
+      widgetClass: nodeName(node),
+      creationFile: loc?.file ?? null,
+      creationLine: loc?.line ?? null,
+      skillId: "",
+      agentId: item.agentId ?? item.id,
+      terminalId: paneId,
+      chatId,
+      pickedAt: Date.now(),
+      widgetContextJson: md,
+    },
+    command,
+  );
+}
+
+/** Captures the selected DOM node (+ best-effort mapped source) into its own
+ *  capture folder, then launches the agent in a new pane pointed at the
+ *  markdown. Mirrors A11yTree's `send`; web nodes carry a source attribute
+ *  when the dev server injects one (else "no exact source"). A factory (not
+ *  a composable — no signals of its own). */
+function createCdpCaptureSend(deps: {
+  busy: () => boolean;
+  composerFor: () => QuickLaunchItem | null;
+  selectedNode: () => DomNode | null;
+  tree: () => DomNode | null;
+  prompt: () => string;
+  endpoint: () => string;
+  canMapSource: () => boolean;
+  pageUrl: () => string | null;
+  setError: (v: string | null) => void;
+  setBusy: (v: boolean) => void;
+  setComposerFor: (v: QuickLaunchItem | null) => void;
+}): () => Promise<void> {
+  return async () => {
+    if (deps.busy()) return;
+    const item = deps.composerFor();
+    const node = deps.selectedNode();
+    const root = workspace.activeRoot;
+    if (!item || !node || !root) return;
+    // Snapshot reactive state before any await so a redump / edit mid-send can't
+    // drift the saved markdown or the armed chat.
+    const t = deps.tree();
+    const instruction = deps.prompt();
+    const chatId = workspace.activeChatId;
+    if (!chatId || !hasTerminalHost(chatId)) {
+      deps.setError("Open a chat first so the agent has a terminal.");
+      return;
+    }
+    deps.setBusy(true);
+    try {
+      // Resolve the framework source attribute (often a *generated* file:line:col)
+      // through the page source map FIRST, so the capture + audit row record the
+      // authored location, not the build artifact. Best-effort: an unmapped /
+      // missing `.map` falls back to the raw attribute.
+      const source = await resolveCdpNodeSource(node, deps.endpoint(), deps.canMapSource());
+      const base = cdpBaseName(node);
+      const dir = await inspectDir(captureInRepo(root), root);
+      const path = (t ? findPath(t, node.nodeId) : null) ?? [node];
+      const ancestors = path.slice(0, -1).map((n) => nodeName(n)).slice(-5);
+      const children = node.children.map((c) => nodeName(c)).slice(0, 12);
+      const md = buildCdpMarkdown({
+        node,
+        source,
+        ancestors,
+        children,
+        pageUrl: deps.pageUrl(),
+        instruction,
+      });
+      // No screenshot for the CDP path (kept minimal — no per-node capture).
+      const paths = await inspectSave(dir, base, md, null);
+      const ask = `Read ${paths.mdPath} (PickForge web UI capture: selected DOM node + ${cdpSourceNote(source)}). ${instruction}`;
+      const command = `${commandForItem(item)} ${shquote(ask)}`;
+      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
+      if (paneId) recordCdpCaptureDispatch(paneId, root, node, chatId, item, command, md, source);
+      deps.setComposerFor(null);
+    } catch (e) {
+      deps.setError(String(e));
+    } finally {
+      deps.setBusy(false);
+    }
+  };
+}
+
+/** The discover-attach-dump / re-dump / detach flow. A factory (not a
+ *  composable — no signals of its own) so `createCdpInspectorState` can keep
+ *  this cluster out of its own body. */
+function createCdpAttachController(state: {
+  endpoint: () => string;
+  attached: () => boolean;
+  setAttached: (v: boolean) => void;
+  setPageUrl: (v: string | null) => void;
+  setTree: (v: DomNode | null) => void;
+  setSelected: (v: DomNode | null) => void;
+  setComposerFor: (v: QuickLaunchItem | null) => void;
+  setDumped: (v: boolean) => void;
+  setError: (v: string | null) => void;
+  setLoading: (v: boolean) => void;
 }) {
-  const canInspect = () => props.canInspect ?? true;
-  const canMapSource = () => props.canMapSource ?? false;
+  // Bumped on each (re)attach + dump so a slow in-flight DOM dump from a prior
+  // attachment can never paint over a newer view.
+  let epoch = 0;
+
+  const reset = () => {
+    state.setTree(null);
+    state.setSelected(null);
+    state.setComposerFor(null);
+    state.setDumped(false);
+  };
+
+  // Discover the dev server's debugger, attach to the first page, then dump the
+  // DOM. Honest errors: an unreachable endpoint / no page target surfaces a
+  // "no dev server reachable" message, not a crash.
+  const connectAndDump = async () => {
+    const ep = parseEndpoint(state.endpoint());
+    if (!ep) {
+      state.setError("Enter a debugger endpoint like 127.0.0.1:9222");
+      return;
+    }
+    const mine = ++epoch;
+    state.setError(null);
+    state.setLoading(true);
+    try {
+      const targets = await cdpDiscover(ep.host, ep.port);
+      if (mine !== epoch) return;
+      const page = targets[0];
+      if (!page) {
+        state.setAttached(false);
+        reset();
+        state.setError("No dev server reachable (no debuggable page at this endpoint).");
+        return;
+      }
+      await cdpAttach(page.webSocketDebuggerUrl);
+      if (mine !== epoch) return;
+      state.setAttached(true);
+      state.setPageUrl(page.url || null);
+      const root = await cdpDomTree();
+      if (mine !== epoch) return;
+      reset();
+      state.setTree(root);
+      state.setDumped(true);
+    } catch (e) {
+      if (mine !== epoch) return;
+      state.setAttached(false);
+      state.setError(
+        `No dev server reachable. Run the web app under a Chromium browser with ` +
+          `--remote-debugging-port set. (${String(e)})`,
+      );
+    } finally {
+      if (mine === epoch) state.setLoading(false);
+    }
+  };
+
+  // Re-dump the DOM on an existing attachment (no rediscovery).
+  const redump = async () => {
+    if (!state.attached()) return connectAndDump();
+    const mine = ++epoch;
+    state.setError(null);
+    state.setLoading(true);
+    try {
+      const root = await cdpDomTree();
+      if (mine !== epoch) return;
+      reset();
+      state.setTree(root);
+      state.setDumped(true);
+    } catch (e) {
+      if (mine !== epoch) return;
+      // A redump failure means the backend dropped the connection (tab/port
+      // closed): the attachment is gone. Fall back to the detached view so the
+      // honest "no dev server reachable" state shows and the user can re-attach,
+      // instead of stranding them on a stale tree behind a dead CDP chip.
+      state.setAttached(false);
+      reset();
+      state.setError(String(e));
+    } finally {
+      if (mine === epoch) state.setLoading(false);
+    }
+  };
+
+  const detach = () => {
+    void cdpDetach();
+    state.setAttached(false);
+    reset();
+  };
+
+  return { connectAndDump, redump, detach };
+}
+
+/** Owns every signal and handler for the inspector: attach/tree/selection
+ *  state, the discover-attach-dump flow, and the capture-and-send flow. A
+ *  composable, called synchronously from `CdpTree`'s own setup so its
+ *  signals live under the same reactive owner as if written inline. */
+function createCdpInspectorState(props: { canMapSource: () => boolean }) {
   const [endpoint, setEndpoint] = createSignal(DEFAULT_DEBUGGER);
   const [attached, setAttached] = createSignal(false);
   const [pageUrl, setPageUrl] = createSignal<string | null>(null);
@@ -93,92 +310,23 @@ export function CdpTree(props: {
 
   const selectedNode = () => selected();
 
-  // Bumped on each (re)attach + dump so a slow in-flight DOM dump from a prior
-  // attachment can never paint over a newer view.
-  let epoch = 0;
-
-  const reset = () => {
-    setTree(null);
-    setSelected(null);
-    setComposerFor(null);
-    setDumped(false);
-  };
-
-  // Discover the dev server's debugger, attach to the first page, then dump the
-  // DOM. Honest errors: an unreachable endpoint / no page target surfaces a
-  // "no dev server reachable" message, not a crash.
-  const connectAndDump = async () => {
-    const ep = parseEndpoint(endpoint());
-    if (!ep) {
-      setError("Enter a debugger endpoint like 127.0.0.1:9222");
-      return;
-    }
-    const mine = ++epoch;
-    setError(null);
-    setLoading(true);
-    try {
-      const targets = await cdpDiscover(ep.host, ep.port);
-      if (mine !== epoch) return;
-      const page = targets[0];
-      if (!page) {
-        setAttached(false);
-        reset();
-        setError("No dev server reachable (no debuggable page at this endpoint).");
-        return;
-      }
-      await cdpAttach(page.webSocketDebuggerUrl);
-      if (mine !== epoch) return;
-      setAttached(true);
-      setPageUrl(page.url || null);
-      const root = await cdpDomTree();
-      if (mine !== epoch) return;
-      reset();
-      setTree(root);
-      setDumped(true);
-    } catch (e) {
-      if (mine !== epoch) return;
-      setAttached(false);
-      setError(
-        `No dev server reachable. Run the web app under a Chromium browser with ` +
-          `--remote-debugging-port set. (${String(e)})`,
-      );
-    } finally {
-      if (mine === epoch) setLoading(false);
-    }
-  };
-
-  // Re-dump the DOM on an existing attachment (no rediscovery).
-  const redump = async () => {
-    if (!attached()) return connectAndDump();
-    const mine = ++epoch;
-    setError(null);
-    setLoading(true);
-    try {
-      const root = await cdpDomTree();
-      if (mine !== epoch) return;
-      reset();
-      setTree(root);
-      setDumped(true);
-    } catch (e) {
-      if (mine !== epoch) return;
-      // A redump failure means the backend dropped the connection (tab/port
-      // closed): the attachment is gone. Fall back to the detached view so the
-      // honest "no dev server reachable" state shows and the user can re-attach,
-      // instead of stranding them on a stale tree behind a dead CDP chip.
-      setAttached(false);
-      reset();
-      setError(String(e));
-    } finally {
-      if (mine === epoch) setLoading(false);
-    }
-  };
+  const { connectAndDump, redump, detach } = createCdpAttachController({
+    endpoint,
+    attached,
+    setAttached,
+    setPageUrl,
+    setTree,
+    setSelected,
+    setComposerFor,
+    setDumped,
+    setError,
+    setLoading,
+  });
 
   const selectNode = (n: DomNode) => {
     setSelected(n);
     setComposerFor(null);
   };
-
-  const agentChips = () => quickLaunchItems().filter(isAskAiItem);
 
   const openComposer = (item: QuickLaunchItem) => {
     const n = selectedNode();
@@ -186,277 +334,351 @@ export function CdpTree(props: {
     setComposerFor(item);
   };
 
-  // Capture the selected DOM node (+ best-effort mapped source) into its own
-  // capture folder, then launch the agent in a new pane pointed at the markdown.
-  // Mirrors A11yTree.send; web nodes carry a source attribute when the dev
-  // server injects one (else "no exact source").
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-  const send = async () => {
-    if (busy()) return;
-    const item = composerFor();
-    const node = selectedNode();
-    const root = workspace.activeRoot;
-    if (!item || !node || !root) return;
-    // Snapshot reactive state before any await so a redump / edit mid-send can't
-    // drift the saved markdown or the armed chat.
-    const t = tree();
-    const instruction = prompt();
-    const chatId = workspace.activeChatId;
-    if (!chatId || !hasTerminalHost(chatId)) {
-      setError("Open a chat first so the agent has a terminal.");
-      return;
-    }
-    setBusy(true);
-    try {
-      // Resolve the framework source attribute (often a *generated* file:line:col)
-      // through the page source map FIRST, so the capture + audit row record the
-      // authored location, not the build artifact. Best-effort: an unmapped /
-      // missing `.map` falls back to the raw attribute.
-      const rawSource = canMapSource() ? nodeSource(node) : null;
-      const ep = parseEndpoint(endpoint());
-      const mapped =
-        rawSource && ep ? await cdpResolveSource(ep.host, ep.port, rawSource) : null;
-      const source = mapped ?? rawSource;
-      const base = cdpBaseName(node);
-      const dir = await inspectDir(captureInRepo(root), root);
-      const path = (t ? findPath(t, node.nodeId) : null) ?? [node];
-      const ancestors = path.slice(0, -1).map((n) => nodeName(n)).slice(-5);
-      const children = node.children.map((c) => nodeName(c)).slice(0, 12);
-      const md = buildCdpMarkdown({
-        node,
-        source,
-        ancestors,
-        children,
-        pageUrl: pageUrl(),
-        instruction,
-      });
-      // No screenshot for the CDP path (kept minimal — no per-node capture).
-      const paths = await inspectSave(dir, base, md, null);
-      const sourceNote = source
-        ? `mapped source ${source}`
-        : `NO exact source — search by selector / text / class`;
-      const ask = `Read ${paths.mdPath} (PickForge web UI capture: selected DOM node + ${sourceNote}). ${instruction}`;
-      const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
-      if (paneId) {
-        // Persist the dispatch for the forge audit (best-effort). When a source
-        // mapped, record it as the creation file:line so the audit row carries
-        // the same source the agent received.
-        const loc = source ? parseFileLine(source) : null;
-        void recordForgeDispatch(
-          {
-            id: 0,
-            projectRoot: root,
-            widgetClass: nodeName(node),
-            creationFile: loc?.file ?? null,
-            creationLine: loc?.line ?? null,
-            skillId: "",
-            agentId: item.agentId ?? item.id,
-            terminalId: paneId,
-            chatId,
-            pickedAt: Date.now(),
-            widgetContextJson: md,
-          },
-          command,
-        );
-      }
-      setComposerFor(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+  const send = createCdpCaptureSend({
+    busy,
+    composerFor,
+    selectedNode,
+    tree,
+    prompt,
+    endpoint,
+    canMapSource: props.canMapSource,
+    pageUrl,
+    setError,
+    setBusy,
+    setComposerFor,
+  });
+
+  return {
+    endpoint,
+    setEndpoint,
+    attached,
+    tree,
+    selectedNode,
+    loading,
+    error,
+    dumped,
+    composerFor,
+    prompt,
+    busy,
+    connectAndDump,
+    redump,
+    detach,
+    selectNode,
+    openComposer,
+    setComposerFor,
+    setPrompt,
+    send,
   };
+}
+
+/** The endpoint field + Connect CTA shown before an attachment exists. A
+ *  presentational child component. */
+function CdpDebuggerConnect(props: {
+  endpoint: () => string;
+  onEndpointChange: (v: string) => void;
+  loading: () => boolean;
+  canInspect: () => boolean;
+  onConnect: () => void;
+  error: () => string | null;
+}) {
+  return (
+    <div class="pf-inspector-section">
+      <MonoEyebrow text="Web debugger" />
+      <input
+        class="pf-vm-input"
+        value={props.endpoint()}
+        onInput={(e) => props.onEndpointChange(e.currentTarget.value)}
+        placeholder="127.0.0.1:9222"
+      />
+      <EmberButton
+        label={props.loading() ? "Connecting…" : "Connect"}
+        disabled={props.loading() || !props.canInspect()}
+        onClick={props.onConnect}
+      />
+      <Show when={props.error()}>
+        <div class="pf-vm-error">{props.error()}</div>
+      </Show>
+      <p class="pf-inspector-hint">
+        Run the web app under a Chromium-based browser with
+        {" "}<span class="pf-mono">--remote-debugging-port=9222</span> and connect to
+        inspect its DOM. Source mapping is best-effort.
+      </p>
+    </div>
+  );
+}
+
+/** The DOM tree section shown once attached: detach/re-dump controls + the
+ *  collapsible tree. A presentational child component. */
+function CdpDomTreeSection(props: {
+  loading: () => boolean;
+  canInspect: () => boolean;
+  onDetach: () => void;
+  onRedump: () => void;
+  tree: () => DomNode | null;
+  error: () => string | null;
+  dumped: () => boolean;
+  selectedId: () => string | null;
+  onSelect: (n: DomNode) => void;
+}) {
+  return (
+    <div class="pf-inspector-section">
+      <div class="pf-rail-head">
+        <MonoEyebrow text="DOM tree" />
+        <div class="pf-wt-actions">
+          <button class="pf-vm-chip" title="Attached — click to detach" onClick={props.onDetach}>
+            <span class="pf-vm-dot" />
+            CDP
+          </button>
+          <button
+            class="pf-icon-btn"
+            title="Re-dump the DOM"
+            disabled={props.loading() || !props.canInspect()}
+            onClick={props.onRedump}
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
+      </div>
+
+      <Show
+        when={props.tree()}
+        fallback={
+          <div class="pf-rail-empty">
+            {props.loading()
+              ? "Dumping…"
+              : props.error()
+                ? props.error()
+                : props.dumped()
+                  ? "Empty DOM (is the page loaded?)"
+                  : "Dump the DOM to inspect"}
+          </div>
+        }
+      >
+        <div class="pf-wt-tree">
+          <CdpTreeNode
+            node={props.tree()!}
+            depth={0}
+            selectedId={props.selectedId}
+            onSelect={props.onSelect}
+          />
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/** The "Ask AI" chip row, or (once a chip is picked) its capture-prompt
+ *  composer. A presentational child component. */
+function CdpAskAiPanel(props: {
+  showDisclaimer: () => boolean;
+  agentChips: () => QuickLaunchItem[];
+  composerFor: () => QuickLaunchItem | null;
+  onOpenComposer: (item: QuickLaunchItem) => void;
+  onCloseComposer: () => void;
+  prompt: () => string;
+  onPromptChange: (v: string) => void;
+  onSend: () => void;
+  busy: () => boolean;
+  captureInRepo: () => boolean;
+  onToggleCaptureInRepo: () => void;
+}) {
+  return (
+    <Show
+      when={props.composerFor()}
+      fallback={
+        <div class="pf-wd-ai">
+          <MonoEyebrow text="Ask AI" tick />
+          <Show when={props.showDisclaimer()}>
+            <p class="pf-wd-disclaimer" title="No exact source mapping for this element">
+              No exact source mapping — the forge ships the selector
+              (tag / id / class, text) for the agent to search by.
+            </p>
+          </Show>
+          <div class="pf-wd-ai-chips">
+            <For each={props.agentChips()}>
+              {(item) => (
+                <button
+                  class="pf-wd-chip"
+                  title={`Send this element to ${item.label}`}
+                  onClick={() => props.onOpenComposer(item)}
+                >
+                  {item.label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      }
+    >
+      <div class="pf-wd-composer">
+        <MonoEyebrow text={`Ask ${props.composerFor()!.label}`} />
+        <textarea
+          class="pf-wd-prompt"
+          value={props.prompt()}
+          ref={(el) => setTimeout(() => el.focus(), 0)}
+          onInput={(e) => props.onPromptChange(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!props.busy()) props.onSend();
+            } else if (e.key === "Escape") {
+              props.onCloseComposer();
+            }
+          }}
+        />
+        <div class="pf-wd-composer-actions">
+          <button
+            class="pf-wd-loc"
+            title="Where the capture (md) is saved"
+            onClick={props.onToggleCaptureInRepo}
+          >
+            {props.captureInRepo() ? "saved in repo" : "saved in ~/.pickforge"}
+          </button>
+          <span class="pf-wd-composer-spacer" />
+          <button class="pf-text-btn" disabled={props.busy()} onClick={props.onCloseComposer}>
+            Cancel
+          </button>
+          <EmberButton label={props.busy() ? "Sending…" : "Send"} disabled={props.busy()} onClick={props.onSend} />
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+/** The selected node's details: tag/source, "Ask AI" chips/composer, and its
+ *  tag/id/class/text. A presentational child component. */
+function CdpDetailsPanel(props: {
+  node: () => DomNode;
+  canMapSource: () => boolean;
+  agentChips: () => QuickLaunchItem[];
+  composerFor: () => QuickLaunchItem | null;
+  onOpenComposer: (item: QuickLaunchItem) => void;
+  onCloseComposer: () => void;
+  prompt: () => string;
+  onPromptChange: (v: string) => void;
+  onSend: () => void;
+  busy: () => boolean;
+  error: () => string | null;
+}) {
+  const node = props.node;
+  return (
+    <div class="pf-inspector-section pf-wd">
+      <MonoEyebrow text="Element" tick />
+      <div class="pf-wd-head">
+        <div class="pf-wd-meta">
+          <span class="pf-wd-type">{nodeName(node())}</span>
+          <Show
+            when={nodeSource(node())}
+            fallback={<span class="pf-wd-src pf-wd-src--none">no exact source</span>}
+          >
+            <span class="pf-wd-src">{nodeSource(node())}</span>
+          </Show>
+        </div>
+      </div>
+
+      <CdpAskAiPanel
+        showDisclaimer={() => !props.canMapSource() || !nodeSource(node())}
+        agentChips={props.agentChips}
+        composerFor={props.composerFor}
+        onOpenComposer={props.onOpenComposer}
+        onCloseComposer={props.onCloseComposer}
+        prompt={props.prompt}
+        onPromptChange={props.onPromptChange}
+        onSend={props.onSend}
+        busy={props.busy}
+        captureInRepo={() => captureInRepo(workspace.activeRoot)}
+        onToggleCaptureInRepo={() =>
+          workspace.activeRoot &&
+          setCaptureInRepo(workspace.activeRoot, !captureInRepo(workspace.activeRoot))
+        }
+      />
+
+      <div class="pf-wd-props">
+        <div class="pf-wd-prop">
+          <span class="pf-wd-prop-name">tag</span>
+          <span class="pf-wd-prop-val">{node().tag}</span>
+        </div>
+        <Show when={node().id}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">id</span>
+            <span class="pf-wd-prop-val">{node().id}</span>
+          </div>
+        </Show>
+        <Show when={node().class}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">class</span>
+            <span class="pf-wd-prop-val">{node().class}</span>
+          </div>
+        </Show>
+        <Show when={node().text}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">text</span>
+            <span class="pf-wd-prop-val">{node().text}</span>
+          </div>
+        </Show>
+      </div>
+      <Show when={props.error()}>
+        <div class="pf-vm-error">{props.error()}</div>
+      </Show>
+    </div>
+  );
+}
+
+export function CdpTree(props: {
+  // Capability gates from the active web target (adapters.rs). Web declares both
+  // inspectSelection + mapSelectionToSource, but the props keep the component
+  // honest if a future profile drops one.
+  canInspect?: boolean;
+  canMapSource?: boolean;
+}) {
+  const canInspect = () => props.canInspect ?? true;
+  const canMapSource = () => props.canMapSource ?? false;
+  const agentChips = () => quickLaunchItems().filter(isAskAiItem);
+
+  const s = createCdpInspectorState({ canMapSource });
 
   return (
     <>
-      <Show when={!attached()}>
-        <div class="pf-inspector-section">
-          <MonoEyebrow text="Web debugger" />
-          <input
-            class="pf-vm-input"
-            value={endpoint()}
-            onInput={(e) => setEndpoint(e.currentTarget.value)}
-            placeholder="127.0.0.1:9222"
-          />
-          <EmberButton
-            label={loading() ? "Connecting…" : "Connect"}
-            disabled={loading() || !canInspect()}
-            onClick={() => void connectAndDump()}
-          />
-          <Show when={error()}>
-            <div class="pf-vm-error">{error()}</div>
-          </Show>
-          <p class="pf-inspector-hint">
-            Run the web app under a Chromium-based browser with
-            {" "}<span class="pf-mono">--remote-debugging-port=9222</span> and connect to
-            inspect its DOM. Source mapping is best-effort.
-          </p>
-        </div>
+      <Show when={!s.attached()}>
+        <CdpDebuggerConnect
+          endpoint={s.endpoint}
+          onEndpointChange={s.setEndpoint}
+          loading={s.loading}
+          canInspect={canInspect}
+          onConnect={() => void s.connectAndDump()}
+          error={s.error}
+        />
       </Show>
 
-      <Show when={attached()}>
-        <div class="pf-inspector-section">
-          <div class="pf-rail-head">
-            <MonoEyebrow text="DOM tree" />
-            <div class="pf-wt-actions">
-              <button
-                class="pf-vm-chip"
-                title="Attached — click to detach"
-                onClick={() => {
-                  void cdpDetach();
-                  setAttached(false);
-                  reset();
-                }}
-              >
-                <span class="pf-vm-dot" />
-                CDP
-              </button>
-              <button
-                class="pf-icon-btn"
-                title="Re-dump the DOM"
-                disabled={loading() || !canInspect()}
-                onClick={() => void redump()}
-              >
-                <IconRefresh size={14} />
-              </button>
-            </div>
-          </div>
-
-          <Show
-            when={tree()}
-            fallback={
-              <div class="pf-rail-empty">
-                {loading()
-                  ? "Dumping…"
-                  : error()
-                    ? error()
-                    : dumped()
-                      ? "Empty DOM (is the page loaded?)"
-                      : "Dump the DOM to inspect"}
-              </div>
-            }
-          >
-            <div class="pf-wt-tree">
-              <CdpTreeNode
-                node={tree()!}
-                depth={0}
-                selectedId={() => selectedNode()?.nodeId ?? null}
-                onSelect={selectNode}
-              />
-            </div>
-          </Show>
-        </div>
+      <Show when={s.attached()}>
+        <CdpDomTreeSection
+          loading={s.loading}
+          canInspect={canInspect}
+          onDetach={s.detach}
+          onRedump={() => void s.redump()}
+          tree={s.tree}
+          error={s.error}
+          dumped={s.dumped}
+          selectedId={() => s.selectedNode()?.nodeId ?? null}
+          onSelect={s.selectNode}
+        />
       </Show>
 
-      <Show when={selectedNode()}>
-        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
+      <Show when={s.selectedNode()}>
         {(node) => (
-          <div class="pf-inspector-section pf-wd">
-            <MonoEyebrow text="Element" tick />
-            <div class="pf-wd-head">
-              <div class="pf-wd-meta">
-                <span class="pf-wd-type">{nodeName(node())}</span>
-                <Show
-                  when={nodeSource(node())}
-                  fallback={<span class="pf-wd-src pf-wd-src--none">no exact source</span>}
-                >
-                  <span class="pf-wd-src">{nodeSource(node())}</span>
-                </Show>
-              </div>
-            </div>
-
-            <Show
-              when={composerFor()}
-              fallback={
-                <div class="pf-wd-ai">
-                  <MonoEyebrow text="Ask AI" tick />
-                  <Show when={!canMapSource() || !nodeSource(node())}>
-                    <p class="pf-wd-disclaimer" title="No exact source mapping for this element">
-                      No exact source mapping — the forge ships the selector
-                      (tag / id / class, text) for the agent to search by.
-                    </p>
-                  </Show>
-                  <div class="pf-wd-ai-chips">
-                    <For each={agentChips()}>
-                      {(item) => (
-                        <button
-                          class="pf-wd-chip"
-                          title={`Send this element to ${item.label}`}
-                          onClick={() => openComposer(item)}
-                        >
-                          {item.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              }
-            >
-              <div class="pf-wd-composer">
-                <MonoEyebrow text={`Ask ${composerFor()!.label}`} />
-                <textarea
-                  class="pf-wd-prompt"
-                  value={prompt()}
-                  ref={(el) => setTimeout(() => el.focus(), 0)}
-                  onInput={(e) => setPrompt(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (!busy()) void send();
-                    } else if (e.key === "Escape") {
-                      setComposerFor(null);
-                    }
-                  }}
-                />
-                <div class="pf-wd-composer-actions">
-                  <button
-                    class="pf-wd-loc"
-                    title="Where the capture (md) is saved"
-                    onClick={() =>
-                      workspace.activeRoot &&
-                      setCaptureInRepo(workspace.activeRoot, !captureInRepo(workspace.activeRoot))
-                    }
-                  >
-                    {captureInRepo(workspace.activeRoot) ? "saved in repo" : "saved in ~/.pickforge"}
-                  </button>
-                  <span class="pf-wd-composer-spacer" />
-                  <button class="pf-text-btn" disabled={busy()} onClick={() => setComposerFor(null)}>
-                    Cancel
-                  </button>
-                  <EmberButton label={busy() ? "Sending…" : "Send"} disabled={busy()} onClick={() => void send()} />
-                </div>
-              </div>
-            </Show>
-
-            <div class="pf-wd-props">
-              <div class="pf-wd-prop">
-                <span class="pf-wd-prop-name">tag</span>
-                <span class="pf-wd-prop-val">{node().tag}</span>
-              </div>
-              <Show when={node().id}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">id</span>
-                  <span class="pf-wd-prop-val">{node().id}</span>
-                </div>
-              </Show>
-              <Show when={node().class}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">class</span>
-                  <span class="pf-wd-prop-val">{node().class}</span>
-                </div>
-              </Show>
-              <Show when={node().text}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">text</span>
-                  <span class="pf-wd-prop-val">{node().text}</span>
-                </div>
-              </Show>
-            </div>
-            <Show when={error()}>
-              <div class="pf-vm-error">{error()}</div>
-            </Show>
-          </div>
+          <CdpDetailsPanel
+            node={node}
+            canMapSource={canMapSource}
+            agentChips={agentChips}
+            composerFor={s.composerFor}
+            onOpenComposer={s.openComposer}
+            onCloseComposer={() => s.setComposerFor(null)}
+            prompt={s.prompt}
+            onPromptChange={s.setPrompt}
+            onSend={() => void s.send()}
+            busy={s.busy}
+            error={s.error}
+          />
         )}
       </Show>
     </>

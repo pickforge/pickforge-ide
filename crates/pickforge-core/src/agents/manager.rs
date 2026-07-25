@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -141,6 +141,34 @@ struct SessionState {
     omp_identity: Option<OmpClientIdentity>,
 }
 
+/// `start`'s canonicalized project root, resolved OMP client identity, and a
+/// still-live OMP client reusable under that identity (client, its model).
+type OmpIdentityAndReuse = (
+    PathBuf,
+    Option<OmpClientIdentity>,
+    Option<(Arc<OmpAcpClient>, Option<String>)>,
+);
+
+/// Session state needed to dispatch a `send` turn, snapshotted under a short
+/// lock (holding it across provider-client acquisition risks a self-deadlock
+/// via lazy eviction; see `snapshot_for_send`).
+struct SendSnapshot {
+    chat_id: String,
+    project_root: PathBuf,
+    remote: Option<RemoteExec>,
+    provider: AgentProvider,
+    engine: Engine,
+    session_model: Option<String>,
+    provider_session_id: Option<String>,
+    sandbox: Option<String>,
+    approval_policy: Option<String>,
+    session_effort: Option<String>,
+    permission_mode: Option<String>,
+    allowed_tools: Option<Vec<String>>,
+    omp_client: Option<Arc<OmpAcpClient>>,
+    pi_client: Option<Arc<PiRpcClient>>,
+}
+
 #[derive(Clone, PartialEq)]
 struct OmpClientIdentity {
     canonical_project_root: PathBuf,
@@ -241,11 +269,11 @@ impl AgentChatManager {
 
     /// Trusted internal capability. Product rollout/UI gating belongs to the
     /// typed renderer flag; callers that reach the manager may start OMP.
-    #[allow(clippy::cognitive_complexity, clippy::too_many_arguments, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
     pub fn start(
         &self,
         chat_id: &str,
-        mut project_root: PathBuf,
+        project_root: PathBuf,
         provider: AgentProvider,
         engine: Engine,
         model: Option<String>,
@@ -259,6 +287,103 @@ impl AgentChatManager {
         let _start_guard = self.acquire_start_guard(chat_id)?;
         let remote = overrides.remote.clone();
         let engine = engine_for_start(engine, remote.as_ref());
+        self.validate_start_request(provider, engine, remote.as_ref(), &overrides)?;
+
+        let (project_root, omp_identity, reusable_omp) =
+            self.resolve_omp_identity_and_reuse(chat_id, provider, &overrides.mcp_servers, project_root)?;
+        if reusable_omp
+            .as_ref()
+            .is_some_and(|(_, current_model)| current_model.is_some() && model.is_none())
+        {
+            return Err(AgentChatError::Unsupported(
+                "OMP model selection cannot be cleared on a live session".to_string(),
+            ));
+        }
+
+        let (session_id, persisted_provider_session_id) =
+            self.resolve_session_id(chat_id, provider, &model)?;
+        let mut provider_session_id = if let Some(remote) = remote.as_ref() {
+            self.remote_session_id(chat_id, provider, &remote.host, &remote.remote_root)
+                .or_else(|| {
+                    remote_provider_session_id(persisted_provider_session_id.as_deref(), remote)
+                })
+        } else {
+            local_provider_session_id(persisted_provider_session_id)
+        };
+
+        let codex_app_client = self.prepare_codex_v2_thread(
+            engine,
+            provider,
+            &project_root,
+            &model,
+            &overrides,
+            &session_id,
+            &provider_session_id,
+        )?;
+        if let Some((_, thread_id)) = codex_app_client.as_ref() {
+            provider_session_id = Some(thread_id.clone());
+        }
+
+        self.register_session_state_and_replay(
+            chat_id,
+            &session_id,
+            &project_root,
+            &remote,
+            provider,
+            engine,
+            &model,
+            &overrides,
+            &provider_session_id,
+            &sink,
+            &omp_identity,
+            codex_app_client.as_ref(),
+        )?;
+
+        match (engine, provider) {
+            (Engine::V2, AgentProvider::Codex) => {
+                self.subscribe_codex_v2_thread(chat_id, &session_id, codex_app_client)?;
+            }
+            (Engine::V2, AgentProvider::ClaudeCode) => {
+                self.start_claude_v2_chat(
+                    chat_id,
+                    &session_id,
+                    project_root,
+                    model,
+                    provider_session_id,
+                    overrides,
+                )?;
+            }
+            (Engine::V2, AgentProvider::Omp) => {
+                self.start_omp_v2_session(
+                    chat_id,
+                    &session_id,
+                    project_root,
+                    model,
+                    provider_session_id,
+                    overrides.mcp_servers,
+                    reusable_omp,
+                )?;
+            }
+            (Engine::V2, AgentProvider::Pi) => {
+                self.start_pi_v2_session(chat_id, &session_id, project_root, model, provider_session_id)?;
+            }
+            (Engine::V1, _) => {}
+        }
+
+        self.unsubscribe_replaced_codex_threads(chat_id, &session_id);
+
+        Ok(session_id)
+    }
+
+    /// Rejects `start` requests for unsupported provider/engine/remote
+    /// combinations before any session state is touched.
+    fn validate_start_request(
+        &self,
+        provider: AgentProvider,
+        engine: Engine,
+        remote: Option<&RemoteExec>,
+        overrides: &AgentStartOverrides,
+    ) -> Result<(), AgentChatError> {
         if provider == AgentProvider::Pi && (engine != Engine::V2 || remote.is_some()) {
             return Err(AgentChatError::Unsupported(
                 "Pi RPC native chat requires the local v2 agent engine".to_string(),
@@ -278,36 +403,46 @@ impl AgentChatManager {
                 "OMP ACP native chat requires the local v2 engine".to_string(),
             ));
         }
-        let omp_identity = if provider == AgentProvider::Omp {
-            validate_omp_mcp_servers(&overrides.mcp_servers)
-                .map_err(|err| AgentChatError::Unsupported(err.to_string()))?;
-            let canonical_project_root = std::fs::canonicalize(&project_root).map_err(|error| {
-                AgentChatError::Spawn(format!("failed to canonicalize OMP session cwd: {error}"))
-            })?;
-            project_root = canonical_project_root.clone();
-            Some(OmpClientIdentity {
-                canonical_project_root,
-                normalized_mcp_grants: normalize_omp_mcp_grants(&overrides.mcp_servers),
-            })
-        } else {
-            None
-        };
-        let existing_omp = if provider == AgentProvider::Omp {
-            self.lock_inner()?
-                .values()
-                .find(|state| state.chat_id == chat_id && state.provider == AgentProvider::Omp)
-                .and_then(|state| {
-                    state.omp_client.as_ref().map(|client| {
-                        (
-                            Arc::clone(client),
-                            state.model.clone(),
-                            state.omp_identity.clone(),
-                        )
-                    })
+        Ok(())
+    }
+
+    /// Canonicalizes `project_root` for OMP sessions and resolves the OMP
+    /// client identity plus a still-live client for `chat_id` that can be
+    /// reused under a matching identity, closing any stale one. A no-op for
+    /// non-OMP providers.
+    fn resolve_omp_identity_and_reuse(
+        &self,
+        chat_id: &str,
+        provider: AgentProvider,
+        mcp_servers: &[serde_json::Value],
+        project_root: PathBuf,
+    ) -> Result<OmpIdentityAndReuse, AgentChatError> {
+        if provider != AgentProvider::Omp {
+            return Ok((project_root, None, None));
+        }
+        validate_omp_mcp_servers(mcp_servers)
+            .map_err(|err| AgentChatError::Unsupported(err.to_string()))?;
+        let canonical_project_root = std::fs::canonicalize(&project_root).map_err(|error| {
+            AgentChatError::Spawn(format!("failed to canonicalize OMP session cwd: {error}"))
+        })?;
+        let project_root = canonical_project_root.clone();
+        let omp_identity = Some(OmpClientIdentity {
+            canonical_project_root,
+            normalized_mcp_grants: normalize_omp_mcp_grants(mcp_servers),
+        });
+        let existing_omp = self
+            .lock_inner()?
+            .values()
+            .find(|state| state.chat_id == chat_id && state.provider == AgentProvider::Omp)
+            .and_then(|state| {
+                state.omp_client.as_ref().map(|client| {
+                    (
+                        Arc::clone(client),
+                        state.model.clone(),
+                        state.omp_identity.clone(),
+                    )
                 })
-        } else {
-            None
-        };
+            });
         let reusable_omp = existing_omp.as_ref().and_then(
             |(client, current_model, current_identity)| {
                 (!client.is_closed() && current_identity.as_ref() == omp_identity.as_ref())
@@ -319,104 +454,132 @@ impl AgentChatManager {
                 client.close();
             }
         }
-        if reusable_omp
-            .as_ref()
-            .is_some_and(|(_, current_model)| current_model.is_some() && model.is_none())
-        {
-            return Err(AgentChatError::Unsupported(
-                "OMP model selection cannot be cleared on a live session".to_string(),
-            ));
-        }
-        let latest = self.db.latest_agent_session_for_chat(chat_id)?;
-        let (session_id, persisted_provider_session_id) =
-            match latest.filter(|row| row.provider == provider.as_str()) {
-                Some(row) => {
-                    if row.model != model {
-                        self.db.agent_session_set_model(&row.id, model.as_deref())?;
-                    }
-                    (row.id, row.provider_session_id)
-                }
-                None => {
-                    let now = now_millis();
-                    let session_id = next_session_id(now);
-                    self.db.agent_session_create(&AgentSessionRow {
-                        id: session_id.clone(),
-                        chat_id: chat_id.to_string(),
-                        provider: provider.as_str().to_string(),
-                        provider_session_id: None,
-                        model: model.clone(),
-                        status: "idle".to_string(),
-                        created_at: now,
-                    })?;
-                    (session_id, None)
-                }
-            };
-        let mut provider_session_id = if let Some(remote) = remote.as_ref() {
-            self.remote_session_id(chat_id, provider, &remote.host, &remote.remote_root)
-                .or_else(|| {
-                    remote_provider_session_id(persisted_provider_session_id.as_deref(), remote)
-                })
-        } else {
-            local_provider_session_id(persisted_provider_session_id)
-        };
+        Ok((project_root, omp_identity, reusable_omp))
+    }
 
-        let codex_app_client = if engine == Engine::V2 && provider == AgentProvider::Codex {
-            let client = self.codex_app_client(project_root.clone())?;
-            let sandbox = overrides
-                .sandbox
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("workspace-write");
-            let approval_policy = overrides
-                .approval_policy
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("on-request");
-            let thread = if let Some(thread_id) = non_empty(provider_session_id.clone()) {
-                match client.thread_resume(&thread_id, project_root.clone()) {
-                    Ok(thread) => thread,
-                    Err(_) => client
-                        .thread_start(
-                            project_root.clone(),
-                            model.clone(),
-                            sandbox,
-                            approval_policy,
-                        )
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
+    /// Resolves the session row (creating one if this is the chat's first
+    /// turn with `provider`) and returns its id plus persisted provider
+    /// session id.
+    fn resolve_session_id(
+        &self,
+        chat_id: &str,
+        provider: AgentProvider,
+        model: &Option<String>,
+    ) -> Result<(String, Option<String>), AgentChatError> {
+        let latest = self.db.latest_agent_session_for_chat(chat_id)?;
+        match latest.filter(|row| row.provider == provider.as_str()) {
+            Some(row) => {
+                if &row.model != model {
+                    self.db.agent_session_set_model(&row.id, model.as_deref())?;
                 }
-            } else {
-                client
+                Ok((row.id, row.provider_session_id))
+            }
+            None => {
+                let now = now_millis();
+                let session_id = next_session_id(now);
+                self.db.agent_session_create(&AgentSessionRow {
+                    id: session_id.clone(),
+                    chat_id: chat_id.to_string(),
+                    provider: provider.as_str().to_string(),
+                    provider_session_id: None,
+                    model: model.clone(),
+                    status: "idle".to_string(),
+                    created_at: now,
+                })?;
+                Ok((session_id, None))
+            }
+        }
+    }
+
+    /// Resumes or opens the Codex app-server thread for a Codex/v2 session
+    /// before session state exists. A no-op for other engine/provider pairs.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn prepare_codex_v2_thread(
+        &self,
+        engine: Engine,
+        provider: AgentProvider,
+        project_root: &Path,
+        model: &Option<String>,
+        overrides: &AgentStartOverrides,
+        session_id: &str,
+        provider_session_id: &Option<String>,
+    ) -> Result<Option<(Arc<CodexAppClient>, String)>, AgentChatError> {
+        if !(engine == Engine::V2 && provider == AgentProvider::Codex) {
+            return Ok(None);
+        }
+        let client = self.codex_app_client(project_root.to_path_buf())?;
+        let sandbox = overrides
+            .sandbox
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("workspace-write");
+        let approval_policy = overrides
+            .approval_policy
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("on-request");
+        let thread = if let Some(thread_id) = non_empty(provider_session_id.clone()) {
+            match client.thread_resume(&thread_id, project_root.to_path_buf()) {
+                Ok(thread) => thread,
+                Err(_) => client
                     .thread_start(
-                        project_root.clone(),
+                        project_root.to_path_buf(),
                         model.clone(),
                         sandbox,
                         approval_policy,
                     )
-                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?
-            };
-            self.db
-                .agent_session_set_provider_session_id(&session_id, &thread.thread_id)?;
-            provider_session_id = Some(thread.thread_id.clone());
-            Some((client, thread.thread_id))
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
+            }
         } else {
-            None
+            client
+                .thread_start(
+                    project_root.to_path_buf(),
+                    model.clone(),
+                    sandbox,
+                    approval_policy,
+                )
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))?
         };
+        self.db
+            .agent_session_set_provider_session_id(session_id, &thread.thread_id)?;
+        Ok(Some((client, thread.thread_id)))
+    }
 
+    /// Registers session state for a new/resumed session and replays any
+    /// turn or approval events an already-live session still has pending, so
+    /// a webview reload reattaches without losing an in-flight turn's
+    /// prompts. Aborts cleanly if the manager started shutting down mid-start.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn register_session_state_and_replay(
+        &self,
+        chat_id: &str,
+        session_id: &str,
+        project_root: &Path,
+        remote: &Option<RemoteExec>,
+        provider: AgentProvider,
+        engine: Engine,
+        model: &Option<String>,
+        overrides: &AgentStartOverrides,
+        provider_session_id: &Option<String>,
+        sink: &Arc<dyn Fn(AgentEvent) + Send + Sync>,
+        omp_identity: &Option<OmpClientIdentity>,
+        codex_app_client: Option<&(Arc<CodexAppClient>, String)>,
+    ) -> Result<(), AgentChatError> {
         {
             let mut inner = self.lock_inner()?;
             if self.shutting_down.load(Ordering::SeqCst) {
                 drop(inner);
-                if let Some((client, thread_id)) = codex_app_client.as_ref() {
+                if let Some((client, thread_id)) = codex_app_client {
                     let _ = client.unsubscribe_for_shutdown(thread_id);
                 }
                 return Err(AgentChatError::ShuttingDown);
             }
             upsert_session_state(
                 &mut inner,
-                session_id.clone(),
+                session_id.to_string(),
                 SessionState {
                     chat_id: chat_id.to_string(),
-                    project_root: project_root.clone(),
+                    project_root: project_root.to_path_buf(),
                     remote: remote.clone(),
                     provider,
                     engine,
@@ -428,7 +591,7 @@ impl AgentChatManager {
                     permission_mode: overrides.permission_mode.clone(),
                     allowed_tools: overrides.allowed_tools.clone(),
                     provider_session_id: provider_session_id.clone(),
-                    sink: Arc::clone(&sink),
+                    sink: Arc::clone(sink),
                     pi_client: None,
                     active_turn: None,
                     terminal_pending: false,
@@ -446,7 +609,7 @@ impl AgentChatManager {
         let replay = {
             let inner = self.lock_inner()?;
             inner
-                .get(&session_id)
+                .get(session_id)
                 .map(|state| {
                     let mut events = Vec::new();
                     if state.active_turn.is_some() {
@@ -465,157 +628,196 @@ impl AgentChatManager {
         for event in replay {
             sink(event);
         }
-
-        match (engine, provider) {
-            (Engine::V2, AgentProvider::Codex) => {
-                if let Some((client, thread_id)) = codex_app_client {
-                    if let Err(err) = client.subscribe(
-                        &thread_id,
-                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                    ) {
-                        let _ = client.unsubscribe(&thread_id);
-                        if let Ok(mut inner) = self.inner.lock() {
-                            inner.remove(&session_id);
-                        }
-                        return Err(AgentChatError::Spawn(err.to_string()));
-                    }
-                }
-            }
-            (Engine::V2, AgentProvider::ClaudeCode) => {
-                let client = self.claude_bridge_client()?;
-                client
-                    .chat_start(
-                        &session_id,
-                        project_root,
-                        model,
-                        overrides.effort,
-                        provider_session_id,
-                        Some(
-                            overrides
-                                .permission_mode
-                                .filter(|value| !value.trim().is_empty())
-                                .unwrap_or_else(|| "default".to_string()),
-                        ),
-                        overrides.allowed_tools,
-                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                    )
-                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
-            }
-            (Engine::V2, AgentProvider::Omp) => {
-                if let Some((client, current_model)) = reusable_omp {
-                    client
-                        .set_sink(self.wrapping_sink(session_id.clone(), chat_id.to_string()))
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
-                    if current_model != model {
-                        if let Some(model) = model.as_deref() {
-                            client
-                                .set_model(model)
-                                .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
-                        }
-                    }
-                    if let Some(state) = self.lock_inner()?.get_mut(&session_id) {
-                        state.omp_client = Some(client);
-                    }
-                } else {
-                    let mut options = OmpAcpOptions {
-                        binary: self
-                            .omp_binary()
-                            .map(PathBuf::from)
-                            .unwrap_or_else(|| PathBuf::from("omp")),
-                        project_root,
-                        session: provider_session_id
-                            .map(OmpAcpSessionOpen::Resume)
-                            .unwrap_or(OmpAcpSessionOpen::New),
-                        model,
-                        mcp_servers: overrides.mcp_servers,
-                        sink: self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                    };
-                    let resume_requested = matches!(options.session, OmpAcpSessionOpen::Resume(_));
-                    let client = match OmpAcpClient::spawn(options.clone()) {
-                        Ok(client) => Ok(client),
-                        // Provider session ids are opaque and may expire outside
-                        // PickForge. Only a typed failure from the resume/open
-                        // exchange gets one isolated fresh-session attempt.
-                        // Model/config application happens after that exchange
-                        // and must never abandon a successfully resumed session.
-                        Err(OmpAcpError::SessionOpen(_)) if resume_requested => {
-                            options.session = OmpAcpSessionOpen::New;
-                            OmpAcpClient::spawn(options)
-                        }
-                        Err(error) => Err(error),
-                    }
-                    .map(Arc::new)
-                    .map_err(|err| {
-                        if let Ok(mut inner) = self.inner.lock() {
-                            inner.remove(&session_id);
-                        }
-                        let _ = self.db.agent_session_set_status(&session_id, "failed");
-                        AgentChatError::Spawn(err.to_string())
-                    })?;
-                    let provider_session_id = client
-                        .provider_session_id()
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
-                    self.db
-                        .agent_session_set_provider_session_id(&session_id, &provider_session_id)?;
-                    if let Some(state) = self.lock_inner()?.get_mut(&session_id) {
-                        state.provider_session_id = Some(provider_session_id);
-                        state.omp_client = Some(client);
-                    }
-                }
-            }
-            (Engine::V2, AgentProvider::Pi) => {
-                let existing_client = self
-                    .lock_inner()?
-                    .get(&session_id)
-                    .and_then(|state| state.pi_client.clone())
-                    .filter(|client| !client.is_closed());
-                if existing_client.is_none() {
-                    let session_root = self.pi_session_root.clone();
-                    let session_dir = session_root.join("agent-sessions").join("pi");
-                    let persisted_path = provider_session_id
-                        .as_deref()
-                        .map(PathBuf::from)
-                        .filter(|path| path.is_absolute() && path.starts_with(&session_dir));
-                    let session_path = persisted_path
-                        .unwrap_or_else(|| session_dir.join(format!("{session_id}.jsonl")));
-                    let client = spawn_pi_rpc(
-                        PiRpcOptions {
-                            cwd: project_root.clone(),
-                            session_root,
-                            session_dir,
-                            session_path,
-                            model: model.clone(),
-                            binary: self.pi_binary(),
-                            no_extensions: false,
-                            offline: false,
-                            environment_overrides: HashMap::new(),
-                        },
-                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                    )
-                    .map(Arc::new)
-                    .map_err(|error| {
-                        if let Ok(mut inner) = self.inner.lock() {
-                            inner.remove(&session_id);
-                        }
-                        let _ = self.db.agent_session_set_status(&session_id, "failed");
-                        AgentChatError::Spawn(error.to_string())
-                    })?;
-                    let mut inner = self.lock_inner()?;
-                    let state = inner
-                        .get_mut(&session_id)
-                        .ok_or_else(|| AgentChatError::UnknownSession(session_id.clone()))?;
-                    state.pi_client = Some(client);
-                }
-            }
-            (Engine::V1, _) => {}
-        }
-
-        self.unsubscribe_replaced_codex_threads(chat_id, &session_id);
-
-        Ok(session_id)
+        Ok(())
     }
 
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
+    /// Subscribes to a resumed/opened Codex v2 thread, tearing the session
+    /// back down if the subscription itself fails to attach.
+    fn subscribe_codex_v2_thread(
+        &self,
+        chat_id: &str,
+        session_id: &str,
+        codex_app_client: Option<(Arc<CodexAppClient>, String)>,
+    ) -> Result<(), AgentChatError> {
+        let Some((client, thread_id)) = codex_app_client else {
+            return Ok(());
+        };
+        if let Err(err) = client.subscribe(
+            &thread_id,
+            self.wrapping_sink(session_id.to_string(), chat_id.to_string()),
+        ) {
+            let _ = client.unsubscribe(&thread_id);
+            if let Ok(mut inner) = self.inner.lock() {
+                inner.remove(session_id);
+            }
+            return Err(AgentChatError::Spawn(err.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Starts a Claude Code v2 bridge chat for the session.
+    fn start_claude_v2_chat(
+        &self,
+        chat_id: &str,
+        session_id: &str,
+        project_root: PathBuf,
+        model: Option<String>,
+        provider_session_id: Option<String>,
+        overrides: AgentStartOverrides,
+    ) -> Result<(), AgentChatError> {
+        let client = self.claude_bridge_client()?;
+        client
+            .chat_start(
+                session_id,
+                project_root,
+                model,
+                overrides.effort,
+                provider_session_id,
+                Some(
+                    overrides
+                        .permission_mode
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "default".to_string()),
+                ),
+                overrides.allowed_tools,
+                self.wrapping_sink(session_id.to_string(), chat_id.to_string()),
+            )
+            .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        Ok(())
+    }
+
+    /// Attaches to (or spawns) the OMP ACP session for the session, reusing
+    /// a still-live client under matching identity when one is available.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn start_omp_v2_session(
+        &self,
+        chat_id: &str,
+        session_id: &str,
+        project_root: PathBuf,
+        model: Option<String>,
+        provider_session_id: Option<String>,
+        mcp_servers: Vec<serde_json::Value>,
+        reusable_omp: Option<(Arc<OmpAcpClient>, Option<String>)>,
+    ) -> Result<(), AgentChatError> {
+        if let Some((client, current_model)) = reusable_omp {
+            client
+                .set_sink(self.wrapping_sink(session_id.to_string(), chat_id.to_string()))
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+            if current_model != model {
+                if let Some(model) = model.as_deref() {
+                    client
+                        .set_model(model)
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                }
+            }
+            if let Some(state) = self.lock_inner()?.get_mut(session_id) {
+                state.omp_client = Some(client);
+            }
+            return Ok(());
+        }
+        let mut options = OmpAcpOptions {
+            binary: self
+                .omp_binary()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("omp")),
+            project_root,
+            session: provider_session_id
+                .map(OmpAcpSessionOpen::Resume)
+                .unwrap_or(OmpAcpSessionOpen::New),
+            model,
+            mcp_servers,
+            sink: self.wrapping_sink(session_id.to_string(), chat_id.to_string()),
+        };
+        let resume_requested = matches!(options.session, OmpAcpSessionOpen::Resume(_));
+        let client = match OmpAcpClient::spawn(options.clone()) {
+            Ok(client) => Ok(client),
+            // Provider session ids are opaque and may expire outside
+            // PickForge. Only a typed failure from the resume/open
+            // exchange gets one isolated fresh-session attempt.
+            // Model/config application happens after that exchange
+            // and must never abandon a successfully resumed session.
+            Err(OmpAcpError::SessionOpen(_)) if resume_requested => {
+                options.session = OmpAcpSessionOpen::New;
+                OmpAcpClient::spawn(options)
+            }
+            Err(error) => Err(error),
+        }
+        .map(Arc::new)
+        .map_err(|err| {
+            if let Ok(mut inner) = self.inner.lock() {
+                inner.remove(session_id);
+            }
+            let _ = self.db.agent_session_set_status(session_id, "failed");
+            AgentChatError::Spawn(err.to_string())
+        })?;
+        let provider_session_id = client
+            .provider_session_id()
+            .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        self.db
+            .agent_session_set_provider_session_id(session_id, &provider_session_id)?;
+        if let Some(state) = self.lock_inner()?.get_mut(session_id) {
+            state.provider_session_id = Some(provider_session_id);
+            state.omp_client = Some(client);
+        }
+        Ok(())
+    }
+
+    /// Attaches to (or spawns) the Pi RPC session for the session, reusing a
+    /// still-live client when one is already attached.
+    fn start_pi_v2_session(
+        &self,
+        chat_id: &str,
+        session_id: &str,
+        project_root: PathBuf,
+        model: Option<String>,
+        provider_session_id: Option<String>,
+    ) -> Result<(), AgentChatError> {
+        let existing_client = self
+            .lock_inner()?
+            .get(session_id)
+            .and_then(|state| state.pi_client.clone())
+            .filter(|client| !client.is_closed());
+        if existing_client.is_some() {
+            return Ok(());
+        }
+        let session_root = self.pi_session_root.clone();
+        let session_dir = session_root.join("agent-sessions").join("pi");
+        let persisted_path = provider_session_id
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && path.starts_with(&session_dir));
+        let session_path =
+            persisted_path.unwrap_or_else(|| session_dir.join(format!("{session_id}.jsonl")));
+        let client = spawn_pi_rpc(
+            PiRpcOptions {
+                cwd: project_root,
+                session_root,
+                session_dir,
+                session_path,
+                model,
+                binary: self.pi_binary(),
+                no_extensions: false,
+                offline: false,
+                environment_overrides: HashMap::new(),
+            },
+            self.wrapping_sink(session_id.to_string(), chat_id.to_string()),
+        )
+        .map(Arc::new)
+        .map_err(|error| {
+            if let Ok(mut inner) = self.inner.lock() {
+                inner.remove(session_id);
+            }
+            let _ = self.db.agent_session_set_status(session_id, "failed");
+            AgentChatError::Spawn(error.to_string())
+        })?;
+        let mut inner = self.lock_inner()?;
+        let state = inner
+            .get_mut(session_id)
+            .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+        state.pi_client = Some(client);
+        Ok(())
+    }
+
     pub fn send(
         &self,
         session_id: &str,
@@ -635,11 +837,8 @@ impl AgentChatManager {
             .into_iter()
             .filter(|path| !path.trim().is_empty())
             .collect::<Vec<_>>();
-        // Snapshot under a short lock: acquiring a provider client can evict a
-        // dead one, and eviction relocks `inner` — holding it across that call
-        // would self-deadlock the manager. The turn is claimed atomically via
-        // claim_turn once a handle exists.
-        let (
+        let snapshot = self.snapshot_for_send(session_id, &turn_model, !images.is_empty())?;
+        let SendSnapshot {
             chat_id,
             project_root,
             remote,
@@ -654,49 +853,8 @@ impl AgentChatManager {
             allowed_tools,
             omp_client,
             pi_client,
-        ) = {
-            let mut inner = self.lock_inner()?;
-            let state = inner
-                .get_mut(session_id)
-                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-            if state.active_turn.is_some() {
-                return Err(AgentChatError::TurnActive);
-            }
-            if state.provider == AgentProvider::Pi && !images.is_empty() {
-                return Err(AgentChatError::Unsupported(
-                    "Pi RPC image-path input is not supported by PickForge".to_string(),
-                ));
-            }
-            if state.engine == Engine::V1 && !images.is_empty() {
-                return Err(AgentChatError::Unsupported(
-                    "v1 agent engine cannot accept image input".to_string(),
-                ));
-            }
-            state.last_turn_model = match state.provider {
-                AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
-                AgentProvider::ClaudeCode | AgentProvider::Omp | AgentProvider::Pi => {
-                    state.model.clone()
-                }
-            };
-            (
-                state.chat_id.clone(),
-                state.project_root.clone(),
-                state.remote.clone(),
-                state.provider,
-                state.engine,
-                state.model.clone(),
-                state.provider_session_id.clone(),
-                state.sandbox.clone(),
-                state.approval_policy.clone(),
-                state.effort.clone(),
-                state.permission_mode.clone(),
-                state.allowed_tools.clone(),
-                state.omp_client.clone(),
-                state.pi_client.clone(),
-            )
-        };
+        } = snapshot;
         let codex_model = turn_model.or_else(|| session_model.clone());
-        let session_id_owned = session_id.to_string();
         let remote_v1 = remote.is_some();
         let v1_overrides = if engine == Engine::V1 {
             v1_turn_overrides(
@@ -713,276 +871,445 @@ impl AgentChatManager {
             V1TurnOverrides::default()
         };
 
-        // Persist the prompt BEFORE the provider dispatch so it always wins the
-        // sequence race against assistant/usage events the reader thread may
-        // append the instant the turn starts — otherwise reloaded history can
-        // show the reply before the prompt. A dispatch that fails, or a session
-        // disposed mid-flight, rolls these rows back so no phantom prompt (or
-        // orphan of a deleted chat) survives.
-        let persist_prompt = |db: &Database| -> Result<Vec<i64>, AgentChatError> {
-            let mut seqs =
-                vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
-            if !images.is_empty() {
-                let payload =
-                    serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
-                match db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload) {
-                    Ok(seq) => seqs.push(seq),
-                    // The message committed but its attachments didn't — roll the
-                    // message back too so a half-persisted prompt never survives.
-                    Err(err) => {
-                        let _ = db.agent_prompt_rollback(&chat_id, &seqs);
-                        return Err(err.into());
-                    }
-                }
-            }
-            Ok(seqs)
-        };
-        let rollback_prompt = |seqs: &[i64]| {
-            let _ = self.db.agent_prompt_rollback(&chat_id, seqs);
-        };
-
         self.db.agent_session_set_status(session_id, "running")?;
 
         if engine == Engine::V2 && provider == AgentProvider::Codex {
-            let Some(thread_id) = non_empty(provider_session_id) else {
-                let _ = self.db.agent_session_set_status(session_id, "failed");
-                return Err(AgentChatError::Spawn(
-                    "codex app-server session has no thread id".to_string(),
-                ));
-            };
-            let client = match self.codex_app_client(project_root) {
-                Ok(client) => client,
-                Err(err) => {
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    return Err(err);
-                }
-            };
-            let turn_id = Arc::new(Mutex::new(None));
-            let pending_interrupt = Arc::new(AtomicBool::new(false));
-            if !self.claim_turn(
+            return self.dispatch_codex_v2_turn(
                 session_id,
-                ActiveTurn::new(ActiveTurnHandle::CodexApp {
-                    client: Arc::clone(&client),
-                    thread_id: thread_id.clone(),
-                    turn_id: Arc::clone(&turn_id),
-                    pending_interrupt: Arc::clone(&pending_interrupt),
-                }),
-            )? {
-                return Ok(());
-            }
-            let prompt_seqs =
-                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
-
-            // Arm cancellation BEFORE the request so a turn/started arriving
-            // during the wait is captured, then reconcile on the outcome so
-            // only an orphaned (timed-out) turn is interrupted, never a legit
-            // one on the same thread.
-            client.begin_turn_start(&thread_id);
-            match client.turn_start(
-                &thread_id,
+                &chat_id,
                 text,
+                provider_session_id,
+                project_root,
                 codex_model,
-                effort.clone(),
+                effort,
                 &images,
                 sandbox,
                 approval_policy,
-            ) {
-                Ok(started_turn_id) => {
-                    client.finish_turn_start_ok(&thread_id, &started_turn_id);
-                    // Disposed while turn/start was in flight: the session (and
-                    // its just-installed turn) is gone — drop the orphan prompt.
-                    // dispose() could only arm pending_interrupt (the turn id
-                    // wasn't known yet), so stop the now-started server turn
-                    // here or it keeps running headless.
-                    if !self.session_present(session_id) {
-                        if pending_interrupt.swap(false, Ordering::SeqCst) {
-                            let _ = client.turn_interrupt(&thread_id, &started_turn_id);
-                        }
-                        rollback_prompt(&prompt_seqs);
-                        return Ok(());
-                    }
-                    *turn_id.lock().map_err(|_| {
-                        AgentChatError::Spawn("agent turn lock poisoned".to_string())
-                    })? = Some(started_turn_id);
-                    // swap: exactly one of send()/kill() fires the interrupt.
+            );
+        }
+        if engine == Engine::V2 && provider == AgentProvider::Pi {
+            return self.dispatch_pi_v2_turn(session_id, &chat_id, text, &images, pi_client);
+        }
+        if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
+            return self.dispatch_claude_v2_turn(
+                session_id,
+                &chat_id,
+                text,
+                &images,
+                project_root,
+                session_model,
+                session_effort,
+                provider_session_id,
+                permission_mode,
+                allowed_tools,
+            );
+        }
+        if engine == Engine::V2 && provider == AgentProvider::Omp {
+            return self.dispatch_omp_v2_turn(session_id, &chat_id, text, &images, omp_client);
+        }
+        self.dispatch_v1_turn(
+            engine,
+            provider,
+            session_id,
+            &chat_id,
+            text,
+            project_root,
+            codex_model,
+            session_model,
+            v1_overrides,
+            provider_session_id,
+            remote,
+        )
+    }
+
+    /// Snapshots the session state needed to dispatch a `send` turn under a
+    /// short lock: acquiring a provider client can evict a dead one, and
+    /// eviction relocks `inner` — holding it across that call would
+    /// self-deadlock the manager. The turn is claimed atomically via
+    /// `claim_turn` once a handle exists.
+    fn snapshot_for_send(
+        &self,
+        session_id: &str,
+        turn_model: &Option<String>,
+        has_images: bool,
+    ) -> Result<SendSnapshot, AgentChatError> {
+        let mut inner = self.lock_inner()?;
+        let state = inner
+            .get_mut(session_id)
+            .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+        if state.active_turn.is_some() {
+            return Err(AgentChatError::TurnActive);
+        }
+        if state.provider == AgentProvider::Pi && has_images {
+            return Err(AgentChatError::Unsupported(
+                "Pi RPC image-path input is not supported by PickForge".to_string(),
+            ));
+        }
+        if state.engine == Engine::V1 && has_images {
+            return Err(AgentChatError::Unsupported(
+                "v1 agent engine cannot accept image input".to_string(),
+            ));
+        }
+        state.last_turn_model = match state.provider {
+            AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
+            AgentProvider::ClaudeCode | AgentProvider::Omp | AgentProvider::Pi => {
+                state.model.clone()
+            }
+        };
+        Ok(SendSnapshot {
+            chat_id: state.chat_id.clone(),
+            project_root: state.project_root.clone(),
+            remote: state.remote.clone(),
+            provider: state.provider,
+            engine: state.engine,
+            session_model: state.model.clone(),
+            provider_session_id: state.provider_session_id.clone(),
+            sandbox: state.sandbox.clone(),
+            approval_policy: state.approval_policy.clone(),
+            session_effort: state.effort.clone(),
+            permission_mode: state.permission_mode.clone(),
+            allowed_tools: state.allowed_tools.clone(),
+            omp_client: state.omp_client.clone(),
+            pi_client: state.pi_client.clone(),
+        })
+    }
+
+    /// Persists the prompt BEFORE the provider dispatch so it always wins the
+    /// sequence race against assistant/usage events the reader thread may
+    /// append the instant the turn starts — otherwise reloaded history can
+    /// show the reply before the prompt. A dispatch that fails, or a session
+    /// disposed mid-flight, rolls these rows back via `rollback_send_prompt`
+    /// so no phantom prompt (or orphan of a deleted chat) survives.
+    fn persist_send_prompt(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        images: &[String],
+    ) -> Result<Vec<i64>, AgentChatError> {
+        let mut seqs = vec![self
+            .db
+            .agent_message_append(session_id, chat_id, "user", text)?];
+        if !images.is_empty() {
+            let payload = serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
+            match self
+                .db
+                .agent_item_append(session_id, chat_id, "attachments", &payload)
+            {
+                Ok(seq) => seqs.push(seq),
+                // The message committed but its attachments didn't — roll the
+                // message back too so a half-persisted prompt never survives.
+                Err(err) => {
+                    let _ = self.db.agent_prompt_rollback(chat_id, &seqs);
+                    return Err(err.into());
+                }
+            }
+        }
+        Ok(seqs)
+    }
+
+    fn rollback_send_prompt(&self, chat_id: &str, seqs: &[i64]) {
+        let _ = self.db.agent_prompt_rollback(chat_id, seqs);
+    }
+
+    /// Dispatches a turn to a Codex v2 app-server thread.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn dispatch_codex_v2_turn(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        provider_session_id: Option<String>,
+        project_root: PathBuf,
+        codex_model: Option<String>,
+        effort: Option<String>,
+        images: &[String],
+        sandbox: Option<String>,
+        approval_policy: Option<String>,
+    ) -> Result<(), AgentChatError> {
+        let Some(thread_id) = non_empty(provider_session_id) else {
+            let _ = self.db.agent_session_set_status(session_id, "failed");
+            return Err(AgentChatError::Spawn(
+                "codex app-server session has no thread id".to_string(),
+            ));
+        };
+        let client = match self.codex_app_client(project_root) {
+            Ok(client) => client,
+            Err(err) => {
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                return Err(err);
+            }
+        };
+        let turn_id = Arc::new(Mutex::new(None));
+        let pending_interrupt = Arc::new(AtomicBool::new(false));
+        if !self.claim_turn(
+            session_id,
+            ActiveTurn::new(ActiveTurnHandle::CodexApp {
+                client: Arc::clone(&client),
+                thread_id: thread_id.clone(),
+                turn_id: Arc::clone(&turn_id),
+                pending_interrupt: Arc::clone(&pending_interrupt),
+            }),
+        )? {
+            return Ok(());
+        }
+        let prompt_seqs = self
+            .persist_send_prompt(session_id, chat_id, text, images)
+            .map_err(|err| self.abort_send(session_id, err))?;
+
+        // Arm cancellation BEFORE the request so a turn/started arriving
+        // during the wait is captured, then reconcile on the outcome so
+        // only an orphaned (timed-out) turn is interrupted, never a legit
+        // one on the same thread.
+        client.begin_turn_start(&thread_id);
+        match client.turn_start(
+            &thread_id,
+            text,
+            codex_model,
+            effort,
+            images,
+            sandbox,
+            approval_policy,
+        ) {
+            Ok(started_turn_id) => {
+                client.finish_turn_start_ok(&thread_id, &started_turn_id);
+                // Disposed while turn/start was in flight: the session (and
+                // its just-installed turn) is gone — drop the orphan prompt.
+                // dispose() could only arm pending_interrupt (the turn id
+                // wasn't known yet), so stop the now-started server turn
+                // here or it keeps running headless.
+                if !self.session_present(session_id) {
                     if pending_interrupt.swap(false, Ordering::SeqCst) {
-                        let turn_id = turn_id
-                            .lock()
-                            .map_err(|_| {
-                                AgentChatError::Spawn("agent turn lock poisoned".to_string())
-                            })?
-                            .clone()
-                            .ok_or_else(|| {
-                                AgentChatError::Spawn(
-                                    "codex app-server turn id missing".to_string(),
-                                )
-                            })?;
-                        client
-                            .turn_interrupt(&thread_id, &turn_id)
-                            .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                        let _ = client.turn_interrupt(&thread_id, &started_turn_id);
                     }
+                    self.rollback_send_prompt(chat_id, &prompt_seqs);
                     return Ok(());
                 }
-                Err(err) => {
-                    // A local timeout doesn't mean the app-server rejected the
-                    // turn — it may have accepted and started running it, so
-                    // stay armed and interrupt that orphan once its turn/started
-                    // is seen. Any other error means no turn was created.
-                    if matches!(err, CodexAppError::RequestTimeout { .. }) {
-                        client.finish_turn_start_timeout(&thread_id);
-                    } else {
-                        client.finish_turn_start_err(&thread_id);
-                    }
-                    rollback_prompt(&prompt_seqs);
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
-                        turn.reap();
-                    }
-                    return Err(AgentChatError::Spawn(err.to_string()));
+                *turn_id
+                    .lock()
+                    .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))? =
+                    Some(started_turn_id);
+                // swap: exactly one of send()/kill() fires the interrupt.
+                if pending_interrupt.swap(false, Ordering::SeqCst) {
+                    let turn_id = turn_id
+                        .lock()
+                        .map_err(|_| {
+                            AgentChatError::Spawn("agent turn lock poisoned".to_string())
+                        })?
+                        .clone()
+                        .ok_or_else(|| {
+                            AgentChatError::Spawn("codex app-server turn id missing".to_string())
+                        })?;
+                    client
+                        .turn_interrupt(&thread_id, &turn_id)
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
                 }
+                Ok(())
             }
-        }
-
-        if engine == Engine::V2 && provider == AgentProvider::Pi {
-            let client = pi_client.ok_or_else(|| {
-                AgentChatError::Spawn("Pi RPC client is not running".to_string())
-            })?;
-            if client.is_closed() {
+            Err(err) => {
+                // A local timeout doesn't mean the app-server rejected the
+                // turn — it may have accepted and started running it, so
+                // stay armed and interrupt that orphan once its turn/started
+                // is seen. Any other error means no turn was created.
+                if matches!(err, CodexAppError::RequestTimeout { .. }) {
+                    client.finish_turn_start_timeout(&thread_id);
+                } else {
+                    client.finish_turn_start_err(&thread_id);
+                }
+                self.rollback_send_prompt(chat_id, &prompt_seqs);
                 let _ = self.db.agent_session_set_status(session_id, "failed");
-                return Err(AgentChatError::Spawn("Pi RPC client is closed".to_string()));
+                if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                    turn.reap();
+                }
+                Err(AgentChatError::Spawn(err.to_string()))
             }
-            let prompt_started = Arc::new(AtomicBool::new(false));
-            let pending_interrupt = Arc::new(AtomicBool::new(false));
-            if !self.claim_turn(
+        }
+    }
+
+    /// Dispatches a turn to a Pi RPC v2 session.
+    fn dispatch_pi_v2_turn(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        images: &[String],
+        pi_client: Option<Arc<PiRpcClient>>,
+    ) -> Result<(), AgentChatError> {
+        let client = pi_client
+            .ok_or_else(|| AgentChatError::Spawn("Pi RPC client is not running".to_string()))?;
+        if client.is_closed() {
+            let _ = self.db.agent_session_set_status(session_id, "failed");
+            return Err(AgentChatError::Spawn("Pi RPC client is closed".to_string()));
+        }
+        let prompt_started = Arc::new(AtomicBool::new(false));
+        let pending_interrupt = Arc::new(AtomicBool::new(false));
+        if !self.claim_turn(
+            session_id,
+            ActiveTurn::new(ActiveTurnHandle::PiRpc {
+                client: Arc::clone(&client),
+                prompt_started: Arc::clone(&prompt_started),
+                pending_interrupt: Arc::clone(&pending_interrupt),
+            }),
+        )? {
+            return Ok(());
+        }
+        let prompt_seqs = self
+            .persist_send_prompt(session_id, chat_id, text, images)
+            .map_err(|err| self.abort_send(session_id, err))?;
+        match start_pi_prompt(&client, &prompt_started, &pending_interrupt, text) {
+            Ok(()) => {
+                if !self.session_present(session_id) {
+                    self.rollback_send_prompt(chat_id, &prompt_seqs);
+                }
+                Ok(())
+            }
+            Err(error) => {
+                self.rollback_send_prompt(chat_id, &prompt_seqs);
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                    turn.reap();
+                }
+                Err(AgentChatError::Spawn(error.to_string()))
+            }
+        }
+    }
+
+    /// Dispatches a turn to a Claude Code v2 bridge chat, transparently
+    /// restarting a bridge chat whose CLI process died between turns.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn dispatch_claude_v2_turn(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        images: &[String],
+        project_root: PathBuf,
+        session_model: Option<String>,
+        session_effort: Option<String>,
+        provider_session_id: Option<String>,
+        permission_mode: Option<String>,
+        allowed_tools: Option<Vec<String>>,
+    ) -> Result<(), AgentChatError> {
+        let client = match self.claude_bridge_client() {
+            Ok(client) => client,
+            Err(err) => {
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                return Err(err);
+            }
+        };
+        // The bridge chat dies with its claude CLI process (crash, auth
+        // expiry, idle exit) while the session stays resumable — restart it
+        // transparently instead of sending into a void.
+        if !client.chat_started(session_id) {
+            if let Err(err) = client.chat_start(
                 session_id,
-                ActiveTurn::new(ActiveTurnHandle::PiRpc {
-                    client: Arc::clone(&client),
-                    prompt_started: Arc::clone(&prompt_started),
-                    pending_interrupt: Arc::clone(&pending_interrupt),
-                }),
-            )? {
-                return Ok(());
-            }
-            let prompt_seqs =
-                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
-            return match start_pi_prompt(
-                &client,
-                &prompt_started,
-                &pending_interrupt,
-                text,
+                project_root,
+                session_model,
+                session_effort,
+                provider_session_id,
+                Some(
+                    permission_mode
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "default".to_string()),
+                ),
+                allowed_tools,
+                self.wrapping_sink(session_id.to_string(), chat_id.to_string()),
             ) {
-                Ok(()) => {
-                    if !self.session_present(session_id) {
-                        rollback_prompt(&prompt_seqs);
-                    }
-                    Ok(())
-                }
-                Err(error) => {
-                    rollback_prompt(&prompt_seqs);
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
-                        turn.reap();
-                    }
-                    Err(AgentChatError::Spawn(error.to_string()))
-                }
-            };
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                return Err(AgentChatError::Spawn(err.to_string()));
+            }
         }
+        if !self.claim_turn(
+            session_id,
+            ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
+                client: Arc::clone(&client),
+                chat_id: session_id.to_string(),
+            }),
+        )? {
+            return Ok(());
+        }
+        let prompt_seqs = self
+            .persist_send_prompt(session_id, chat_id, text, images)
+            .map_err(|err| self.abort_send(session_id, err))?;
+        match client.chat_send(session_id, text, images) {
+            Ok(()) => {
+                if !self.session_present(session_id) {
+                    self.rollback_send_prompt(chat_id, &prompt_seqs);
+                }
+                Ok(())
+            }
+            Err(err) => {
+                self.rollback_send_prompt(chat_id, &prompt_seqs);
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                    turn.reap();
+                }
+                Err(AgentChatError::Spawn(err.to_string()))
+            }
+        }
+    }
 
-        if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
-            let client = match self.claude_bridge_client() {
-                Ok(client) => client,
-                Err(err) => {
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    return Err(err);
-                }
-            };
-            // The bridge chat dies with its claude CLI process (crash, auth
-            // expiry, idle exit) while the session stays resumable — restart it
-            // transparently instead of sending into a void.
-            if !client.chat_started(&session_id_owned) {
-                if let Err(err) = client.chat_start(
-                    &session_id_owned,
-                    project_root.clone(),
-                    session_model.clone(),
-                    session_effort,
-                    provider_session_id.clone(),
-                    Some(
-                        permission_mode
-                            .filter(|value| !value.trim().is_empty())
-                            .unwrap_or_else(|| "default".to_string()),
-                    ),
-                    allowed_tools,
-                    self.wrapping_sink(session_id_owned.clone(), chat_id.clone()),
-                ) {
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    return Err(AgentChatError::Spawn(err.to_string()));
-                }
-            }
-            if !self.claim_turn(
-                session_id,
-                ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
-                    client: Arc::clone(&client),
-                    chat_id: session_id_owned.clone(),
-                }),
-            )? {
-                return Ok(());
-            }
-            let prompt_seqs =
-                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
-            return match client.chat_send(&session_id_owned, text, &images) {
-                Ok(()) => {
-                    if !self.session_present(session_id) {
-                        rollback_prompt(&prompt_seqs);
-                    }
-                    Ok(())
-                }
-                Err(err) => {
-                    rollback_prompt(&prompt_seqs);
-                    let _ = self.db.agent_session_set_status(session_id, "failed");
-                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
-                        turn.reap();
-                    }
-                    Err(AgentChatError::Spawn(err.to_string()))
-                }
-            };
+    /// Dispatches a turn to an OMP ACP v2 session.
+    fn dispatch_omp_v2_turn(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        images: &[String],
+        omp_client: Option<Arc<OmpAcpClient>>,
+    ) -> Result<(), AgentChatError> {
+        let client = omp_client
+            .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?;
+        if !self.claim_turn(
+            session_id,
+            ActiveTurn::new(ActiveTurnHandle::Omp {
+                client: Arc::clone(&client),
+            }),
+        )? {
+            return Ok(());
         }
+        let prompt_seqs = self
+            .persist_send_prompt(session_id, chat_id, text, images)
+            .map_err(|err| self.abort_send(session_id, err))?;
+        match client.prompt(text, images) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.rollback_send_prompt(chat_id, &prompt_seqs);
+                if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                    turn.reap();
+                }
+                let _ = self.db.agent_session_set_status(session_id, "idle");
+                Err(AgentChatError::Spawn(err.to_string()))
+            }
+        }
+    }
 
-        if engine == Engine::V2 && provider == AgentProvider::Omp {
-            let client = omp_client.ok_or_else(|| {
-                AgentChatError::Spawn("OMP ACP client is not running".to_string())
-            })?;
-            if !self.claim_turn(
-                session_id,
-                ActiveTurn::new(ActiveTurnHandle::Omp {
-                    client: Arc::clone(&client),
-                }),
-            )? {
-                return Ok(());
-            }
-            let prompt_seqs =
-                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
-            return match client.prompt(text, &images) {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    rollback_prompt(&prompt_seqs);
-                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
-                        turn.reap();
-                    }
-                    let _ = self.db.agent_session_set_status(session_id, "idle");
-                    Err(AgentChatError::Spawn(err.to_string()))
-                }
-            };
-        }
-        // V1 one-shot engine: the handle only exists after spawn, so a fast
-        // process failure can emit its terminal event before the turn is
-        // claimed. persist_prompt runs before spawn (seq order), and claim_turn
-        // reports whether a terminal already landed so a stale handle isn't
-        // installed on a dead process.
-        let prompt_seqs =
-            persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
+    /// Dispatches a turn to a V1 one-shot provider process. The handle only
+    /// exists after spawn, so a fast process failure can emit its terminal
+    /// event before the turn is claimed. The prompt is persisted before
+    /// spawn (seq order), and `claim_turn` reports whether a terminal
+    /// already landed so a stale handle isn't installed on a dead process.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn dispatch_v1_turn(
+        &self,
+        engine: Engine,
+        provider: AgentProvider,
+        session_id: &str,
+        chat_id: &str,
+        text: &str,
+        project_root: PathBuf,
+        codex_model: Option<String>,
+        session_model: Option<String>,
+        v1_overrides: V1TurnOverrides,
+        provider_session_id: Option<String>,
+        remote: Option<RemoteExec>,
+    ) -> Result<(), AgentChatError> {
+        let prompt_seqs = self
+            .persist_send_prompt(session_id, chat_id, text, &[])
+            .map_err(|err| self.abort_send(session_id, err))?;
         let spawned = match (engine, provider) {
             (Engine::V1, AgentProvider::Codex) => {
-                let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
+                let wrapped_sink = self.wrapping_sink(session_id.to_string(), chat_id.to_string());
                 spawn_codex_turn(
                     CodexTurnOptions {
                         prompt: text.to_string(),
@@ -1001,7 +1328,7 @@ impl AgentChatManager {
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))
             }
             (Engine::V1, AgentProvider::ClaudeCode) => {
-                let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
+                let wrapped_sink = self.wrapping_sink(session_id.to_string(), chat_id.to_string());
                 spawn_claude_turn(
                     ClaudeTurnOptions {
                         prompt: text.to_string(),
@@ -1038,7 +1365,7 @@ impl AgentChatManager {
                         let _ = turn.kill();
                         turn.reap();
                         if !self.session_present(session_id) {
-                            rollback_prompt(&prompt_seqs);
+                            self.rollback_send_prompt(chat_id, &prompt_seqs);
                         }
                         Ok(())
                     }
@@ -1046,13 +1373,13 @@ impl AgentChatManager {
                     Err(err) => {
                         let _ = turn.kill();
                         turn.reap();
-                        rollback_prompt(&prompt_seqs);
+                        self.rollback_send_prompt(chat_id, &prompt_seqs);
                         Err(err)
                     }
                 }
             }
             Err(err) => {
-                rollback_prompt(&prompt_seqs);
+                self.rollback_send_prompt(chat_id, &prompt_seqs);
                 let _ = self.db.agent_session_set_status(session_id, "failed");
                 Err(err)
             }
@@ -2179,28 +2506,23 @@ impl ActiveTurn {
     }
 }
 
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-fn handle_runner_event(
-    db: &Database,
+/// Whether a runner event for `session_id` is stale and must be dropped
+/// entirely (not persisted, not forwarded). Turn-scoped events for a session
+/// that no longer owns a turn are stale:
+///  - a disposed session (chat deleted / provider switched) may still get
+///    queued events before its subscription tears down — persisting them
+///    would recreate rows for a gone chat (tables have no chat FK);
+///  - a V2 turn whose start errored (e.g. timed out after the app-server
+///    accepted it) has its handle cleared, but the server can still emit a
+///    late turn/started + items whose terminal would then be skipped,
+///    wedging the UI as running.
+///
+/// SessionStarted/RateLimits/Noise are not turn-scoped and always pass.
+fn runner_event_is_stale(
     inner: &Arc<Mutex<HashMap<String, SessionState>>>,
-    remote_sessions: &Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     session_id: &str,
-    chat_id: &str,
-    event: AgentEvent,
-) {
-    let mut errors = Vec::new();
-    let mut active_turn = None;
-
-    // Turn-scoped events for a session that no longer owns a turn are stale and
-    // must be dropped entirely (not persisted, not forwarded):
-    //  - a disposed session (chat deleted / provider switched) may still get
-    //    queued events before its subscription tears down — persisting them
-    //    would recreate rows for a gone chat (tables have no chat FK);
-    //  - a V2 turn whose start errored (e.g. timed out after the app-server
-    //    accepted it) has its handle cleared, but the server can still emit a
-    //    late turn/started + items whose terminal would then be skipped,
-    //    wedging the UI as running.
-    // SessionStarted/RateLimits/Noise are not turn-scoped and always pass.
+    event: &AgentEvent,
+) -> bool {
     let (session_present, has_turn, is_v2) = inner
         .lock()
         .map(|states| {
@@ -2216,7 +2538,7 @@ fn handle_runner_event(
         })
         .unwrap_or((false, false, false));
     let turn_scoped = !matches!(
-        &event,
+        event,
         AgentEvent::SessionStarted { .. }
             | AgentEvent::SessionTitle { .. }
             | AgentEvent::ProviderPayload { .. }
@@ -2227,59 +2549,129 @@ fn handle_runner_event(
     );
     if !session_present
         && matches!(
-            &event,
+            event,
             AgentEvent::SessionTitle { .. } | AgentEvent::ProviderPayload { .. }
         )
     {
-        return;
+        return true;
     }
-    if turn_scoped && (!session_present || (is_v2 && !has_turn)) {
-        return;
-    }
+    turn_scoped && (!session_present || (is_v2 && !has_turn))
+}
 
-    match &event {
-        AgentEvent::SessionStarted {
-            provider_session_id,
-        } => {
-            let persisted_session_id = inner
-                .lock()
-                .ok()
-                .and_then(|states| {
-                    states.get(session_id).and_then(|state| {
-                        state.remote.as_ref().map(|remote| {
-                            persisted_remote_provider_session_id(remote, provider_session_id)
-                        })
-                    })
+/// Persists the provider session id assigned by `SessionStarted`, and (for a
+/// remote session) records it in `remote_sessions` so a later `start` on the
+/// same chat/host/root can resume it. Two separate short lock cycles on
+/// `inner` (read, then write), matching the original inline handling.
+fn handle_session_started(
+    db: &Database,
+    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    remote_sessions: &Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
+    session_id: &str,
+    provider_session_id: &str,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let persisted_session_id = inner
+        .lock()
+        .ok()
+        .and_then(|states| {
+            states.get(session_id).and_then(|state| {
+                state.remote.as_ref().map(|remote| {
+                    persisted_remote_provider_session_id(remote, provider_session_id)
                 })
-                .unwrap_or_else(|| provider_session_id.clone());
-            if let Err(err) =
-                db.agent_session_set_provider_session_id(session_id, &persisted_session_id)
-            {
-                errors.push(err.to_string());
-            }
-            if let Ok(mut states) = inner.lock() {
-                if let Some(state) = states.get_mut(session_id) {
-                    state.provider_session_id = Some(provider_session_id.clone());
-                    if let Some(remote) = state.remote.as_ref() {
-                        if let Ok(mut sessions) = remote_sessions.lock() {
-                            sessions.insert(
-                                RemoteSessionKey {
-                                    chat_id: state.chat_id.clone(),
-                                    provider: state.provider,
-                                    host: remote.host.clone(),
-                                    remote_root: remote.remote_root.clone(),
-                                },
-                                provider_session_id.clone(),
-                            );
-                        }
-                    }
+            })
+        })
+        .unwrap_or_else(|| provider_session_id.to_string());
+    if let Err(err) =
+        db.agent_session_set_provider_session_id(session_id, &persisted_session_id)
+    {
+        errors.push(err.to_string());
+    }
+    if let Ok(mut states) = inner.lock() {
+        if let Some(state) = states.get_mut(session_id) {
+            state.provider_session_id = Some(provider_session_id.to_string());
+            if let Some(remote) = state.remote.as_ref() {
+                if let Ok(mut sessions) = remote_sessions.lock() {
+                    sessions.insert(
+                        RemoteSessionKey {
+                            chat_id: state.chat_id.clone(),
+                            provider: state.provider,
+                            host: remote.host.clone(),
+                            remote_root: remote.remote_root.clone(),
+                        },
+                        provider_session_id.to_string(),
+                    );
                 }
             }
         }
+    }
+    errors
+}
+
+/// The status a `TurnFailed` event should persist: OMP surfaces a failed
+/// turn as a still-usable idle session; other providers mark the session
+/// failed.
+fn turn_failed_status(inner: &Arc<Mutex<HashMap<String, SessionState>>>, session_id: &str) -> &'static str {
+    inner
+        .lock()
+        .ok()
+        .and_then(|states| states.get(session_id).map(|state| state.provider))
+        .map_or("failed", |provider| {
+            if provider == AgentProvider::Omp {
+                "idle"
+            } else {
+                "failed"
+            }
+        })
+}
+
+/// Persists a terminal turn event, updates session status, and clears the
+/// active turn plus any pending approvals. Callers must already have checked
+/// `terminal_should_skip`.
+fn finish_runner_turn(
+    db: &Database,
+    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    session_id: &str,
+    chat_id: &str,
+    event: &AgentEvent,
+    status: &str,
+) -> (Vec<String>, Option<ActiveTurn>) {
+    let mut errors = Vec::new();
+    if let Err(err) = append_item(db, session_id, chat_id, event) {
+        errors.push(err);
+    }
+    if let Err(err) = db.agent_session_set_status(session_id, status) {
+        errors.push(err.to_string());
+    }
+    let active_turn = clear_active_turn(inner, session_id);
+    clear_pending_approvals(inner, session_id);
+    (errors, active_turn)
+}
+
+fn handle_runner_event(
+    db: &Database,
+    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    remote_sessions: &Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
+    session_id: &str,
+    chat_id: &str,
+    event: AgentEvent,
+) {
+    if runner_event_is_stale(inner, session_id, &event) {
+        return;
+    }
+
+    let (errors, active_turn) = match &event {
+        AgentEvent::SessionStarted {
+            provider_session_id,
+        } => (
+            handle_session_started(db, inner, remote_sessions, session_id, provider_session_id),
+            None,
+        ),
         AgentEvent::TextFinal { text, .. } => {
+            let mut errors = Vec::new();
             if let Err(err) = db.agent_message_append(session_id, chat_id, "assistant", text) {
                 errors.push(err.to_string());
             }
+            (errors, None)
         }
         AgentEvent::ThinkingFinal { .. }
         | AgentEvent::CommandStarted { .. }
@@ -2289,18 +2681,22 @@ fn handle_runner_event(
         | AgentEvent::ToolUse { .. }
         | AgentEvent::WebSearch { .. }
         | AgentEvent::PlanUpdate { .. } => {
+            let mut errors = Vec::new();
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }
+            (errors, None)
         }
         // Raw provider frames are live diagnostic events. They may contain
         // high-volume chunks and provider-specific data, so never turn them
         // into durable timeline rows.
-        AgentEvent::ProviderPayload { .. } => {}
+        AgentEvent::ProviderPayload { .. } => (Vec::new(), None),
         AgentEvent::SessionTitle { .. } => {
+            let mut errors = Vec::new();
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }
+            (errors, None)
         }
         AgentEvent::Usage { .. } => {
             let model = inner.lock().ok().and_then(|states| {
@@ -2311,46 +2707,24 @@ fn handle_runner_event(
                         .or_else(|| state.model.clone())
                 })
             });
+            let mut errors = Vec::new();
             if let Err(err) = append_usage_item(db, session_id, chat_id, &event, model) {
                 errors.push(err);
             }
+            (errors, None)
         }
         AgentEvent::TurnDone { .. } => {
             if terminal_should_skip(inner, session_id) {
                 return;
             }
-            if let Err(err) = append_item(db, session_id, chat_id, &event) {
-                errors.push(err);
-            }
-            if let Err(err) = db.agent_session_set_status(session_id, "idle") {
-                errors.push(err.to_string());
-            }
-            active_turn = clear_active_turn(inner, session_id);
-            clear_pending_approvals(inner, session_id);
+            finish_runner_turn(db, inner, session_id, chat_id, &event, "idle")
         }
         AgentEvent::TurnFailed { .. } => {
             if terminal_should_skip(inner, session_id) {
                 return;
             }
-            if let Err(err) = append_item(db, session_id, chat_id, &event) {
-                errors.push(err);
-            }
-            let status = inner
-                .lock()
-                .ok()
-                .and_then(|states| states.get(session_id).map(|state| state.provider))
-                .map_or("failed", |provider| {
-                    if provider == AgentProvider::Omp {
-                        "idle"
-                    } else {
-                        "failed"
-                    }
-                });
-            if let Err(err) = db.agent_session_set_status(session_id, status) {
-                errors.push(err.to_string());
-            }
-            active_turn = clear_active_turn(inner, session_id);
-            clear_pending_approvals(inner, session_id);
+            let status = turn_failed_status(inner, session_id);
+            finish_runner_turn(db, inner, session_id, chat_id, &event, status)
         }
         AgentEvent::ApprovalRequest { approval_id, .. } => {
             if let Ok(mut states) = inner.lock() {
@@ -2360,16 +2734,17 @@ fn handle_runner_event(
                         .push((approval_id.clone(), event.clone()));
                 }
             }
+            (Vec::new(), None)
         }
-        AgentEvent::TurnStarted => {}
+        AgentEvent::TurnStarted => (Vec::new(), None),
         AgentEvent::TextDelta { .. }
         | AgentEvent::ThinkingDelta { .. }
         | AgentEvent::CommandOutput { .. }
         | AgentEvent::ProviderEvent { .. }
         | AgentEvent::SessionUpdated { .. }
         | AgentEvent::Noise { .. }
-        | AgentEvent::RateLimits { .. } => {}
-    }
+        | AgentEvent::RateLimits { .. } => (Vec::new(), None),
+    };
 
     if let Some(turn) = active_turn {
         turn.reap();
@@ -2728,6 +3103,139 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn start_omp_session(
+        manager: &AgentChatManager,
+        chat_id: &str,
+        project_root: PathBuf,
+        overrides: AgentStartOverrides,
+        sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    ) -> Result<String, AgentChatError> {
+        manager.start(
+            chat_id,
+            project_root,
+            AgentProvider::Omp,
+            Engine::V2,
+            None,
+            overrides,
+            sink,
+        )
+    }
+
+    /// Drives a live OMP turn through approve/set_mode/interrupt/resend and
+    /// asserts it completes with the expected title + usage events, then
+    /// asserts no raw provider payloads were persisted to the timeline.
+    #[cfg(unix)]
+    fn omp_manager_lifecycle_drive_turn(
+        manager: &AgentChatManager,
+        db: &Database,
+        chat_id: &str,
+        session_id: &str,
+        approval_id: &str,
+        events2: &Arc<Mutex<Vec<AgentEvent>>>,
+    ) {
+        manager.approve(session_id, approval_id, "accept").unwrap();
+        manager
+            .set_mode(session_id, None, None, Some("default".to_string()))
+            .unwrap();
+        assert!(matches!(
+            manager.set_mode(session_id, None, None, Some("plan".to_string())),
+            Err(AgentChatError::Spawn(message)) if message.contains("did not advertise mode plan")
+        ));
+        manager.interrupt(session_id).unwrap();
+        wait_for_events(events2, |events| {
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::TurnDone {
+                    status: TurnStatus::Interrupted
+                }
+            ))
+        });
+        manager.send(session_id, "second", None, None, None).unwrap();
+        let completed = wait_for_events(events2, |events| {
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                }
+            ))
+        });
+        assert!(completed
+            .iter()
+            .any(|event| matches!(event, AgentEvent::SessionTitle { title } if title == "OMP managed title")));
+        assert!(completed.iter().any(|event| matches!(
+            event,
+            AgentEvent::Usage {
+                context_used: Some(10),
+                context_window: Some(100),
+                ..
+            }
+        )));
+        wait_for_status(db, chat_id, "idle");
+        let persisted_provider_payloads = db
+            .agent_timeline_for_chat(chat_id)
+            .unwrap()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    AgentTimelineEntry::Item { kind, .. } if kind == "providerPayload"
+                )
+            })
+            .count();
+        assert_eq!(persisted_provider_payloads, 0);
+    }
+
+    #[cfg(unix)]
+    fn omp_manager_lifecycle_script(log: &Path) -> String {
+        r#"#!/bin/sh
+log='__LOG__'
+printf 'launch\n' >> "$log"
+prompt_count=0
+prompt_id=
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-manager-session","modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/prompt"'*)
+      request_id=${line#*\"id\":}
+      request_id=${request_id%%,*}
+      prompt_id=$request_id
+      prompt_count=$((prompt_count + 1))
+      if [ "$prompt_count" -eq 1 ]; then
+        printf '%s\n' '{"jsonrpc":"2.0","id":"permission-1","method":"session/request_permission","params":{"sessionId":"omp-manager-session","toolCall":{"toolCallId":"tool-1","title":"Run checks","kind":"execute"},"options":[{"optionId":"once","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]}}'
+      else
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}'
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"usage_update","size":100,"used":10}}}'
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"session_info_update","title":"OMP managed title"}}}'
+        printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"stopReason\":\"end_turn\",\"usage\":{\"inputTokens\":2,\"outputTokens\":3,\"totalTokens\":5}}}"
+      fi
+      ;;
+    *'"method":"session/set_mode"'*)
+      request_id=${line#*\"id\":}
+      request_id=${request_id%%,*}
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{}}"
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$prompt_id,\"result\":{\"stopReason\":\"cancelled\"}}"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done
+"#
+        .replace("__LOG__", &log.to_string_lossy())
+    }
+
+    #[cfg(unix)]
     fn omp_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
         AgentChatManager::with_test_binaries(
             db,
@@ -2920,74 +3428,25 @@ for raw in sys.stdin:
 
     #[cfg(unix)]
     #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn omp_manager_lifecycle_reuses_live_client_and_resumes_after_dispose() {
         let log = std::env::temp_dir().join(format!(
             "pickforge-omp-manager-{}-{}.log",
             std::process::id(),
             now_millis()
         ));
-        let body = r#"#!/bin/sh
-log='__LOG__'
-printf 'launch\n' >> "$log"
-prompt_count=0
-prompt_id=
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$log"
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
-      ;;
-    *'"method":"session/new"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-manager-session","modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
-      ;;
-    *'"method":"session/resume"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
-      ;;
-    *'"method":"session/prompt"'*)
-      request_id=${line#*\"id\":}
-      request_id=${request_id%%,*}
-      prompt_id=$request_id
-      prompt_count=$((prompt_count + 1))
-      if [ "$prompt_count" -eq 1 ]; then
-        printf '%s\n' '{"jsonrpc":"2.0","id":"permission-1","method":"session/request_permission","params":{"sessionId":"omp-manager-session","toolCall":{"toolCallId":"tool-1","title":"Run checks","kind":"execute"},"options":[{"optionId":"once","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]}}'
-      else
-        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}'
-        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"usage_update","size":100,"used":10}}}'
-        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"session_info_update","title":"OMP managed title"}}}'
-        printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"stopReason\":\"end_turn\",\"usage\":{\"inputTokens\":2,\"outputTokens\":3,\"totalTokens\":5}}}"
-      fi
-      ;;
-    *'"method":"session/set_mode"'*)
-      request_id=${line#*\"id\":}
-      request_id=${request_id%%,*}
-      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{}}"
-      ;;
-    *'"method":"session/cancel"'*)
-      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$prompt_id,\"result\":{\"stopReason\":\"cancelled\"}}"
-      ;;
-    *'"method":"session/close"'*)
-      exit 0
-      ;;
-  esac
-done
-"#
-        .replace("__LOG__", &log.to_string_lossy());
+        let body = omp_manager_lifecycle_script(&log);
         let script = test_script("omp-lifecycle", &body);
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = omp_manager(Arc::clone(&db), &script);
         let (events1, sink1) = event_sink();
-        let session_id = manager
-            .start(
-                "omp-chat",
-                script.dir.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                AgentStartOverrides::default(),
-                sink1,
-            )
-            .unwrap();
+        let session_id = start_omp_session(
+            &manager,
+            "omp-chat",
+            script.dir.clone(),
+            AgentStartOverrides::default(),
+            sink1,
+        )
+        .unwrap();
         manager
             .send(&session_id, "first", None, None, None)
             .unwrap();
@@ -3003,17 +3462,14 @@ done
 
         let (events2, sink2) = event_sink();
         assert_eq!(
-            manager
-                .start(
-                    "omp-chat",
-                    script.dir.clone(),
-                    AgentProvider::Omp,
-                    Engine::V2,
-                    None,
-                    AgentStartOverrides::default(),
-                    sink2,
-                )
-                .unwrap(),
+            start_omp_session(
+                &manager,
+                "omp-chat",
+                script.dir.clone(),
+                AgentStartOverrides::default(),
+                sink2,
+            )
+            .unwrap(),
             session_id
         );
         wait_for_events(&events2, |events| {
@@ -3027,72 +3483,25 @@ done
             1
         );
 
-        manager.approve(&session_id, &approval_id, "accept").unwrap();
-        manager
-            .set_mode(&session_id, None, None, Some("default".to_string()))
-            .unwrap();
-        assert!(matches!(
-            manager.set_mode(&session_id, None, None, Some("plan".to_string())),
-            Err(AgentChatError::Spawn(message)) if message.contains("did not advertise mode plan")
-        ));
-        manager.interrupt(&session_id).unwrap();
-        wait_for_events(&events2, |events| {
-            events.iter().any(|event| matches!(
-                event,
-                AgentEvent::TurnDone {
-                    status: TurnStatus::Interrupted
-                }
-            ))
-        });
-        manager
-            .send(&session_id, "second", None, None, None)
-            .unwrap();
-        let completed = wait_for_events(&events2, |events| {
-            events.iter().any(|event| matches!(
-                event,
-                AgentEvent::TurnDone {
-                    status: TurnStatus::Completed
-                }
-            ))
-        });
-        assert!(completed
-            .iter()
-            .any(|event| matches!(event, AgentEvent::SessionTitle { title } if title == "OMP managed title")));
-        assert!(completed.iter().any(|event| matches!(
-            event,
-            AgentEvent::Usage {
-                context_used: Some(10),
-                context_window: Some(100),
-                ..
-            }
-        )));
-        wait_for_status(&db, "omp-chat", "idle");
-        let persisted_provider_payloads = db
-            .agent_timeline_for_chat("omp-chat")
-            .unwrap()
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry,
-                    AgentTimelineEntry::Item { kind, .. } if kind == "providerPayload"
-                )
-            })
-            .count();
-        assert_eq!(persisted_provider_payloads, 0);
+        omp_manager_lifecycle_drive_turn(
+            &manager,
+            &db,
+            "omp-chat",
+            &session_id,
+            &approval_id,
+            &events2,
+        );
         manager.dispose(&session_id);
 
         let (_, sink3) = event_sink();
-        let resumed = manager
-            .start(
-                "omp-chat",
-                script.dir.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                AgentStartOverrides::default(),
-                sink3,
-            )
-            .unwrap();
+        let resumed = start_omp_session(
+            &manager,
+            "omp-chat",
+            script.dir.clone(),
+            AgentStartOverrides::default(),
+            sink3,
+        )
+        .unwrap();
         assert_eq!(resumed, session_id);
         let log_contents = wait_for_file(&log, |value| {
             value.matches("launch\n").count() == 2 && value.contains("\"method\":\"session/resume\"")
@@ -3195,17 +3604,8 @@ done
     }
 
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-    fn omp_live_reuse_requires_exact_canonical_cwd_and_normalized_mcp_grants() {
-        use std::os::unix::fs::symlink;
-
-        let log = std::env::temp_dir().join(format!(
-            "pickforge-omp-identity-{}-{}.log",
-            std::process::id(),
-            now_millis()
-        ));
-        let body = r#"#!/bin/sh
+    fn omp_identity_script(log: &Path) -> String {
+        r#"#!/bin/sh
 log='__LOG__'
 printf 'launch\n' >> "$log"
 while IFS= read -r line; do
@@ -3225,7 +3625,20 @@ while IFS= read -r line; do
       ;;
   esac
 done"#
-        .replace("__LOG__", &log.to_string_lossy());
+            .replace("__LOG__", &log.to_string_lossy())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_live_reuse_requires_exact_canonical_cwd_and_normalized_mcp_grants() {
+        use std::os::unix::fs::symlink;
+
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-identity-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = omp_identity_script(&log);
         let script = test_script("omp-identity", &body);
         let real_root = script.dir.join("real-root");
         let other_root = script.dir.join("other-root");
@@ -3254,30 +3667,24 @@ done"#
             ..AgentStartOverrides::default()
         };
         let (_, first_sink) = event_sink();
-        let session_id = manager
-            .start(
-                "omp-identity-chat",
-                real_root.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                overrides(grants.clone()),
-                first_sink,
-            )
-            .unwrap();
+        let session_id = start_omp_session(
+            &manager,
+            "omp-identity-chat",
+            real_root.clone(),
+            overrides(grants.clone()),
+            first_sink,
+        )
+        .unwrap();
 
         let (_, alias_sink) = event_sink();
-        manager
-            .start(
-                "omp-identity-chat",
-                alias_root,
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                overrides(grants.iter().cloned().rev().collect()),
-                alias_sink,
-            )
-            .unwrap();
+        start_omp_session(
+            &manager,
+            "omp-identity-chat",
+            alias_root,
+            overrides(grants.iter().cloned().rev().collect()),
+            alias_sink,
+        )
+        .unwrap();
         assert_eq!(
             wait_for_file(&log, |value| value.matches("launch\n").count() == 1)
                 .matches("launch\n")
@@ -3288,31 +3695,35 @@ done"#
         let mut changed_grants = grants.clone();
         changed_grants[0]["env"][0]["value"] = serde_json::Value::String("second".to_string());
         let (_, changed_sink) = event_sink();
-        manager
-            .start(
-                "omp-identity-chat",
-                real_root.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                overrides(changed_grants.clone()),
-                changed_sink,
-            )
-            .unwrap();
+        start_omp_session(
+            &manager,
+            "omp-identity-chat",
+            real_root.clone(),
+            overrides(changed_grants.clone()),
+            changed_sink,
+        )
+        .unwrap();
         let (_, cwd_sink) = event_sink();
-        manager
-            .start(
-                "omp-identity-chat",
-                other_root.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                overrides(changed_grants),
-                cwd_sink,
-            )
-            .unwrap();
+        start_omp_session(
+            &manager,
+            "omp-identity-chat",
+            other_root.clone(),
+            overrides(changed_grants),
+            cwd_sink,
+        )
+        .unwrap();
 
-        let contents = wait_for_file(&log, |value| value.matches("launch\n").count() == 3);
+        assert_omp_identity_opened_sessions(&log, &real_root, &other_root);
+        manager.dispose(&session_id);
+        let _ = std::fs::remove_file(log);
+    }
+
+    /// Asserts the three `session/new`/`session/resume` requests logged by
+    /// `omp_live_reuse_requires_exact_canonical_cwd_and_normalized_mcp_grants`
+    /// opened with the expected cwd, MCP grant change, and resume/new mix.
+    #[cfg(unix)]
+    fn assert_omp_identity_opened_sessions(log: &PathBuf, real_root: &Path, other_root: &Path) {
+        let contents = wait_for_file(log, |value| value.matches("launch\n").count() == 3);
         let opened = contents
             .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -3343,20 +3754,11 @@ done"#
                 .count(),
             2
         );
-        manager.dispose(&session_id);
-        let _ = std::fs::remove_file(log);
     }
 
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-    fn omp_dead_transport_fails_boundedly_idles_and_resumes_on_restart() {
-        let log = std::env::temp_dir().join(format!(
-            "pickforge-omp-dead-{}-{}.log",
-            std::process::id(),
-            now_millis()
-        ));
-        let body = r#"#!/bin/sh
+    fn omp_dead_transport_script(log: &Path) -> String {
+        r#"#!/bin/sh
 log='__LOG__'
 marker="$log.recover"
 if [ -f "$marker" ]; then
@@ -3391,22 +3793,30 @@ while IFS= read -r line; do
       ;;
   esac
 done"#
-        .replace("__LOG__", &log.to_string_lossy());
+            .replace("__LOG__", &log.to_string_lossy())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_dead_transport_fails_boundedly_idles_and_resumes_on_restart() {
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-dead-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = omp_dead_transport_script(&log);
         let script = test_script("omp-dead", &body);
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = omp_manager(Arc::clone(&db), &script);
         let (events, sink) = event_sink();
-        let session_id = manager
-            .start(
-                "omp-dead-chat",
-                script.dir.clone(),
-                AgentProvider::Omp,
-                Engine::V2,
-                None,
-                AgentStartOverrides::default(),
-                sink,
-            )
-            .unwrap();
+        let session_id = start_omp_session(
+            &manager,
+            "omp-dead-chat",
+            script.dir.clone(),
+            AgentStartOverrides::default(),
+            sink,
+        )
+        .unwrap();
         manager
             .send(&session_id, "crash transport", None, None, None)
             .unwrap();
@@ -3438,17 +3848,14 @@ done"#
 
         let (recovered_events, recovered_sink) = event_sink();
         assert_eq!(
-            manager
-                .start(
-                    "omp-dead-chat",
-                    script.dir.clone(),
-                    AgentProvider::Omp,
-                    Engine::V2,
-                    None,
-                    AgentStartOverrides::default(),
-                    recovered_sink,
-                )
-                .unwrap(),
+            start_omp_session(
+                &manager,
+                "omp-dead-chat",
+                script.dir.clone(),
+                AgentStartOverrides::default(),
+                recovered_sink,
+            )
+            .unwrap(),
             session_id
         );
         manager
@@ -4058,12 +4465,8 @@ printf invoked > "$0.invoked"
     }
 
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-    fn v2_codex_start_send_approval_and_idle_flow() {
-        let script = test_script(
-            "codex-app-flow",
-            r#"#!/bin/sh
+    fn v2_codex_flow_script() -> &'static str {
+        r#"#!/bin/sh
 log="$0.stdin"
 : > "$log"
 while IFS= read -r line; do
@@ -4086,8 +4489,72 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#
+    }
+
+    /// Asserts the approval id, the ordering of the resumed turn/start
+    /// payload (image before text), and the idle-status timeline left by
+    /// `v2_codex_start_send_approval_and_idle_flow`.
+    #[cfg(unix)]
+    fn assert_v2_codex_flow_completed(
+        manager: &AgentChatManager,
+        db: &Database,
+        log: &PathBuf,
+        events: &Arc<Mutex<Vec<AgentEvent>>>,
+        session_id: &str,
+        approval_id: &str,
+    ) {
+        manager
+            .approve(session_id, approval_id, "approved")
+            .unwrap();
+        let approval_log = wait_for_file(log, |text| {
+            text.contains(r#""id":42"#) && text.contains(r#""decision":"approved""#)
+        });
+        assert!(approval_log.contains(r#""method":"turn/start""#));
+        assert!(approval_log.contains(r#""effort":"high""#));
+        assert!(approval_log.contains(r#""type":"localImage""#));
+        assert!(approval_log.contains(r#""path":"/tmp/pickforge-shot.png""#));
+        assert!(approval_log.contains(r#""type":"text""#));
+        assert!(approval_log.contains(r#""text":"hello v2""#));
+        assert!(
+            approval_log.find(r#""type":"localImage""#).unwrap()
+                < approval_log.find(r#""text":"hello v2""#).unwrap()
         );
+
+        wait_for_events(events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                })
+            )
+        });
+        let row = wait_for_status(db, "chat-v2", "idle");
+        assert_eq!(row.id, session_id);
+        assert_eq!(row.provider_session_id.as_deref(), Some("thread-v2"));
+
+        let timeline = db.agent_timeline_for_chat("chat-v2").unwrap();
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "user" && content == "hello v2")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "assistant" && content == "assistant v2")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, .. } if kind == "usage")
+        }));
+        assert!(!timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, .. }
+                if kind == "approvalRequest" || kind == "rateLimits")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_start_send_approval_and_idle_flow() {
+        let script = test_script("codex-app-flow", v2_codex_flow_script());
         let log = script.path.with_file_name("fake-agent.stdin");
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = codex_manager(Arc::clone(&db), &script);
@@ -4139,51 +4606,7 @@ done
             .unwrap();
         assert_eq!(approval_id, "42");
 
-        manager
-            .approve(&session_id, &approval_id, "approved")
-            .unwrap();
-        let approval_log = wait_for_file(&log, |text| {
-            text.contains(r#""id":42"#) && text.contains(r#""decision":"approved""#)
-        });
-        assert!(approval_log.contains(r#""method":"turn/start""#));
-        assert!(approval_log.contains(r#""effort":"high""#));
-        assert!(approval_log.contains(r#""type":"localImage""#));
-        assert!(approval_log.contains(r#""path":"/tmp/pickforge-shot.png""#));
-        assert!(approval_log.contains(r#""type":"text""#));
-        assert!(approval_log.contains(r#""text":"hello v2""#));
-        assert!(
-            approval_log.find(r#""type":"localImage""#).unwrap()
-                < approval_log.find(r#""text":"hello v2""#).unwrap()
-        );
-
-        wait_for_events(&events, |events| {
-            matches!(
-                events.last(),
-                Some(AgentEvent::TurnDone {
-                    status: TurnStatus::Completed
-                })
-            )
-        });
-        let row = wait_for_status(&db, "chat-v2", "idle");
-        assert_eq!(row.id, session_id);
-        assert_eq!(row.provider_session_id.as_deref(), Some("thread-v2"));
-
-        let timeline = db.agent_timeline_for_chat("chat-v2").unwrap();
-        assert!(timeline.iter().any(|entry| {
-            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
-                if role == "user" && content == "hello v2")
-        }));
-        assert!(timeline.iter().any(|entry| {
-            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
-                if role == "assistant" && content == "assistant v2")
-        }));
-        assert!(timeline.iter().any(|entry| {
-            matches!(entry, AgentTimelineEntry::Item { kind, .. } if kind == "usage")
-        }));
-        assert!(!timeline.iter().any(|entry| {
-            matches!(entry, AgentTimelineEntry::Item { kind, .. }
-                if kind == "approvalRequest" || kind == "rateLimits")
-        }));
+        assert_v2_codex_flow_completed(&manager, &db, &log, &events, &session_id, &approval_id);
     }
 
     #[cfg(unix)]
@@ -4455,12 +4878,8 @@ done
     }
 
     #[cfg(unix)]
-    #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-    fn v2_codex_dead_client_broadcasts_failure_and_next_start_respawns() {
-        let script = test_script(
-            "codex-app-dead-respawn",
-            r#"#!/bin/sh
+    fn v2_codex_dead_respawn_script() -> &'static str {
+        r#"#!/bin/sh
 log="$0.stdin"
 count_file="$0.count"
 count=0
@@ -4499,8 +4918,13 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
-        );
+"#
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_dead_client_broadcasts_failure_and_next_start_respawns() {
+        let script = test_script("codex-app-dead-respawn", v2_codex_dead_respawn_script());
         let count_file = script.path.with_file_name("fake-agent.count");
         let first_pid_file = script.path.with_file_name("fake-agent.pid.1");
         let db = Arc::new(Database::open_in_memory().unwrap());
@@ -5711,9 +6135,51 @@ printf '%s\n' \
         manager.dispose(&session_id);
     }
 
+    /// Asserts the follow-up lifecycle in
+    /// `pi_follow_up_drains_inside_one_agent_lifecycle_and_allows_the_next_prompt`
+    /// produced exactly one turn/started + turn/done pair, both queued
+    /// prompts' assistant replies, and distinct item ids per message.
+    #[cfg(unix)]
+    fn assert_pi_follow_up_snapshot(events: &Arc<Mutex<Vec<AgentEvent>>>) {
+        let snapshot = events.lock().map(|events| events.clone()).unwrap_or_default();
+        assert_eq!(
+            snapshot
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnStarted))
+                .count(),
+            1,
+        );
+        assert_eq!(
+            snapshot
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
+                .count(),
+            1,
+        );
+        for expected in ["initial answer", "queued answer"] {
+            assert!(snapshot.iter().any(
+                |event| matches!(event, AgentEvent::TextFinal { text, .. } if text == expected)
+            ));
+        }
+        let message_ids = snapshot
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::TextFinal {
+                    item_id: Some(item_id),
+                    text,
+                } if text == "initial answer" || text == "queued answer" => Some(item_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            message_ids,
+            ["pi-message-1-1-0", "pi-message-1-2-0"],
+            "follow-up assistant messages in one agent lifecycle need distinct item ids",
+        );
+    }
+
     #[cfg(unix)]
     #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn pi_follow_up_drains_inside_one_agent_lifecycle_and_allows_the_next_prompt() {
         let script = pi_rpc_test_script("pi-follow-up-lifecycle");
         let db = Arc::new(Database::open_in_memory().unwrap());
@@ -5772,41 +6238,7 @@ printf '%s\n' \
             };
             assert!(states[&session_id].active_turn.is_none());
         }
-        let snapshot = events.lock().map(|events| events.clone()).unwrap_or_default();
-        assert_eq!(
-            snapshot
-                .iter()
-                .filter(|event| matches!(event, AgentEvent::TurnStarted))
-                .count(),
-            1,
-        );
-        assert_eq!(
-            snapshot
-                .iter()
-                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
-                .count(),
-            1,
-        );
-        for expected in ["initial answer", "queued answer"] {
-            assert!(snapshot.iter().any(
-                |event| matches!(event, AgentEvent::TextFinal { text, .. } if text == expected)
-            ));
-        }
-        let message_ids = snapshot
-            .iter()
-            .filter_map(|event| match event {
-                AgentEvent::TextFinal {
-                    item_id: Some(item_id),
-                    text,
-                } if text == "initial answer" || text == "queued answer" => Some(item_id.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            message_ids,
-            ["pi-message-1-1-0", "pi-message-1-2-0"],
-            "follow-up assistant messages in one agent lifecycle need distinct item ids",
-        );
+        assert_pi_follow_up_snapshot(&events);
 
         manager
             .send(&session_id, "next", None, None, None)

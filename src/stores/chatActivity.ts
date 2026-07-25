@@ -128,7 +128,61 @@ const DCS_ESC = 6; // saw ESC inside a DCS-class string
 const scanStates = new Map<string, Scan>();
 const scanKey = (chatId: string, paneId: string) => `${chatId}\u0000${paneId}`;
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function stepGround(c: number): { next: Scan; visible: boolean } {
+  if (c === 0x1b) return { next: ESC, visible: false };
+  if (c === 0x9b) return { next: CSI, visible: false };
+  if (c === 0x9d) return { next: OSC_STR, visible: false };
+  if (c === 0x90 || c === 0x98 || c === 0x9e || c === 0x9f) return { next: DCS_STR, visible: false };
+  if (c > 0x20 && c !== 0x7f && (c < 0x80 || c > 0x9f)) return { next: GROUND, visible: true };
+  return { next: GROUND, visible: false };
+}
+
+function stepEsc(c: number): Scan {
+  if (c === 0x5b) return CSI; // ESC [
+  if (c === 0x5d) return OSC_STR; // ESC ]
+  if (c === 0x50 || c === 0x58 || c === 0x5e || c === 0x5f) return DCS_STR; // ESC P/X/^/_
+  if (c >= 0x20 && c <= 0x2f) return ESC; // intermediate — ESC ( B et al.
+  if (c !== 0x1b) return GROUND; // final byte of the escape
+  return ESC;
+}
+
+function stepCsi(c: number): Scan {
+  if (c === 0x1b) return ESC; // aborted mid-sequence
+  if (c === 0x18 || c === 0x1a) return GROUND; // CAN/SUB abort
+  if (c >= 0x40 && c <= 0x7e) return GROUND; // final byte
+  return CSI;
+}
+
+function stepOscStr(c: number): Scan {
+  if (c === 0x07 || c === 0x9c) return GROUND; // BEL / C1 ST
+  if (c === 0x18 || c === 0x1a) return GROUND; // CAN/SUB abort
+  if (c === 0x1b) return OSC_ESC;
+  return OSC_STR;
+}
+
+/** `holdIndex` signals the VT "anywhere" rule: ESC aborts the string and
+ * starts a new sequence — without re-processing this byte under `ESC`, an
+ * unterminated OSC/DCS (binary spew) would swallow all later output forever. */
+function stepOscEsc(c: number): { next: Scan; holdIndex: boolean } {
+  if (c === 0x5c) return { next: GROUND, holdIndex: false }; // ESC \ = ST
+  if (c !== 0x1b) return { next: ESC, holdIndex: true };
+  return { next: OSC_ESC, holdIndex: false };
+}
+
+function stepDcsStr(c: number): Scan {
+  if (c === 0x9c) return GROUND; // C1 ST only — BEL is payload here
+  if (c === 0x18 || c === 0x1a) return GROUND; // CAN/SUB abort
+  if (c === 0x1b) return DCS_ESC;
+  return DCS_STR;
+}
+
+/** Same VT "anywhere" rule as `stepOscEsc`, for a DCS/SOS/PM/APC string. */
+function stepDcsEsc(c: number): { next: Scan; holdIndex: boolean } {
+  if (c === 0x5c) return { next: GROUND, holdIndex: false }; // ESC \ = ST
+  if (c !== 0x1b) return { next: ESC, holdIndex: true };
+  return { next: DCS_ESC, holdIndex: false };
+}
+
 function countVisibleChars(chatId: string, paneId: string, chunk: string): number {
   const key = scanKey(chatId, paneId);
   let state: Scan = scanStates.get(key) ?? GROUND;
@@ -136,53 +190,36 @@ function countVisibleChars(chatId: string, paneId: string, chunk: string): numbe
   for (let i = 0; i < chunk.length; i++) {
     const c = chunk.charCodeAt(i);
     switch (state) {
-      case GROUND:
-        if (c === 0x1b) state = ESC;
-        else if (c === 0x9b) state = CSI;
-        else if (c === 0x9d) state = OSC_STR;
-        else if (c === 0x90 || c === 0x98 || c === 0x9e || c === 0x9f) state = DCS_STR;
-        else if (c > 0x20 && c !== 0x7f && (c < 0x80 || c > 0x9f)) count++;
+      case GROUND: {
+        const step = stepGround(c);
+        state = step.next;
+        if (step.visible) count++;
         break;
+      }
       case ESC:
-        if (c === 0x5b) state = CSI; // ESC [
-        else if (c === 0x5d) state = OSC_STR; // ESC ]
-        else if (c === 0x50 || c === 0x58 || c === 0x5e || c === 0x5f)
-          state = DCS_STR; // ESC P/X/^/_
-        else if (c >= 0x20 && c <= 0x2f) break; // intermediate — ESC ( B et al.
-        else if (c !== 0x1b) state = GROUND; // final byte of the escape
+        state = stepEsc(c);
         break;
       case CSI:
-        if (c === 0x1b) state = ESC; // aborted mid-sequence
-        else if (c === 0x18 || c === 0x1a) state = GROUND; // CAN/SUB abort
-        else if (c >= 0x40 && c <= 0x7e) state = GROUND; // final byte
+        state = stepCsi(c);
         break;
       case OSC_STR:
-        if (c === 0x07 || c === 0x9c) state = GROUND; // BEL / C1 ST
-        else if (c === 0x18 || c === 0x1a) state = GROUND; // CAN/SUB abort
-        else if (c === 0x1b) state = OSC_ESC;
+        state = stepOscStr(c);
         break;
-      case OSC_ESC:
-        if (c === 0x5c) state = GROUND; // ESC \ = ST
-        else if (c !== 0x1b) {
-          // The VT "anywhere" rule: ESC aborts the string and starts a new
-          // sequence — without this an unterminated OSC/DCS (binary spew)
-          // would swallow all later output forever.
-          state = ESC;
-          i--;
-        }
+      case OSC_ESC: {
+        const step = stepOscEsc(c);
+        state = step.next;
+        if (step.holdIndex) i--;
         break;
+      }
       case DCS_STR:
-        if (c === 0x9c) state = GROUND; // C1 ST only — BEL is payload here
-        else if (c === 0x18 || c === 0x1a) state = GROUND; // CAN/SUB abort
-        else if (c === 0x1b) state = DCS_ESC;
+        state = stepDcsStr(c);
         break;
-      case DCS_ESC:
-        if (c === 0x5c) state = GROUND; // ESC \ = ST
-        else if (c !== 0x1b) {
-          state = ESC;
-          i--;
-        }
+      case DCS_ESC: {
+        const step = stepDcsEsc(c);
+        state = step.next;
+        if (step.holdIndex) i--;
         break;
+      }
     }
   }
   scanStates.set(key, state);

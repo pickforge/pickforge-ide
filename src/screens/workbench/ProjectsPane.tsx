@@ -130,6 +130,9 @@ async function pickProject() {
   const dir = await pickProjectDir();
   if (dir) await addProject(dir, basename(dir));
 }
+function openProject(root: string): void {
+  void selectProject(root);
+}
 
 type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm" | "remote";
 interface MenuState { kind: MenuKind; id: string; x: number; y: number; align: "start" | "end" }
@@ -141,32 +144,26 @@ interface PendingConfirm {
   run: () => void;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function ProjectsPane() {
-  // Owns the shared remote-health poller for its lifetime (no-op until a project
-  // is bound to a host and the remoteProjects flag is on).
-  useRemoteHealth();
-  const remoteOn = () => flagEnabled("remoteProjects");
+interface ChatDragState {
+  id: string;
+  root: string;
+  title: string;
+  x: number;
+  y: number;
+  targetId: string | null;
+  edge: DropEdge | null;
+}
 
+/** The floating-menu open/close/confirm-step state shared by every menu
+ *  variant. A composable, called synchronously from
+ *  `createProjectsPaneController`'s own setup so its `onCleanup` runs under
+ *  the same reactive owner as if written inline. */
+function createProjectsMenuState() {
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);
-  const [dropGroup, setDropGroup] = createSignal<string | null>(null); // group id or "__ungrouped"
-  // Reorder indicator: the row being hovered + which edge the drop lands on, for
-  // both chat reorder and project reorder. A thin line renders on that edge.
-  const [dropMark, setDropMark] = createSignal<{ kind: "chat" | "project"; id: string; edge: DropEdge } | null>(null);
-  const [showArchived, setShowArchived] = createSignal<Set<string>>(new Set()); // roots showing archived
-
-  const markEdge = (kind: "chat" | "project", id: string, axis: "x" | "y" = "y") => (e: DragEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const edge = axis === "x" ? dropEdgeForRectX(e.clientX, rect) : dropEdgeForRect(e.clientY, rect);
-    setDropMark({ kind, id, edge });
-  };
-  const clearMark = (kind: "chat" | "project", id: string) =>
-    setDropMark((m) => (m && m.kind === kind && m.id === id ? null : m));
-  const edgeFor = (kind: "chat" | "project", id: string): DropEdge | null => {
-    const m = dropMark();
-    return m && m.kind === kind && m.id === id ? m.edge : null;
-  };
+  // Destructive menu actions swap the open menu for a confirm step in place —
+  // the action only runs on the explicit confirm click.
+  const [pendingConfirm, setPendingConfirm] = createSignal<PendingConfirm | null>(null);
 
   const closeMenu = () => {
     setMenu(null);
@@ -174,34 +171,10 @@ export function ProjectsPane() {
   };
   onCleanup(closeMenu);
 
-  // Destructive menu actions swap the open menu for a confirm step in place —
-  // the action only runs on the explicit confirm click.
-  const [pendingConfirm, setPendingConfirm] = createSignal<PendingConfirm | null>(null);
   const askConfirm = (confirm: PendingConfirm) => {
     setPendingConfirm(confirm);
     setMenu((m) => (m ? { ...m, kind: "confirm" } : m));
   };
-
-  const ConfirmMenu = () => (
-    <Show when={pendingConfirm()}>
-      {(c) => (
-        <>
-          <div class="pf-menu-label">{c().text}</div>
-          <button
-            class="pf-menu-item"
-            classList={{ "pf-menu-item--danger": c().danger }}
-            onClick={() => {
-              c().run();
-              closeMenu();
-            }}
-          >
-            {c().label}
-          </button>
-          <button class="pf-menu-item" onClick={closeMenu}>Cancel</button>
-        </>
-      )}
-    </Show>
-  );
 
   const openFromButton = (kind: MenuKind, id: string, e: MouseEvent) => {
     e.stopPropagation();
@@ -214,57 +187,29 @@ export function ProjectsPane() {
     setMenu({ kind, id, x: e.clientX, y: e.clientY, align: "start" });
   };
 
-  const hasGroups = () => grouping().groups.length > 0;
-  const grid = () => grouping().viewMode === "grid";
-  const allRoots = () => workspace.projects.map((p) => p.projectRoot);
-  const someExpanded = () => anyChatsExpanded(allRoots());
+  return { menu, setMenu, renaming, setRenaming, pendingConfirm, closeMenu, askConfirm, openFromButton, openFromContext };
+}
 
-  const buckets = createMemo(() => {
-    const projs = workspace.projects;
-    const out: { group: ProjectGroup | null; projects: Project[] }[] = [];
-    for (const g of grouping().groups) {
-      out.push({ group: g, projects: projs.filter((p) => groupOf(p.projectRoot) === g.id) });
-    }
-    out.push({ group: null, projects: projs.filter((p) => groupOf(p.projectRoot) === null) });
-    return out;
-  });
+/** Project drag-to-reorder and drag-into-group state. A composable, called
+ *  synchronously from `createProjectsPaneController`'s own setup so its
+ *  signals live under the same reactive owner as if written inline. */
+function createProjectDragState() {
+  const [dropGroup, setDropGroup] = createSignal<string | null>(null); // group id or "__ungrouped"
+  // Reorder indicator: the row being hovered + which edge the drop lands on, for
+  // both chat reorder and project reorder. A thin line renders on that edge.
+  const [dropMark, setDropMark] = createSignal<{ kind: "chat" | "project"; id: string; edge: DropEdge } | null>(null);
 
-  const moveTo = (root: string, groupId: string | null) => { assignProject(root, groupId); closeMenu(); };
-  const newGroupFor = (root: string) => { const id = createGroup(); assignProject(root, id); closeMenu(); setRenaming(id); };
-  const newTerminalChat = (root: string, title?: string) => {
-    if (!chatsExpanded(root)) toggleChats(root);
-    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
+  const markEdge = (kind: "chat" | "project", id: string, axis: "x" | "y" = "y") => (e: DragEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const edge = axis === "x" ? dropEdgeForRectX(e.clientX, rect) : dropEdgeForRect(e.clientY, rect);
+    setDropMark({ kind, id, edge });
   };
-  const newAgentChat = (root: string, provider: string, title?: string) => {
-    const availableProvider = nativeAgentProfile(provider);
-    if (!availableProvider) return;
-    if (!chatsExpanded(root)) toggleChats(root);
-    setLastAgentProvider(availableProvider.id);
-    void addChat(
-      title?.trim() || DEFAULT_CHAT_TITLE,
-      availableProvider.id,
-      root,
-      "agent",
-    );
+  const clearMark = (kind: "chat" | "project", id: string) =>
+    setDropMark((m) => (m && m.kind === kind && m.id === id ? null : m));
+  const edgeFor = (kind: "chat" | "project", id: string): DropEdge | null => {
+    const m = dropMark();
+    return m && m.kind === kind && m.id === id ? m.edge : null;
   };
-  const newChatFromButton = (root: string, e: MouseEvent) => {
-    const kind = loadDefaultChatKind();
-    // The title ask lives in the new-chat menu, so an enabled ask opens the
-    // menu even when a fixed default kind would otherwise create directly.
-    if (kind === "ask" || loadAskChatTitle()) {
-      openFromButton("newchat", root, e);
-      return;
-    }
-    e.stopPropagation();
-    if (kind === "terminal") newTerminalChat(root);
-    else newAgentChat(root, defaultNativeAgentProvider(loadLastAgentProvider()));
-  };
-  const toggleArchivedFor = (root: string) =>
-    setShowArchived((s) => {
-      const next = new Set(s);
-      next.has(root) ? next.delete(root) : next.add(root);
-      return next;
-    });
 
   // ---- project drag (reorder + assign to group) ----
   const projectDragStart = (root: string, e: DragEvent) => {
@@ -308,21 +253,30 @@ export function ProjectsPane() {
     void reorderProject(root, beforeIdForDrop(order, targetRoot, edge));
   };
 
-  // ---- chat reorder drag (within a project) ----
-  // Pointer-based, not HTML5 dnd: webkit's drag events were unreliable here
-  // (missed targets in row gaps, giant default drag images, delayed drops).
-  // A pressed row past a small threshold becomes a compact floating ghost; the
-  // slot it would land in renders an ember line, matching the lane drag accent.
+  return {
+    dropGroup,
+    setDropGroup,
+    setDropMark,
+    markEdge,
+    clearMark,
+    edgeFor,
+    projectDragStart,
+    allowProjectDrop,
+    dropIntoGroup,
+    dropProjectReorder,
+  };
+}
+
+// Pointer-based chat reorder drag (within a project), not HTML5 dnd: webkit's
+// drag events were unreliable here (missed targets in row gaps, giant default
+// drag images, delayed drops). A pressed row past a small threshold becomes a
+// compact floating ghost; the slot it would land in renders an ember line,
+// matching the lane drag accent. A composable, called synchronously from
+// `createProjectsPaneController`'s own setup so its signal lives under the
+// same reactive owner as if written inline.
+function createChatDragState() {
   const chatRowEls = new Map<string, HTMLElement>();
-  const [chatDrag, setChatDrag] = createSignal<{
-    id: string;
-    root: string;
-    title: string;
-    x: number;
-    y: number;
-    targetId: string | null;
-    edge: DropEdge | null;
-  } | null>(null);
+  const [chatDrag, setChatDrag] = createSignal<ChatDragState | null>(null);
   let suppressChatClick = false;
 
   const chatDragEdge = (id: string): DropEdge | null => {
@@ -398,285 +352,78 @@ export function ProjectsPane() {
     window.addEventListener("pointercancel", cancel, { once: true });
   };
 
-  const RenameField = (props: { value: string; commit: (v: string) => void }) => (
-    <input
-      class="pf-input pf-rename"
-      value={props.value}
-      ref={(el) => queueMicrotask(() => { el.focus(); el.select(); })}
-      onClick={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      onBlur={(e) => { props.commit(e.currentTarget.value); setRenaming(null); }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") { props.commit(e.currentTarget.value); setRenaming(null); }
-        else if (e.key === "Escape") setRenaming(null);
-      }}
-    />
-  );
+  return { chatRowEls, chatDrag, chatDragEdge, startChatDrag, isChatClickSuppressed: () => suppressChatClick };
+}
 
-  // ---- menus ----
-  const ProjectMenu = (p: { root: string }) => {
-    const name = () => workspace.projects.find((x) => x.projectRoot === p.root)?.displayName ?? "";
-    return (
-      <>
-        <div class="pf-menu-label">{name()}</div>
-        <button class="pf-menu-item" onClick={() => { selectProject(p.root); closeMenu(); }}>Open</button>
-        <button class="pf-menu-item pf-menu-item--accent" onClick={() => setMenu((m) => (m ? { ...m, kind: "newchat" } : m))}>New chat…</button>
-        <button class="pf-menu-item" onClick={() => { setRenaming(p.root); closeMenu(); }}>Rename</button>
-        <Show when={remoteOn()}>
-          <button class="pf-menu-item" onClick={() => setMenu((m) => (m ? { ...m, kind: "remote" } : m))}>Remote host…</button>
-        </Show>
-        <div class="pf-menu-sep" />
-        <div class="pf-menu-label">Move to</div>
-        <button class="pf-menu-item" onClick={() => moveTo(p.root, null)}>Ungrouped</button>
-        <For each={grouping().groups}>
-          {(g) => (
-            <button class="pf-menu-item" classList={{ "pf-menu-item--on": groupOf(p.root) === g.id }} onClick={() => moveTo(p.root, g.id)}>
-              {g.name}
-            </button>
-          )}
-        </For>
-        <button class="pf-menu-item pf-menu-item--accent" onClick={() => newGroupFor(p.root)}>New group…</button>
-        <div class="pf-menu-sep" />
-        <button
-          class="pf-menu-item"
-          onClick={() =>
-            askConfirm({
-              text: `Archive "${name()}"?`,
-              label: "Archive project",
-              run: () => void archiveProject(p.root),
-            })
-          }
-        >
-          Archive
-        </button>
-        <button
-          class="pf-menu-item pf-menu-item--danger"
-          onClick={() =>
-            askConfirm({
-              text: `Delete "${name()}" and its chats?`,
-              label: "Delete project",
-              danger: true,
-              run: () => void deleteProject(p.root),
-            })
-          }
-        >
-          Delete
-        </button>
-      </>
+/** Owns every signal and handler shared across the pane's tree/menu/drag
+ *  surfaces (RenameField, the per-kind menus, chat/project rows and cards,
+ *  group headers). A composable, called synchronously from `ProjectsPane`'s
+ *  own setup so its sub-composables' effects run under the same reactive
+ *  owner as if written inline. Every hoisted sub-component takes this as
+ *  its `ctrl` prop instead of closing over local state directly. */
+function createProjectsPaneController() {
+  const remoteOn = () => flagEnabled("remoteProjects");
+  const menuState = createProjectsMenuState();
+  const dragState = createProjectDragState();
+  const chatDragState = createChatDragState();
+  const [showArchived, setShowArchived] = createSignal<Set<string>>(new Set()); // roots showing archived
+
+  const hasGroups = () => grouping().groups.length > 0;
+  const grid = () => grouping().viewMode === "grid";
+  const allRoots = () => workspace.projects.map((p) => p.projectRoot);
+  const someExpanded = () => anyChatsExpanded(allRoots());
+
+  const buckets = createMemo(() => {
+    const projs = workspace.projects;
+    const out: { group: ProjectGroup | null; projects: Project[] }[] = [];
+    for (const g of grouping().groups) {
+      out.push({ group: g, projects: projs.filter((p) => groupOf(p.projectRoot) === g.id) });
+    }
+    out.push({ group: null, projects: projs.filter((p) => groupOf(p.projectRoot) === null) });
+    return out;
+  });
+
+  const moveTo = (root: string, groupId: string | null) => { assignProject(root, groupId); menuState.closeMenu(); };
+  const newGroupFor = (root: string) => {
+    const id = createGroup();
+    assignProject(root, id);
+    menuState.closeMenu();
+    menuState.setRenaming(id);
+  };
+  const newTerminalChat = (root: string, title?: string) => {
+    if (!chatsExpanded(root)) toggleChats(root);
+    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
+  };
+  const newAgentChat = (root: string, provider: string, title?: string) => {
+    const availableProvider = nativeAgentProfile(provider);
+    if (!availableProvider) return;
+    if (!chatsExpanded(root)) toggleChats(root);
+    setLastAgentProvider(availableProvider.id);
+    void addChat(
+      title?.trim() || DEFAULT_CHAT_TITLE,
+      availableProvider.id,
+      root,
+      "agent",
     );
   };
-
-  const GroupMenu = (p: { id: string }) => (
-    <>
-      <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
-      <button
-        class="pf-menu-item pf-menu-item--danger"
-        onClick={() =>
-          askConfirm({
-            text: "Remove this group? Its projects move to Ungrouped.",
-            label: "Remove group",
-            danger: true,
-            run: () => removeGroup(p.id),
-          })
-        }
-      >
-        Remove group
-      </button>
-    </>
-  );
-
-  const NewChatMenu = (p: { root: string }) => {
-    const [title, setTitle] = createSignal("");
-    // Enter in the title field creates only fixed default kinds; ask keeps the
-    // menu open for an explicit kind choice.
-    const createDefault = () => {
-      const kind = loadDefaultChatKind();
-      if (kind === "ask") return;
-      if (kind === "agent") {
-        newAgentChat(
-          p.root,
-          defaultNativeAgentProvider(loadLastAgentProvider()),
-          title(),
-        );
-      }
-      else newTerminalChat(p.root, title());
-      closeMenu();
-    };
-    return (
-      <>
-        <div class="pf-menu-label">New chat</div>
-        <Show when={loadAskChatTitle()}>
-          <input
-            class="pf-menu-input"
-            placeholder="Title (optional)"
-            value={title()}
-            ref={(el) => setTimeout(() => el.focus())}
-            onInput={(e) => setTitle(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                createDefault();
-              }
-            }}
-          />
-        </Show>
-        <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root, title()); closeMenu(); }}>Terminal</button>
-        <div class="pf-menu-sep" />
-        <div class="pf-menu-label">Agent</div>
-        <For each={nativeAgentProfiles()}>
-          {(a) => (
-            <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id, title()); closeMenu(); }}>{a.label}</button>
-          )}
-        </For>
-      </>
-    );
+  const newChatFromButton = (root: string, e: MouseEvent) => {
+    const kind = loadDefaultChatKind();
+    // The title ask lives in the new-chat menu, so an enabled ask opens the
+    // menu even when a fixed default kind would otherwise create directly.
+    if (kind === "ask" || loadAskChatTitle()) {
+      menuState.openFromButton("newchat", root, e);
+      return;
+    }
+    e.stopPropagation();
+    if (kind === "terminal") newTerminalChat(root);
+    else newAgentChat(root, defaultNativeAgentProvider(loadLastAgentProvider()));
   };
-
-  const ProbeRow = (p: { label: string; probe: ProbeState }) => (
-    <div
-      class="pf-remote-probe"
-      classList={{
-        "pf-remote-probe--ok": p.probe.state === "ok",
-        "pf-remote-probe--failed": p.probe.state === "failed",
-        "pf-remote-probe--skipped": p.probe.state === "skipped",
-      }}
-    >
-      <span class="pf-remote-probe-key">{p.label}</span>
-      <span class="pf-remote-probe-val">{probeText(p.probe)}</span>
-    </div>
-  );
-
-  // Per-project remote host: attach (verified via projectRemoteSet), detach, and
-  // a test connection rendering the three probe results as quiet mono rows. R1
-  // adds no execution routing — a bound-but-unreachable host only surfaces a
-  // note here + the sidebar badge; the project still opens locally.
-  const RemotePanel = (p: { root: string }) => {
-    const project = () => workspace.projects.find((x) => x.projectRoot === p.root);
-    const bound = () => !!project()?.remoteHost;
-    const [host, setHost] = createSignal(project()?.remoteHost ?? "");
-    const [remoteRoot, setRemoteRoot] = createSignal(project()?.remoteRoot ?? "");
-    const ctrl = createRemoteAttach(() => p.root);
-
-    const busy = () => ctrl.attach().kind === "busy";
-    const testing = () => ctrl.test().kind === "running";
-    const attachError = () => {
-      const a = ctrl.attach();
-      return a.kind === "error" ? a.message : null;
-    };
-    const testError = () => {
-      const t = ctrl.test();
-      return t.kind === "error" ? t.message : null;
-    };
-    const testResult = () => {
-      const t = ctrl.test();
-      return t.kind === "done" ? t : null;
-    };
-    const unreachable = () => {
-      const h = project()?.remoteHost;
-      return !!h && healthStatus(h) === "warning";
-    };
-
-    const onAttach = async () => {
-      const h = host().trim();
-      const r = remoteRoot().trim();
-      if (await ctrl.doAttach(h, r)) {
-        setProjectRemoteLocal(p.root, h, r);
-        void refreshHost(h);
-      }
-    };
-    const onDetach = async () => {
-      if (await ctrl.doDetach()) setProjectRemoteLocal(p.root, null, null);
-    };
-    const onTest = async () => {
-      // The result carries the host pinned at probe start, so an input edit
-      // mid-probe can never cache one host's health under another.
-      const res = await ctrl.runTest(host());
-      if (res) recordHealth(res.host, res.health);
-    };
-
-    return (
-      <div class="pf-remote-panel">
-        <div class="pf-menu-label">Remote host</div>
-        <input
-          class="pf-menu-input pf-remote-input"
-          placeholder="tailnet name or 100.x.y.z"
-          spellcheck={false}
-          value={host()}
-          ref={(el) => setTimeout(() => el.focus())}
-          onInput={(e) => { setHost(e.currentTarget.value); ctrl.clearAttachError(); }}
-        />
-        <input
-          class="pf-menu-input pf-remote-input"
-          placeholder="remote project root"
-          spellcheck={false}
-          value={remoteRoot()}
-          onInput={(e) => { setRemoteRoot(e.currentTarget.value); ctrl.clearAttachError(); }}
-        />
-        <Show when={attachError()}>
-          {(msg) => <div class="pf-remote-error">{msg()}</div>}
-        </Show>
-        <div class="pf-remote-actions">
-          <Show
-            when={bound()}
-            fallback={
-              <button class="pf-menu-item pf-menu-item--accent" disabled={busy()} onClick={onAttach}>
-                {busy() ? "Verifying…" : "Attach"}
-              </button>
-            }
-          >
-            <button class="pf-menu-item pf-menu-item--danger" disabled={busy()} onClick={onDetach}>
-              {busy() ? "Detaching…" : "Detach"}
-            </button>
-          </Show>
-          <button class="pf-menu-item" disabled={testing()} onClick={onTest}>
-            {testing() ? "Testing…" : "Test connection"}
-          </button>
-        </div>
-        <Show when={unreachable()}>
-          <div class="pf-remote-note">Host unreachable — this project still opens locally.</div>
-        </Show>
-        <Show when={testError()}>
-          {(msg) => <div class="pf-remote-error">{msg()}</div>}
-        </Show>
-        <Show when={testResult()}>
-          {(t) => (
-            <div class="pf-remote-probes">
-              <div class="pf-remote-probes-host">{t().host}</div>
-              <ProbeRow label="tailnet" probe={t().health.tailnet} />
-              <ProbeRow label="ssh" probe={t().health.ssh} />
-              <ProbeRow label="daemon" probe={t().health.daemon} />
-            </div>
-          )}
-        </Show>
-      </div>
-    );
-  };
-
-  // Sidebar health indicator for a bound project: quiet dot + host in the machine
-  // voice. Status colors only (never the ember accent); tooltip carries the probe
-  // summary + checked-at time.
-  const RemoteBadge = (p: { host: string }) => {
-    const status = () => healthStatus(p.host);
-    const title = () => {
-      const h = healthOf(p.host);
-      return h
-        ? `${p.host} · ${healthSummary(h)} · checked ${relTime(h.checkedAtMs)}`
-        : `${p.host} · not yet checked`;
-    };
-    return (
-      <span
-        class="pf-remote-badge"
-        classList={{
-          "pf-remote-badge--ok": status() === "ok",
-          "pf-remote-badge--warn": status() === "warning",
-        }}
-        title={title()}
-      >
-        <span class="pf-remote-badge-dot" />
-        <span class="pf-remote-badge-host">{p.host}</span>
-      </span>
-    );
-  };
+  const toggleArchivedFor = (root: string) =>
+    setShowArchived((s) => {
+      const next = new Set(s);
+      next.has(root) ? next.delete(root) : next.add(root);
+      return next;
+    });
 
   const doArchiveChat = (id: string) => {
     const chat = findChat(id);
@@ -698,24 +445,365 @@ export function ProjectsPane() {
         : undefined;
       selectChat(next?.chatId ?? null);
     }
-    closeMenu();
+    menuState.closeMenu();
   };
 
-  const ChatMenu = (p: { id: string }) => (
+  return {
+    remoteOn,
+    ...menuState,
+    ...dragState,
+    ...chatDragState,
+    showArchived,
+    hasGroups,
+    grid,
+    allRoots,
+    someExpanded,
+    buckets,
+    moveTo,
+    newGroupFor,
+    newTerminalChat,
+    newAgentChat,
+    newChatFromButton,
+    toggleArchivedFor,
+    doArchiveChat,
+    openProject,
+  };
+}
+
+type ProjectsPaneController = ReturnType<typeof createProjectsPaneController>;
+
+function RenameField(props: {
+  ctrl: ProjectsPaneController;
+  value: string;
+  commit: (v: string) => void;
+}) {
+  return (
+    <input
+      class="pf-input pf-rename"
+      value={props.value}
+      ref={(el) => queueMicrotask(() => { el.focus(); el.select(); })}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onBlur={(e) => { props.commit(e.currentTarget.value); props.ctrl.setRenaming(null); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { props.commit(e.currentTarget.value); props.ctrl.setRenaming(null); }
+        else if (e.key === "Escape") props.ctrl.setRenaming(null);
+      }}
+    />
+  );
+}
+
+const ConfirmMenu = (props: { ctrl: ProjectsPaneController }) => (
+  <Show when={props.ctrl.pendingConfirm()}>
+    {(c) => (
+      <>
+        <div class="pf-menu-label">{c().text}</div>
+        <button
+          class="pf-menu-item"
+          classList={{ "pf-menu-item--danger": c().danger }}
+          onClick={() => {
+            c().run();
+            props.ctrl.closeMenu();
+          }}
+        >
+          {c().label}
+        </button>
+        <button class="pf-menu-item" onClick={props.ctrl.closeMenu}>Cancel</button>
+      </>
+    )}
+  </Show>
+);
+
+// ---- menus ----
+const ProjectMenu = (props: { ctrl: ProjectsPaneController; root: string }) => {
+  const ctrl = props.ctrl;
+  const root = props.root;
+  const name = () => workspace.projects.find((x) => x.projectRoot === root)?.displayName ?? "";
+  return (
     <>
-      <button class="pf-menu-item" onClick={() => { selectChat(p.id); closeMenu(); }}>Open</button>
-      <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
+      <div class="pf-menu-label">{name()}</div>
+      <button class="pf-menu-item" onClick={() => { selectProject(root); ctrl.closeMenu(); }}>Open</button>
+      <button class="pf-menu-item pf-menu-item--accent" onClick={() => ctrl.setMenu((m) => (m ? { ...m, kind: "newchat" } : m))}>New chat…</button>
+      <button class="pf-menu-item" onClick={() => { ctrl.setRenaming(root); ctrl.closeMenu(); }}>Rename</button>
+      <Show when={ctrl.remoteOn()}>
+        <button class="pf-menu-item" onClick={() => ctrl.setMenu((m) => (m ? { ...m, kind: "remote" } : m))}>Remote host…</button>
+      </Show>
+      <div class="pf-menu-sep" />
+      <div class="pf-menu-label">Move to</div>
+      <button class="pf-menu-item" onClick={() => ctrl.moveTo(root, null)}>Ungrouped</button>
+      <For each={grouping().groups}>
+        {(g) => (
+          <button class="pf-menu-item" classList={{ "pf-menu-item--on": groupOf(root) === g.id }} onClick={() => ctrl.moveTo(root, g.id)}>
+            {g.name}
+          </button>
+        )}
+      </For>
+      <button class="pf-menu-item pf-menu-item--accent" onClick={() => ctrl.newGroupFor(root)}>New group…</button>
+      <div class="pf-menu-sep" />
+      <button
+        class="pf-menu-item"
+        onClick={() =>
+          ctrl.askConfirm({
+            text: `Archive "${name()}"?`,
+            label: "Archive project",
+            run: () => void archiveProject(root),
+          })
+        }
+      >
+        Archive
+      </button>
+      <button
+        class="pf-menu-item pf-menu-item--danger"
+        onClick={() =>
+          ctrl.askConfirm({
+            text: `Delete "${name()}" and its chats?`,
+            label: "Delete project",
+            danger: true,
+            run: () => void deleteProject(root),
+          })
+        }
+      >
+        Delete
+      </button>
+    </>
+  );
+};
+
+const GroupMenu = (props: { ctrl: ProjectsPaneController; id: string }) => {
+  const ctrl = props.ctrl;
+  return (
+    <>
+      <button class="pf-menu-item" onClick={() => { ctrl.setRenaming(props.id); ctrl.closeMenu(); }}>Rename</button>
+      <button
+        class="pf-menu-item pf-menu-item--danger"
+        onClick={() =>
+          ctrl.askConfirm({
+            text: "Remove this group? Its projects move to Ungrouped.",
+            label: "Remove group",
+            danger: true,
+            run: () => removeGroup(props.id),
+          })
+        }
+      >
+        Remove group
+      </button>
+    </>
+  );
+};
+
+const NewChatMenu = (props: { ctrl: ProjectsPaneController; root: string }) => {
+  const ctrl = props.ctrl;
+  const root = props.root;
+  const [title, setTitle] = createSignal("");
+  // Enter in the title field creates only fixed default kinds; ask keeps the
+  // menu open for an explicit kind choice.
+  const createDefault = () => {
+    const kind = loadDefaultChatKind();
+    if (kind === "ask") return;
+    if (kind === "agent") {
+      ctrl.newAgentChat(
+        root,
+        defaultNativeAgentProvider(loadLastAgentProvider()),
+        title(),
+      );
+    }
+    else ctrl.newTerminalChat(root, title());
+    ctrl.closeMenu();
+  };
+  return (
+    <>
+      <div class="pf-menu-label">New chat</div>
+      <Show when={loadAskChatTitle()}>
+        <input
+          class="pf-menu-input"
+          placeholder="Title (optional)"
+          value={title()}
+          ref={(el) => setTimeout(() => el.focus())}
+          onInput={(e) => setTitle(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              createDefault();
+            }
+          }}
+        />
+      </Show>
+      <button class="pf-menu-item pf-menu-item--accent" onClick={() => { ctrl.newTerminalChat(root, title()); ctrl.closeMenu(); }}>Terminal</button>
+      <div class="pf-menu-sep" />
+      <div class="pf-menu-label">Agent</div>
+      <For each={nativeAgentProfiles()}>
+        {(a) => (
+          <button class="pf-menu-item" onClick={() => { ctrl.newAgentChat(root, a.id, title()); ctrl.closeMenu(); }}>{a.label}</button>
+        )}
+      </For>
+    </>
+  );
+};
+
+const ProbeRow = (p: { label: string; probe: ProbeState }) => (
+  <div
+    class="pf-remote-probe"
+    classList={{
+      "pf-remote-probe--ok": p.probe.state === "ok",
+      "pf-remote-probe--failed": p.probe.state === "failed",
+      "pf-remote-probe--skipped": p.probe.state === "skipped",
+    }}
+  >
+    <span class="pf-remote-probe-key">{p.label}</span>
+    <span class="pf-remote-probe-val">{probeText(p.probe)}</span>
+  </div>
+);
+
+// Per-project remote host: attach (verified via projectRemoteSet), detach, and
+// a test connection rendering the three probe results as quiet mono rows. R1
+// adds no execution routing — a bound-but-unreachable host only surfaces a
+// note here + the sidebar badge; the project still opens locally.
+const RemotePanel = (p: { root: string }) => {
+  const project = () => workspace.projects.find((x) => x.projectRoot === p.root);
+  const bound = () => !!project()?.remoteHost;
+  const [host, setHost] = createSignal(project()?.remoteHost ?? "");
+  const [remoteRoot, setRemoteRoot] = createSignal(project()?.remoteRoot ?? "");
+  const ctrl = createRemoteAttach(() => p.root);
+
+  const busy = () => ctrl.attach().kind === "busy";
+  const testing = () => ctrl.test().kind === "running";
+  const attachError = () => {
+    const a = ctrl.attach();
+    return a.kind === "error" ? a.message : null;
+  };
+  const testError = () => {
+    const t = ctrl.test();
+    return t.kind === "error" ? t.message : null;
+  };
+  const testResult = () => {
+    const t = ctrl.test();
+    return t.kind === "done" ? t : null;
+  };
+  const unreachable = () => {
+    const h = project()?.remoteHost;
+    return !!h && healthStatus(h) === "warning";
+  };
+
+  const onAttach = async () => {
+    const h = host().trim();
+    const r = remoteRoot().trim();
+    if (await ctrl.doAttach(h, r)) {
+      setProjectRemoteLocal(p.root, h, r);
+      void refreshHost(h);
+    }
+  };
+  const onDetach = async () => {
+    if (await ctrl.doDetach()) setProjectRemoteLocal(p.root, null, null);
+  };
+  const onTest = async () => {
+    // The result carries the host pinned at probe start, so an input edit
+    // mid-probe can never cache one host's health under another.
+    const res = await ctrl.runTest(host());
+    if (res) recordHealth(res.host, res.health);
+  };
+
+  return (
+    <div class="pf-remote-panel">
+      <div class="pf-menu-label">Remote host</div>
+      <input
+        class="pf-menu-input pf-remote-input"
+        placeholder="tailnet name or 100.x.y.z"
+        spellcheck={false}
+        value={host()}
+        ref={(el) => setTimeout(() => el.focus())}
+        onInput={(e) => { setHost(e.currentTarget.value); ctrl.clearAttachError(); }}
+      />
+      <input
+        class="pf-menu-input pf-remote-input"
+        placeholder="remote project root"
+        spellcheck={false}
+        value={remoteRoot()}
+        onInput={(e) => { setRemoteRoot(e.currentTarget.value); ctrl.clearAttachError(); }}
+      />
+      <Show when={attachError()}>
+        {(msg) => <div class="pf-remote-error">{msg()}</div>}
+      </Show>
+      <div class="pf-remote-actions">
+        <Show
+          when={bound()}
+          fallback={
+            <button class="pf-menu-item pf-menu-item--accent" disabled={busy()} onClick={onAttach}>
+              {busy() ? "Verifying…" : "Attach"}
+            </button>
+          }
+        >
+          <button class="pf-menu-item pf-menu-item--danger" disabled={busy()} onClick={onDetach}>
+            {busy() ? "Detaching…" : "Detach"}
+          </button>
+        </Show>
+        <button class="pf-menu-item" disabled={testing()} onClick={onTest}>
+          {testing() ? "Testing…" : "Test connection"}
+        </button>
+      </div>
+      <Show when={unreachable()}>
+        <div class="pf-remote-note">Host unreachable — this project still opens locally.</div>
+      </Show>
+      <Show when={testError()}>
+        {(msg) => <div class="pf-remote-error">{msg()}</div>}
+      </Show>
+      <Show when={testResult()}>
+        {(t) => (
+          <div class="pf-remote-probes">
+            <div class="pf-remote-probes-host">{t().host}</div>
+            <ProbeRow label="tailnet" probe={t().health.tailnet} />
+            <ProbeRow label="ssh" probe={t().health.ssh} />
+            <ProbeRow label="daemon" probe={t().health.daemon} />
+          </div>
+        )}
+      </Show>
+    </div>
+  );
+};
+
+// Sidebar health indicator for a bound project: quiet dot + host in the machine
+// voice. Status colors only (never the ember accent); tooltip carries the probe
+// summary + checked-at time.
+const RemoteBadge = (p: { host: string }) => {
+  const status = () => healthStatus(p.host);
+  const title = () => {
+    const h = healthOf(p.host);
+    return h
+      ? `${p.host} · ${healthSummary(h)} · checked ${relTime(h.checkedAtMs)}`
+      : `${p.host} · not yet checked`;
+  };
+  return (
+    <span
+      class="pf-remote-badge"
+      classList={{
+        "pf-remote-badge--ok": status() === "ok",
+        "pf-remote-badge--warn": status() === "warning",
+      }}
+      title={title()}
+    >
+      <span class="pf-remote-badge-dot" />
+      <span class="pf-remote-badge-host">{p.host}</span>
+    </span>
+  );
+};
+
+const ChatMenu = (props: { ctrl: ProjectsPaneController; id: string }) => {
+  const ctrl = props.ctrl;
+  const id = props.id;
+  return (
+    <>
+      <button class="pf-menu-item" onClick={() => { selectChat(id); ctrl.closeMenu(); }}>Open</button>
+      <button class="pf-menu-item" onClick={() => { ctrl.setRenaming(id); ctrl.closeMenu(); }}>Rename</button>
       <Show
         when={
-          !!findChat(p.id) &&
-          chatTitleSourceForPolicy(findChat(p.id)!) === "user"
+          !!findChat(id) &&
+          chatTitleSourceForPolicy(findChat(id)!) === "user"
         }
       >
         <button
           class="pf-menu-item"
           onClick={() => {
-            void resumeChatTitleAuto(p.id);
-            closeMenu();
+            void resumeChatTitleAuto(id);
+            ctrl.closeMenu();
           }}
         >
           Resume automatic titles
@@ -724,34 +812,34 @@ export function ProjectsPane() {
       <button
         class="pf-menu-item"
         onClick={() =>
-          askConfirm({
-            text: `Archive "${findChat(p.id)?.title ?? "this chat"}"?`,
+          ctrl.askConfirm({
+            text: `Archive "${findChat(id)?.title ?? "this chat"}"?`,
             label: "Archive chat",
-            run: () => doArchiveChat(p.id),
+            run: () => ctrl.doArchiveChat(id),
           })
         }
       >
         Archive
       </button>
-      <Show when={recoverChatSessions() && findChat(p.id)?.kind !== "agent"}>
+      <Show when={recoverChatSessions() && findChat(id)?.kind !== "agent"}>
         <div class="pf-menu-sep" />
         <button
           class="pf-menu-item"
           title="Switch this chat's recovery backend. The current session is destroyed and a fresh one is created on next open. Default is dtach."
-          onClick={() => { void migrateChatBackend(p.id, !isChatTmux(p.id)); closeMenu(); }}
+          onClick={() => { void migrateChatBackend(id, !isChatTmux(id)); ctrl.closeMenu(); }}
         >
-          {isChatTmux(p.id) ? "Use dtach session" : "Use tmux session"}
+          {isChatTmux(id) ? "Use dtach session" : "Use tmux session"}
         </button>
       </Show>
       <div class="pf-menu-sep" />
       <button
         class="pf-menu-item pf-menu-item--danger"
         onClick={() =>
-          askConfirm({
-            text: `Delete "${findChat(p.id)?.title ?? "this chat"}"? Its transcript is removed.`,
+          ctrl.askConfirm({
+            text: `Delete "${findChat(id)?.title ?? "this chat"}"? Its transcript is removed.`,
             label: "Delete chat",
             danger: true,
-            run: () => void deleteChat(p.id),
+            run: () => void deleteChat(id),
           })
         }
       >
@@ -759,281 +847,300 @@ export function ProjectsPane() {
       </button>
     </>
   );
+};
 
-  // ---- chat rows + a project's chat children ----
-  const ChatRow = (p: { chat: Chat; root: string; archived?: boolean }) => {
-    const id = p.chat.chatId;
-    onCleanup(() => chatRowEls.delete(id));
-    return (
-      <div
-        class="pf-chat-row"
-        ref={(el) => chatRowEls.set(id, el)}
-        classList={{
-          active: workspace.activeChatId === id || (!p.archived && isChatStaged(id)),
-          "pf-chat-row--archived": p.archived,
-          "pf-chat-row--busy": !p.archived && chatBusy(id) && !chatAttention(id),
-          "pf-chat-row--attention": !p.archived && workspace.activeChatId !== id && !isChatStaged(id) && chatAttention(id),
-          "pf-chat-row--dragging": chatDrag()?.id === id,
-          "pf-drop-ember": chatDragEdge(id) !== null,
-          "pf-drop-before": chatDragEdge(id) === "before",
-          "pf-drop-after": chatDragEdge(id) === "after",
-        }}
-        onPointerDown={p.archived ? undefined : (e) => startChatDrag(e, p.chat, p.root)}
-        onDragStart={(e) => e.preventDefault()}
-        onClick={() => !p.archived && !suppressChatClick && selectChat(id)}
-        onContextMenu={(e) => !p.archived && openFromContext("chat", id, e)}
-      >
-        <span class="pf-chat-dot" />
-        <Show
-          when={renaming() === id}
-          fallback={
-            <span
-              class="pf-chat-title"
-              classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}
-            >
-              {chatTitleOverride(id) ?? p.chat.title}
-            </span>
-          }
-        >
-          <RenameField value={p.chat.title} commit={(v) => {
-            // Only lock the title from OSC/auto-naming when the user actually
-            // changed it — opening the field and blurring it unchanged must not
-            // disable the auto-name flow for a still-default chat.
-            if (v.trim() && v.trim() !== p.chat.title) markChatTitleManual(id);
-            void renameChat(id, v);
-          }} />
-        </Show>
-        <Show when={p.chat.kind === "agent"}>
-          <span
-            class="pf-chat-agent-mark"
-            title={`Agent chat · ${agentChatLabel(p.chat.agentId)}`}
-            aria-label={`Agent chat · ${agentChatLabel(p.chat.agentId)}`}
-          >
-            <Show when={AGENT_CHAT_ICON[agentChatProvider(p.chat.agentId)]} fallback="AI">
-              {(icon) => icon()()}
-            </Show>
-          </span>
-        </Show>
-        <Show
-          when={!p.archived}
-          fallback={
-            <button class="pf-rail-row-action pf-rail-row-action--shown" title="Unarchive chat" onClick={(e) => { e.stopPropagation(); unarchiveChat(id); }}>
-              <IconPlus size={13} />
-            </button>
-          }
-        >
-          <button class="pf-rail-row-action" title="Chat options" onClick={(e) => openFromButton("chat", id, e)}>
-            <IconMore size={14} />
-          </button>
-        </Show>
-      </div>
-    );
-  };
-
-  const ChatChildren = (p: { root: string }) => {
-    createEffect(() => {
-      if (chatsExpanded(p.root)) void ensureChatsLoaded(p.root);
-    });
-    const visible = () =>
-      chatsFor(p.root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c));
-    const archived = () =>
-      chatsFor(p.root).filter((c) => isChatArchived(c.chatId) && isPrimaryChat(c));
-    const archOpen = () => showArchived().has(p.root);
-    return (
-      <Collapse open={chatsExpanded(p.root)}>
-        <div class="pf-chat-children">
-          <For each={visible()} fallback={<div class="pf-chat-empty">No chats yet</div>}>
-            {(chat) => <ChatRow chat={chat} root={p.root} />}
-          </For>
-          <Show when={archived().length > 0}>
-            <button class="pf-rail-archived-toggle" onClick={() => toggleArchivedFor(p.root)}>
-              <Show when={archOpen()} fallback={<IconChevronRight size={12} />}>
-                <IconChevronDown size={12} />
-              </Show>
-              Archived
-              <span class="pf-group-count">{archived().length}</span>
-            </button>
-            <Collapse open={archOpen()}>
-              <For each={archived()}>{(chat) => <ChatRow chat={chat} root={p.root} archived />}</For>
-            </Collapse>
-          </Show>
-        </div>
-      </Collapse>
-    );
-  };
-
-  const ProjectTwisty = (p: { root: string }) => (
-    <button
-      class="pf-tree-twisty"
-      classList={{ "pf-tree-twisty--closed": !chatsExpanded(p.root) }}
-      title={chatsExpanded(p.root) ? "Hide chats" : "Show chats"}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); toggleChats(p.root); }}
+// ---- chat rows + a project's chat children ----
+const ChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; root: string; archived?: boolean }) => {
+  const ctrl = props.ctrl;
+  const id = props.chat.chatId;
+  onCleanup(() => ctrl.chatRowEls.delete(id));
+  return (
+    <div
+      class="pf-chat-row"
+      ref={(el) => ctrl.chatRowEls.set(id, el)}
+      classList={{
+        active: workspace.activeChatId === id || (!props.archived && isChatStaged(id)),
+        "pf-chat-row--archived": props.archived,
+        "pf-chat-row--busy": !props.archived && chatBusy(id) && !chatAttention(id),
+        "pf-chat-row--attention": !props.archived && workspace.activeChatId !== id && !isChatStaged(id) && chatAttention(id),
+        "pf-chat-row--dragging": ctrl.chatDrag()?.id === id,
+        "pf-drop-ember": ctrl.chatDragEdge(id) !== null,
+        "pf-drop-before": ctrl.chatDragEdge(id) === "before",
+        "pf-drop-after": ctrl.chatDragEdge(id) === "after",
+      }}
+      onPointerDown={props.archived ? undefined : (e) => ctrl.startChatDrag(e, props.chat, props.root)}
+      onDragStart={(e) => e.preventDefault()}
+      onClick={() => !props.archived && !ctrl.isChatClickSuppressed() && selectChat(id)}
+      onContextMenu={(e) => !props.archived && ctrl.openFromContext("chat", id, e)}
     >
-      <IconChevronDown size={12} />
-    </button>
-  );
-
-  // ---- project rows / cards ----
-  const openProject = (root: string) => {
-    void selectProject(root);
-  };
-
-  const ProjectRow = (p: { project: Project }) => {
-    const root = p.project.projectRoot;
-    const count = () =>
-      chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
-    return (
-      <div class="pf-tree-node">
-        <div
-          class="pf-rail-row pf-tree-row"
-          classList={{
-            active: workspace.activeRoot === root,
-            "pf-drop-before": edgeFor("project", root) === "before",
-            "pf-drop-after": edgeFor("project", root) === "after",
-          }}
-          draggable={true}
-          onDragStart={(e) => projectDragStart(root, e)}
-          onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root)(e); }}
-          onDragLeave={() => clearMark("project", root)}
-          onDrop={(e) => dropProjectReorder(root, e)}
-          onDragEnd={() => setDropMark(null)}
-          onClick={() => openProject(root)}
-          onContextMenu={(e) => openFromContext("project", root, e)}
+      <span class="pf-chat-dot" />
+      <Show
+        when={ctrl.renaming() === id}
+        fallback={
+          <span
+            class="pf-chat-title"
+            classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}
+          >
+            {chatTitleOverride(id) ?? props.chat.title}
+          </span>
+        }
+      >
+        <RenameField ctrl={ctrl} value={props.chat.title} commit={(v) => {
+          // Only lock the title from OSC/auto-naming when the user actually
+          // changed it — opening the field and blurring it unchanged must not
+          // disable the auto-name flow for a still-default chat.
+          if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+          void renameChat(id, v);
+        }} />
+      </Show>
+      <Show when={props.chat.kind === "agent"}>
+        <span
+          class="pf-chat-agent-mark"
+          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
         >
-          <ProjectTwisty root={root} />
-          <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
-            <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
+          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+            {(icon) => icon()()}
           </Show>
-          <Show when={remoteOn() && p.project.remoteHost}>
-            {(host) => <RemoteBadge host={host()} />}
-          </Show>
-          <button class="pf-rail-row-action" data-tour="new-chat" title="New chat" onClick={(e) => newChatFromButton(root, e)}>
-            <IconPlus size={14} />
+        </span>
+      </Show>
+      <Show
+        when={!props.archived}
+        fallback={
+          <button class="pf-rail-row-action pf-rail-row-action--shown" title="Unarchive chat" onClick={(e) => { e.stopPropagation(); unarchiveChat(id); }}>
+            <IconPlus size={13} />
           </button>
-          <button class="pf-rail-row-action" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
-            <IconMore size={14} />
-          </button>
-          <Show when={count() > 0}>
-            <span class="pf-tree-count">{count()}</span>
-          </Show>
-        </div>
-        <ChatChildren root={root} />
-      </div>
-    );
-  };
+        }
+      >
+        <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
+          <IconMore size={14} />
+        </button>
+      </Show>
+    </div>
+  );
+};
 
-  // One bubble per project: the header AND its chats live inside the same grid
-  // card. A card with its chats open spans the full row so the list reads as a
-  // contained group instead of chats spilling loose beneath the tile grid.
-  const ProjectCard = (p: { project: Project }) => {
-    const root = p.project.projectRoot;
-    const count = () =>
-      chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
-    return (
+const ChatChildren = (props: { ctrl: ProjectsPaneController; root: string }) => {
+  const ctrl = props.ctrl;
+  const root = props.root;
+  createEffect(() => {
+    if (chatsExpanded(root)) void ensureChatsLoaded(root);
+  });
+  const visible = () =>
+    chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c));
+  const archived = () =>
+    chatsFor(root).filter((c) => isChatArchived(c.chatId) && isPrimaryChat(c));
+  const archOpen = () => ctrl.showArchived().has(root);
+  return (
+    <Collapse open={chatsExpanded(root)}>
+      <div class="pf-chat-children">
+        <For each={visible()} fallback={<div class="pf-chat-empty">No chats yet</div>}>
+          {(chat) => <ChatRow ctrl={ctrl} chat={chat} root={root} />}
+        </For>
+        <Show when={archived().length > 0}>
+          <button class="pf-rail-archived-toggle" onClick={() => ctrl.toggleArchivedFor(root)}>
+            <Show when={archOpen()} fallback={<IconChevronRight size={12} />}>
+              <IconChevronDown size={12} />
+            </Show>
+            Archived
+            <span class="pf-group-count">{archived().length}</span>
+          </button>
+          <Collapse open={archOpen()}>
+            <For each={archived()}>{(chat) => <ChatRow ctrl={ctrl} chat={chat} root={root} archived />}</For>
+          </Collapse>
+        </Show>
+      </div>
+    </Collapse>
+  );
+};
+
+const ProjectTwisty = (p: { root: string }) => (
+  <button
+    class="pf-tree-twisty"
+    classList={{ "pf-tree-twisty--closed": !chatsExpanded(p.root) }}
+    title={chatsExpanded(p.root) ? "Hide chats" : "Show chats"}
+    onPointerDown={(e) => e.stopPropagation()}
+    onClick={(e) => { e.stopPropagation(); toggleChats(p.root); }}
+  >
+    <IconChevronDown size={12} />
+  </button>
+);
+
+// ---- project rows / cards ----
+const ProjectRow = (props: { ctrl: ProjectsPaneController; project: Project }) => {
+  const ctrl = props.ctrl;
+  const root = props.project.projectRoot;
+  const count = () =>
+    chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
+  return (
+    <div class="pf-tree-node">
       <div
-        class="pf-proj-card"
+        class="pf-rail-row pf-tree-row"
         classList={{
           active: workspace.activeRoot === root,
-          "pf-proj-card--open": chatsExpanded(root),
-          "pf-drop-before-x": edgeFor("project", root) === "before",
-          "pf-drop-after-x": edgeFor("project", root) === "after",
+          "pf-drop-before": ctrl.edgeFor("project", root) === "before",
+          "pf-drop-after": ctrl.edgeFor("project", root) === "after",
         }}
-        onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root, "x")(e); }}
-        onDragLeave={() => clearMark("project", root)}
-        onDrop={(e) => dropProjectReorder(root, e)}
-        onContextMenu={(e) => openFromContext("project", root, e)}
+        draggable={true}
+        onDragStart={(e) => ctrl.projectDragStart(root, e)}
+        onDragOver={(e) => { ctrl.allowProjectDrop(e); ctrl.markEdge("project", root)(e); }}
+        onDragLeave={() => ctrl.clearMark("project", root)}
+        onDrop={(e) => ctrl.dropProjectReorder(root, e)}
+        onDragEnd={() => ctrl.setDropMark(null)}
+        onClick={() => ctrl.openProject(root)}
+        onContextMenu={(e) => ctrl.openFromContext("project", root, e)}
       >
-        <div
-          class="pf-proj-card-head"
-          draggable={true}
-          onDragStart={(e) => projectDragStart(root, e)}
-          onDragEnd={() => setDropMark(null)}
-          onClick={() => openProject(root)}
-        >
-          <div class="pf-proj-card-top">
-            <span class="pf-proj-card-mark">{p.project.displayName.charAt(0).toUpperCase()}</span>
-            <ProjectTwisty root={root} />
-            <button class="pf-proj-card-menu" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
-              <IconMore size={14} />
-            </button>
-          </div>
-          <div class="pf-proj-card-meta">
-            <Show when={renaming() === root} fallback={<span class="pf-proj-card-name">{p.project.displayName}</span>}>
-              <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
-            </Show>
-            <Show when={count() > 0}>
-              <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
-            </Show>
-            <Show when={remoteOn() && p.project.remoteHost}>
-              {(host) => <RemoteBadge host={host()} />}
-            </Show>
-          </div>
-        </div>
-        <ChatChildren root={root} />
+        <ProjectTwisty root={root} />
+        <Show when={ctrl.renaming() === root} fallback={<span class="pf-rail-row-label">{props.project.displayName}</span>}>
+          <RenameField ctrl={ctrl} value={props.project.displayName} commit={(v) => void renameProject(root, v)} />
+        </Show>
+        <Show when={ctrl.remoteOn() && props.project.remoteHost}>
+          {(host) => <RemoteBadge host={host()} />}
+        </Show>
+        <button class="pf-rail-row-action" data-tour="new-chat" title="New chat" onClick={(e) => ctrl.newChatFromButton(root, e)}>
+          <IconPlus size={14} />
+        </button>
+        <button class="pf-rail-row-action" title="Project options" onClick={(e) => ctrl.openFromButton("project", root, e)}>
+          <IconMore size={14} />
+        </button>
+        <Show when={count() > 0}>
+          <span class="pf-tree-count">{count()}</span>
+        </Show>
       </div>
-    );
-  };
-
-  const ProjectsBody = (p: { projects: Project[] }) => (
-    <Show when={p.projects.length > 0} fallback={<div class="pf-rail-empty">No projects here</div>}>
-      <Show when={grid()} fallback={<For each={p.projects}>{(x) => <ProjectRow project={x} />}</For>}>
-        <div class="pf-proj-grid"><For each={p.projects}>{(x) => <ProjectCard project={x} />}</For></div>
-      </Show>
-    </Show>
+      <ChatChildren ctrl={ctrl} root={root} />
+    </div>
   );
+};
 
-  const GroupHeader = (p: { group: ProjectGroup; count: number; projects: Project[] }) => {
-    return (
+// One bubble per project: the header AND its chats live inside the same grid
+// card. A card with its chats open spans the full row so the list reads as a
+// contained group instead of chats spilling loose beneath the tile grid.
+const ProjectCard = (props: { ctrl: ProjectsPaneController; project: Project }) => {
+  const ctrl = props.ctrl;
+  const root = props.project.projectRoot;
+  const count = () =>
+    chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
+  return (
+    <div
+      class="pf-proj-card"
+      classList={{
+        active: workspace.activeRoot === root,
+        "pf-proj-card--open": chatsExpanded(root),
+        "pf-drop-before-x": ctrl.edgeFor("project", root) === "before",
+        "pf-drop-after-x": ctrl.edgeFor("project", root) === "after",
+      }}
+      onDragOver={(e) => { ctrl.allowProjectDrop(e); ctrl.markEdge("project", root, "x")(e); }}
+      onDragLeave={() => ctrl.clearMark("project", root)}
+      onDrop={(e) => ctrl.dropProjectReorder(root, e)}
+      onContextMenu={(e) => ctrl.openFromContext("project", root, e)}
+    >
+      <div
+        class="pf-proj-card-head"
+        draggable={true}
+        onDragStart={(e) => ctrl.projectDragStart(root, e)}
+        onDragEnd={() => ctrl.setDropMark(null)}
+        onClick={() => ctrl.openProject(root)}
+      >
+        <div class="pf-proj-card-top">
+          <span class="pf-proj-card-mark">{props.project.displayName.charAt(0).toUpperCase()}</span>
+          <ProjectTwisty root={root} />
+          <button class="pf-proj-card-menu" title="Project options" onClick={(e) => ctrl.openFromButton("project", root, e)}>
+            <IconMore size={14} />
+          </button>
+        </div>
+        <div class="pf-proj-card-meta">
+          <Show when={ctrl.renaming() === root} fallback={<span class="pf-proj-card-name">{props.project.displayName}</span>}>
+            <RenameField ctrl={ctrl} value={props.project.displayName} commit={(v) => void renameProject(root, v)} />
+          </Show>
+          <Show when={count() > 0}>
+            <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
+          </Show>
+          <Show when={ctrl.remoteOn() && props.project.remoteHost}>
+            {(host) => <RemoteBadge host={host()} />}
+          </Show>
+        </div>
+      </div>
+      <ChatChildren ctrl={ctrl} root={root} />
+    </div>
+  );
+};
+
+const ProjectsBody = (props: { ctrl: ProjectsPaneController; projects: Project[] }) => (
+  <Show when={props.projects.length > 0} fallback={<div class="pf-rail-empty">No projects here</div>}>
+    <Show
+      when={props.ctrl.grid()}
+      fallback={<For each={props.projects}>{(x) => <ProjectRow ctrl={props.ctrl} project={x} />}</For>}
+    >
+      <div class="pf-proj-grid"><For each={props.projects}>{(x) => <ProjectCard ctrl={props.ctrl} project={x} />}</For></div>
+    </Show>
+  </Show>
+);
+
+const GroupHeader = (props: { ctrl: ProjectsPaneController; group: ProjectGroup; count: number; projects: Project[] }) => {
+  const ctrl = props.ctrl;
+  return (
     <div
       class="pf-group-head"
-      classList={{ "pf-drop-target": dropGroup() === p.group.id }}
-      onContextMenu={(e) => openFromContext("group", p.group.id, e)}
-      onDragOver={(e) => { allowProjectDrop(e); setDropGroup(p.group.id); }}
-      onDragLeave={() => setDropGroup((g) => (g === p.group.id ? null : g))}
-      onDrop={(e) => dropIntoGroup(p.group.id, e)}
+      classList={{ "pf-drop-target": ctrl.dropGroup() === props.group.id }}
+      onContextMenu={(e) => ctrl.openFromContext("group", props.group.id, e)}
+      onDragOver={(e) => { ctrl.allowProjectDrop(e); ctrl.setDropGroup(props.group.id); }}
+      onDragLeave={() => ctrl.setDropGroup((g) => (g === props.group.id ? null : g))}
+      onDrop={(e) => ctrl.dropIntoGroup(props.group.id, e)}
     >
-      <button class="pf-group-toggle" onClick={() => toggleGroup(p.group.id)}>
-        <span class="pf-tree-twisty" classList={{ "pf-tree-twisty--closed": p.group.collapsed }}>
+      <button class="pf-group-toggle" onClick={() => toggleGroup(props.group.id)}>
+        <span class="pf-tree-twisty" classList={{ "pf-tree-twisty--closed": props.group.collapsed }}>
           <IconChevronDown size={12} />
         </span>
-        <Show when={renaming() === p.group.id} fallback={<span class="pf-group-name">{p.group.name}</span>}>
-          <RenameField value={p.group.name} commit={(v) => renameGroup(p.group.id, v)} />
+        <Show when={ctrl.renaming() === props.group.id} fallback={<span class="pf-group-name">{props.group.name}</span>}>
+          <RenameField ctrl={ctrl} value={props.group.name} commit={(v) => renameGroup(props.group.id, v)} />
         </Show>
-        <span class="pf-group-count">{p.count}</span>
+        <span class="pf-group-count">{props.count}</span>
       </button>
-      <button class="pf-rail-row-action" title="Group options" onClick={(e) => openFromButton("group", p.group.id, e)}>
+      <button class="pf-rail-row-action" title="Group options" onClick={(e) => ctrl.openFromButton("group", props.group.id, e)}>
         <IconMore size={14} />
       </button>
     </div>
-    );
-  };
+  );
+};
+
+export function ProjectsPane() {
+  // Owns the shared remote-health poller for its lifetime (no-op until a project
+  // is bound to a host and the remoteProjects flag is on).
+  useRemoteHealth();
+  const ctrl = createProjectsPaneController();
 
   return (
     <div class="pf-pane-scroll" data-tour="projects">
       <div class="pf-pane-toolbar">
         <button
           class="pf-icon-btn"
-          title={someExpanded() ? "Collapse all chats" : "Expand all chats"}
+          title={ctrl.someExpanded() ? "Collapse all chats" : "Expand all chats"}
           disabled={workspace.projects.length === 0}
-          onClick={() => setAllChats(allRoots(), !someExpanded())}
+          onClick={() => setAllChats(ctrl.allRoots(), !ctrl.someExpanded())}
         >
-          <IconCollapseAll size={14} expand={!someExpanded()} />
+          <IconCollapseAll size={14} expand={!ctrl.someExpanded()} />
         </button>
         <div class="pf-view-toggle">
-          <button classList={{ active: !grid() }} title="List view" onClick={() => setViewMode("list")}><IconList size={13} /></button>
-          <button classList={{ active: grid() }} title="Grid view" onClick={() => setViewMode("grid")}><IconGrid size={13} /></button>
+          <button classList={{ active: !ctrl.grid() }} title="List view" onClick={() => setViewMode("list")}><IconList size={13} /></button>
+          <button classList={{ active: ctrl.grid() }} title="Grid view" onClick={() => setViewMode("grid")}><IconGrid size={13} /></button>
         </div>
         <div class="pf-pane-toolbar-actions">
-          <button class="pf-icon-btn" title="New group" onClick={() => setRenaming(createGroup())}><IconFolderPlus size={14} /></button>
+          <button class="pf-icon-btn" title="New group" onClick={() => ctrl.setRenaming(createGroup())}><IconFolderPlus size={14} /></button>
           <button class="pf-icon-btn" title="Add project" onClick={pickProject}><IconPlus /></button>
         </div>
       </div>
 
       <div class="pf-rail-list">
         <Show when={workspace.projects.length > 0} fallback={<div class="pf-rail-empty">No projects yet</div>}>
-          <Show when={hasGroups()} fallback={<div onDragOver={allowProjectDrop} onDrop={(e) => dropIntoGroup(null, e)}><ProjectsBody projects={workspace.projects} /></div>}>
-            <For each={buckets()}>
+          <Show
+            when={ctrl.hasGroups()}
+            fallback={
+              <div onDragOver={ctrl.allowProjectDrop} onDrop={(e) => ctrl.dropIntoGroup(null, e)}>
+                <ProjectsBody ctrl={ctrl} projects={workspace.projects} />
+              </div>
+            }
+          >
+            <For each={ctrl.buckets()}>
               {(bucket) => (
                 <div class="pf-group">
                   <Show
@@ -1042,22 +1149,22 @@ export function ProjectsPane() {
                       <Show when={bucket.projects.length > 0}>
                         <div
                           class="pf-group-head pf-group-head--ungrouped"
-                          classList={{ "pf-drop-target": dropGroup() === "__ungrouped" }}
-                          onDragOver={(e) => { allowProjectDrop(e); setDropGroup("__ungrouped"); }}
-                          onDragLeave={() => setDropGroup((g) => (g === "__ungrouped" ? null : g))}
-                          onDrop={(e) => dropIntoGroup(null, e)}
+                          classList={{ "pf-drop-target": ctrl.dropGroup() === "__ungrouped" }}
+                          onDragOver={(e) => { ctrl.allowProjectDrop(e); ctrl.setDropGroup("__ungrouped"); }}
+                          onDragLeave={() => ctrl.setDropGroup((g) => (g === "__ungrouped" ? null : g))}
+                          onDrop={(e) => ctrl.dropIntoGroup(null, e)}
                         >
                           <span class="pf-group-name">Ungrouped</span>
                           <span class="pf-group-count">{bucket.projects.length}</span>
                         </div>
-                        <ProjectsBody projects={bucket.projects} />
+                        <ProjectsBody ctrl={ctrl} projects={bucket.projects} />
                       </Show>
                     }
                   >
-                    <GroupHeader group={bucket.group!} count={bucket.projects.length} projects={bucket.projects} />
+                    <GroupHeader ctrl={ctrl} group={bucket.group!} count={bucket.projects.length} projects={bucket.projects} />
                     <Collapse open={!bucket.group!.collapsed}>
-                      <div onDragOver={allowProjectDrop} onDrop={(e) => dropIntoGroup(bucket.group!.id, e)}>
-                        <ProjectsBody projects={bucket.projects} />
+                      <div onDragOver={ctrl.allowProjectDrop} onDrop={(e) => ctrl.dropIntoGroup(bucket.group!.id, e)}>
+                        <ProjectsBody ctrl={ctrl} projects={bucket.projects} />
                       </div>
                     </Collapse>
                   </Show>
@@ -1068,7 +1175,7 @@ export function ProjectsPane() {
         </Show>
       </div>
 
-      <Show when={chatDrag()}>
+      <Show when={ctrl.chatDrag()}>
         {(d) => (
           <div
             class="pf-chat-drag-ghost"
@@ -1079,16 +1186,16 @@ export function ProjectsPane() {
         )}
       </Show>
 
-      <Show when={menu()}>
+      <Show when={ctrl.menu()}>
         {(m) => (
-          <FloatingMenu anchor={{ x: m().x, y: m().y, align: m().align }} onClose={closeMenu}>
+          <FloatingMenu anchor={{ x: m().x, y: m().y, align: m().align }} onClose={ctrl.closeMenu}>
             <Switch>
-              <Match when={m().kind === "project"}><ProjectMenu root={m().id} /></Match>
-              <Match when={m().kind === "group"}><GroupMenu id={m().id} /></Match>
-              <Match when={m().kind === "chat"}><ChatMenu id={m().id} /></Match>
-              <Match when={m().kind === "newchat"}><NewChatMenu root={m().id} /></Match>
+              <Match when={m().kind === "project"}><ProjectMenu ctrl={ctrl} root={m().id} /></Match>
+              <Match when={m().kind === "group"}><GroupMenu ctrl={ctrl} id={m().id} /></Match>
+              <Match when={m().kind === "chat"}><ChatMenu ctrl={ctrl} id={m().id} /></Match>
+              <Match when={m().kind === "newchat"}><NewChatMenu ctrl={ctrl} root={m().id} /></Match>
               <Match when={m().kind === "remote"}><RemotePanel root={m().id} /></Match>
-              <Match when={m().kind === "confirm"}><ConfirmMenu /></Match>
+              <Match when={m().kind === "confirm"}><ConfirmMenu ctrl={ctrl} /></Match>
             </Switch>
           </FloatingMenu>
         )}

@@ -47,21 +47,11 @@ const NAV: { route: Route; label: string }[] = [
 
 const WINDOW_RESIZING_SETTLE_MS = 180;
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function App() {
-  const [, setReady] = createSignal(false);
-  installAccountStoreBootstrap();
-  const probeNativeCompatibility = () => {
-    if (flagEnabled("ompAgents")) void ensureOmpNativeCompatibility(true);
-    void ensurePiNativeCompatibility(true);
-  };
-  probeNativeCompatibility();
-  onCleanup(subscribeToFlagChanges(probeNativeCompatibility));
-  // macOS convention: window controls sit top-left, so the brand moves to the
-  // top-right to balance the bar (matches the platform's own app chrome).
-  const brandOnRight = () => hostPlatform() === "macos";
-
-  const Brand = () => (
+/** The wordmark + version + dev badge + update badge, shown on whichever
+ *  side of the titlebar the platform's own window controls aren't. A
+ *  presentational component — everything it reads is module-scope state. */
+function AppBrand() {
+  return (
     <div class="pf-brand">
       <span class="pf-mark" />
       <span class="pf-wordmark">PickForge</span>
@@ -90,12 +80,121 @@ export function App() {
       </Show>
     </div>
   );
+}
 
+/** The draggable titlebar: window controls, brand, and route nav. A
+ *  presentational component — `brandOnRight` is the only value not already
+ *  module-scope state. */
+function AppTitlebar(props: { brandOnRight: () => boolean }) {
+  return (
+    <header
+      class="pf-titlebar"
+      classList={{
+        "pf-titlebar--controls-left": resolvedControlsSide() === "left",
+        "pf-titlebar--brand-right": props.brandOnRight(),
+      }}
+      onMouseDown={handleTitlebarMouseDown}
+      onMouseMove={handleTitlebarMouseMove}
+    >
+      <div class="pf-titlebar-left">
+        <Show when={resolvedControlsSide() === "left"}>
+          <WindowControls />
+        </Show>
+        <Show when={!props.brandOnRight()}>
+          <AppBrand />
+        </Show>
+      </div>
+      <nav class="pf-nav">
+        <For each={NAV}>
+          {(n) => (
+            <button
+              class="pf-nav-btn"
+              data-tour={n.route === "settings" ? "settings" : undefined}
+              classList={{ active: route() === n.route }}
+              onClick={() => navigate(n.route)}
+            >
+              {n.label}
+            </button>
+          )}
+        </For>
+      </nav>
+      <div class="pf-titlebar-right">
+        <StatusPill
+          compact
+          label={workspace.activeRoot ? "shell · live" : "no project"}
+          intent={workspace.activeRoot ? "connected" : "neutral"}
+        />
+        <Show when={props.brandOnRight()}>
+          <AppBrand />
+        </Show>
+        <Show when={resolvedControlsSide() === "right"}>
+          <WindowControls />
+        </Show>
+      </div>
+    </header>
+  );
+}
+
+/** The footer: project basename, dock toggles, console toggle, zoom reset. A
+ *  presentational component — everything it reads is module-scope state. */
+function AppStatusBar() {
+  return (
+    <footer class="pf-statusbar">
+      <div class="pf-statusbar-left">
+        <Show when={route() === "workbench"}>
+          <button
+            class="pf-statusbar-dock"
+            classList={{ active: layout().leftVisible }}
+            title={layout().leftVisible ? "Hide left panel" : "Show left panel"}
+            onClick={() => toggleDock("left")}
+          >
+            <IconChevronRight size={11} class={layout().leftVisible ? "pf-flip-x" : ""} />
+          </button>
+        </Show>
+        <span class="pf-statusbar-item">
+          {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
+        </span>
+      </div>
+      <div class="pf-statusbar-right">
+        <Show when={route() === "workbench"}>
+          <button
+            class="pf-statusbar-console"
+            classList={{ active: runConsole.open() }}
+            title={runConsole.open() ? "Hide debug console" : "Show debug console"}
+            onClick={toggleConsole}
+          >
+            <IconTerminal size={11} /> Console
+          </button>
+        </Show>
+        <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
+          {Math.round(currentZoom() * 100)}%
+        </button>
+        <Show when={route() === "workbench"}>
+          <button
+            class="pf-statusbar-dock"
+            classList={{ active: layout().rightVisible }}
+            title={layout().rightVisible ? "Hide right panel" : "Show right panel"}
+            onClick={() => toggleDock("right")}
+          >
+            <IconChevronRight size={11} class={layout().rightVisible ? "" : "pf-flip-x"} />
+          </button>
+        </Show>
+      </div>
+    </footer>
+  );
+}
+
+/** Every imperative one-time bootstrap glued to app mount: theme, titlebar
+ *  drag, zoom hotkeys, window-resize class toggling, version/update checks,
+ *  the swarm/settings-sync/credits/forge-context bootstraps, cross-window DB
+ *  refresh on focus, and initial workspace load + onboarding redirect. A
+ *  composable, called synchronously from `App`'s own setup so its `onMount`/
+ *  `onCleanup` calls run under the same reactive owner as if written inline. */
+function useAppBootstrap(setReady: (v: boolean) => void): void {
   onMount(() => {
     initTheme();
     window.addEventListener("mouseup", handleTitlebarMouseUp, true);
     onCleanup(() => window.removeEventListener("mouseup", handleTitlebarMouseUp, true));
-
 
     // Interface zoom (VS Code-style): apply persisted level + global hotkeys.
     // Registered synchronously so cleanup binds before the async bootstrap.
@@ -173,6 +272,22 @@ export function App() {
       setReady(true);
     })();
   });
+}
+
+export function App() {
+  const [, setReady] = createSignal(false);
+  installAccountStoreBootstrap();
+  const probeNativeCompatibility = () => {
+    if (flagEnabled("ompAgents")) void ensureOmpNativeCompatibility(true);
+    void ensurePiNativeCompatibility(true);
+  };
+  probeNativeCompatibility();
+  onCleanup(subscribeToFlagChanges(probeNativeCompatibility));
+  // macOS convention: window controls sit top-left, so the brand moves to the
+  // top-right to balance the bar (matches the platform's own app chrome).
+  const brandOnRight = () => hostPlatform() === "macos";
+
+  useAppBootstrap(setReady);
 
   return (
     <div class="pf-app">
@@ -182,51 +297,7 @@ export function App() {
       </Show>
       {/* Drag starts only after the pointer moves so the second primary press
           remains available to toggle maximize before Tauri takes over. */}
-      <header
-        class="pf-titlebar"
-        classList={{
-          "pf-titlebar--controls-left": resolvedControlsSide() === "left",
-          "pf-titlebar--brand-right": brandOnRight(),
-        }}
-        onMouseDown={handleTitlebarMouseDown}
-        onMouseMove={handleTitlebarMouseMove}
-      >
-        <div class="pf-titlebar-left">
-          <Show when={resolvedControlsSide() === "left"}>
-            <WindowControls />
-          </Show>
-          <Show when={!brandOnRight()}>
-            <Brand />
-          </Show>
-        </div>
-        <nav class="pf-nav">
-          <For each={NAV}>
-            {(n) => (
-              <button
-                class="pf-nav-btn"
-                data-tour={n.route === "settings" ? "settings" : undefined}
-                classList={{ active: route() === n.route }}
-                onClick={() => navigate(n.route)}
-              >
-                {n.label}
-              </button>
-            )}
-          </For>
-        </nav>
-        <div class="pf-titlebar-right">
-          <StatusPill
-            compact
-            label={workspace.activeRoot ? "shell · live" : "no project"}
-            intent={workspace.activeRoot ? "connected" : "neutral"}
-          />
-          <Show when={brandOnRight()}>
-            <Brand />
-          </Show>
-          <Show when={resolvedControlsSide() === "right"}>
-            <WindowControls />
-          </Show>
-        </div>
-      </header>
+      <AppTitlebar brandOnRight={brandOnRight} />
 
       <div class="pf-body">
         {/* Workbench stays mounted (display toggled) so its terminals/shells
@@ -250,48 +321,7 @@ export function App() {
         </Switch>
       </div>
 
-      <footer class="pf-statusbar">
-        <div class="pf-statusbar-left">
-          <Show when={route() === "workbench"}>
-            <button
-              class="pf-statusbar-dock"
-              classList={{ active: layout().leftVisible }}
-              title={layout().leftVisible ? "Hide left panel" : "Show left panel"}
-              onClick={() => toggleDock("left")}
-            >
-              <IconChevronRight size={11} class={layout().leftVisible ? "pf-flip-x" : ""} />
-            </button>
-          </Show>
-          <span class="pf-statusbar-item">
-            {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
-          </span>
-        </div>
-        <div class="pf-statusbar-right">
-          <Show when={route() === "workbench"}>
-            <button
-              class="pf-statusbar-console"
-              classList={{ active: runConsole.open() }}
-              title={runConsole.open() ? "Hide debug console" : "Show debug console"}
-              onClick={toggleConsole}
-            >
-              <IconTerminal size={11} /> Console
-            </button>
-          </Show>
-          <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
-            {Math.round(currentZoom() * 100)}%
-          </button>
-          <Show when={route() === "workbench"}>
-            <button
-              class="pf-statusbar-dock"
-              classList={{ active: layout().rightVisible }}
-              title={layout().rightVisible ? "Hide right panel" : "Show right panel"}
-              onClick={() => toggleDock("right")}
-            >
-              <IconChevronRight size={11} class={layout().rightVisible ? "" : "pf-flip-x"} />
-            </button>
-          </Show>
-        </div>
-      </footer>
+      <AppStatusBar />
     </div>
   );
 }

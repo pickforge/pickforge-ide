@@ -202,7 +202,136 @@ function launchContextIsCurrent(projectRoot: string, remote: RemotePty | null): 
   return workspace.activeRoot === projectRoot && sameRemote(remotePtyFor(projectRoot), remote);
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+type DeviceResolution =
+  | { aborted: true }
+  | { aborted: false; serial: string | null; device: DeviceEntry | null };
+
+type RemoteDeviceResolution =
+  | { aborted: true }
+  | { aborted: false; serial: string; remoteDevice: RemoteFlutterDevice };
+
+/** Refreshes the remote host's device list and resolves the saved selection
+ * against it. Aborts (no launch) if the launch context moved on mid-await,
+ * the check itself errored, or the saved selection isn't among the current
+ * devices. */
+async function resolveRemoteLaunchDevice(
+  projectRoot: string,
+  remote: RemotePty,
+  capturedSelection: string,
+): Promise<RemoteDeviceResolution> {
+  const state = await refreshRemoteDevices(projectRoot, remote);
+  if (!launchContextIsCurrent(projectRoot, remote)) return { aborted: true };
+  if (state.status === "error") {
+    setError(state.error ? `Remote device check failed: ${state.error}` : "Remote device check failed");
+    return { aborted: true };
+  }
+  const remoteDevice = resolveRemoteDevice(state.devices, capturedSelection);
+  if (!remoteDevice) {
+    setError(
+      state.devices.length === 0
+        ? "No supported Flutter devices found on the remote host"
+        : capturedSelection
+          ? "Saved remote device is unavailable — choose another device"
+          : "Choose a remote device before running",
+    );
+    return { aborted: true };
+  }
+  return { aborted: false, serial: remoteDevice.id, remoteDevice };
+}
+
+/** Stopped iOS simulator: `simctl boot` it and wait until it reports
+ * running. Mirrors the AVD boot/wait UX (bounded timeout, cancellable), but
+ * keyed on the udid, which is stable across the boot. Returns the serial
+ * once running, or `null` on timeout/failure/cancel — a cancelled boot
+ * (superseded epoch) leaves its error/booting state to the newer boot that
+ * owns it instead of touching it here. */
+async function bootAndWaitForSimulator(
+  entry: DeviceEntry,
+  udid: string,
+): Promise<string | null> {
+  const epoch = bootEpoch.next(); // this launch owns the boot; supersedes any prior
+  setBootKind("simulator");
+  setBooting(true);
+  try {
+    await iosBootDevice(udid);
+    const serial = await waitForDevice((d) => d.serial === udid, epoch);
+    if (!bootEpoch.isCurrent(epoch)) return null;
+    if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);
+    return serial;
+  } catch (e) {
+    if (!bootEpoch.isCurrent(epoch)) return null; // cancelled mid-boot — leave cancel state
+    setError(String(e));
+    return null;
+  } finally {
+    if (bootEpoch.isCurrent(epoch)) setBooting(false);
+  }
+}
+
+/** Same as `bootAndWaitForSimulator`, for a stopped Android AVD. */
+async function bootAndWaitForEmulator(
+  entry: DeviceEntry,
+  avdId: string,
+): Promise<string | null> {
+  const epoch = bootEpoch.next(); // this launch owns the boot; supersedes any prior
+  setBootKind("emulator");
+  setBooting(true);
+  try {
+    await androidLaunchAvd(avdId);
+    const serial = await waitForDevice((d) => d.avdId === avdId, epoch);
+    // A cancel/supersede bumped the epoch: don't clobber its state or run.
+    if (!bootEpoch.isCurrent(epoch)) return null;
+    if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);
+    return serial;
+  } catch (e) {
+    if (!bootEpoch.isCurrent(epoch)) return null; // cancelled mid-boot — leave cancel state
+    setError(String(e));
+    return null;
+  } finally {
+    // Only this launch's boot clears the flag; a newer one owns it now.
+    if (bootEpoch.isCurrent(epoch)) setBooting(false);
+  }
+}
+
+/** Resolves (auto-booting a stopped AVD/simulator if needed) the local
+ * device to launch onto. Aborts (no launch) if the device is offline, or a
+ * needed boot failed/timed out/was cancelled. Falls through with a null
+ * serial for a selection that needs no boot decision (e.g. no device
+ * selected) — matching the pre-refactor behavior of launching anyway. */
+async function resolveLocalLaunchDevice(): Promise<DeviceResolution> {
+  const entry = resolveSelectedDevice();
+  const device = entry;
+  if (entry?.state === "offline") {
+    setError(`${entry.displayName} is offline or unauthorized — reconnect it first`);
+    return { aborted: true };
+  }
+  if (entry?.state === "running") {
+    return { aborted: false, serial: entry.serial, device };
+  }
+  if (entry?.kind === "simulator" && entry.serial) {
+    const serial = await bootAndWaitForSimulator(entry, entry.serial);
+    if (!serial) return { aborted: true }; // boot failed / cancelled — don't launch into nothing
+    return { aborted: false, serial, device };
+  }
+  if (entry?.avdId) {
+    const serial = await bootAndWaitForEmulator(entry, entry.avdId);
+    if (!serial) return { aborted: true }; // boot failed / cancelled — don't launch into nothing
+    return { aborted: false, serial, device };
+  }
+  return { aborted: false, serial: null, device };
+}
+
+/** The friendly virtual-device name for the run-history row: emulators AND
+ * simulators are named virtual devices, so record either (physical devices
+ * have only a serial, so they stay null). Same column, no schema change. */
+function runHistoryAvdName(
+  remoteDevice: RemoteFlutterDevice | null,
+  device: DeviceEntry | null,
+): string | null {
+  if (remoteDevice?.emulator) return remoteDevice.name;
+  if (device?.kind === "emulator" || device?.kind === "simulator") return device.displayName;
+  return null;
+}
+
 async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   openConsole();
   setError(null);
@@ -218,72 +347,15 @@ async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   let device: DeviceEntry | null = null;
   let remoteDevice: RemoteFlutterDevice | null = null;
   if (t.needsDevice && remote) {
-    const state = await refreshRemoteDevices(projectRoot, remote);
-    if (!launchContextIsCurrent(projectRoot, remote)) return;
-    if (state.status === "error") {
-      setError(state.error ? `Remote device check failed: ${state.error}` : "Remote device check failed");
-      return;
-    }
-    remoteDevice = resolveRemoteDevice(state.devices, capturedSelection);
-    if (!remoteDevice) {
-      setError(
-        state.devices.length === 0
-          ? "No supported Flutter devices found on the remote host"
-          : capturedSelection
-            ? "Saved remote device is unavailable — choose another device"
-            : "Choose a remote device before running",
-      );
-      return;
-    }
-    serial = remoteDevice.id;
+    const resolved = await resolveRemoteLaunchDevice(projectRoot, remote, capturedSelection);
+    if (resolved.aborted) return;
+    serial = resolved.serial;
+    remoteDevice = resolved.remoteDevice;
   } else if (t.needsDevice && !remote) {
-    const entry = resolveSelectedDevice();
-    device = entry;
-    if (entry?.state === "offline") {
-      setError(`${entry.displayName} is offline or unauthorized — reconnect it first`);
-      return;
-    }
-    if (entry?.state === "running") {
-      serial = entry.serial;
-    } else if (entry?.kind === "simulator" && entry.serial) {
-      // Stopped iOS simulator: `simctl boot` it and wait until it reports
-      // running. Mirrors the AVD boot/wait UX (bounded timeout, cancellable),
-      // but keyed on the udid, which is stable across the boot.
-      const udid = entry.serial;
-      const epoch = bootEpoch.next(); // this launch owns the boot; supersedes any prior
-      setBootKind("simulator");
-      setBooting(true);
-      try {
-        await iosBootDevice(udid);
-        serial = await waitForDevice((d) => d.serial === udid, epoch);
-        if (!bootEpoch.isCurrent(epoch)) return;
-        if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);
-      } catch (e) {
-        if (!bootEpoch.isCurrent(epoch)) return; // cancelled mid-boot — leave cancel state
-        setError(String(e));
-      } finally {
-        if (bootEpoch.isCurrent(epoch)) setBooting(false);
-      }
-      if (!serial) return; // boot failed / cancelled — don't launch into nothing
-    } else if (entry?.avdId) {
-      const epoch = bootEpoch.next(); // this launch owns the boot; supersedes any prior
-      setBootKind("emulator");
-      setBooting(true);
-      try {
-        await androidLaunchAvd(entry.avdId);
-        serial = await waitForDevice((d) => d.avdId === entry.avdId, epoch);
-        // A cancel/supersede bumped the epoch: don't clobber its state or run.
-        if (!bootEpoch.isCurrent(epoch)) return;
-        if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);
-      } catch (e) {
-        if (!bootEpoch.isCurrent(epoch)) return; // cancelled mid-boot — leave cancel state
-        setError(String(e));
-      } finally {
-        // Only this launch's boot clears the flag; a newer one owns it now.
-        if (bootEpoch.isCurrent(epoch)) setBooting(false);
-      }
-      if (!serial) return; // boot failed / cancelled — don't launch into nothing
-    }
+    const resolved = await resolveLocalLaunchDevice();
+    if (resolved.aborted) return;
+    serial = resolved.serial;
+    device = resolved.device;
   }
 
   if (!launchContextIsCurrent(projectRoot, remote)) return;
@@ -298,22 +370,12 @@ async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   // service URL so the Inspector auto-connects.
   await disconnectVm();
   if (!launchContextIsCurrent(projectRoot, remote)) return;
+  const connectionMode = t.inspectorKind === "vmService" ? "vmService" : "auto";
   const run = startRun({ ...t, command: withDevice(t, serial) }, projectRoot, {
     serial,
     avdId: device?.avdId ?? null,
-    // The friendly virtual-device name for the run-history row: emulators AND
-    // simulators are named virtual devices, so record either (physical devices
-    // have only a serial, so they stay null). Same column, no schema change.
-    avdName: remoteDevice?.emulator
-      ? remoteDevice.name
-      : device?.kind === "emulator" || device?.kind === "simulator"
-        ? device.displayName
-        : null,
-    connectionMode: t.inspectorKind === "vmService" ? "vmService" : "auto",
+    avdName: runHistoryAvdName(remoteDevice, device),
+    connectionMode,
   }, remote);
-  armVmAutoConnect(
-    remote && run
-      ? { remote, projectRoot, runId: `run-${run.key}` }
-      : undefined,
-  );
+  armVmAutoConnect(remote && run ? { remote, projectRoot, runId: `run-${run.key}` } : undefined);
 }

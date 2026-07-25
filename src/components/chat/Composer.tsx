@@ -187,7 +187,16 @@ type Suggestion =
   | { kind: "template"; template: PromptTemplate }
   | { kind: "skill"; skill: AgentSkill };
 
-// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+// Composer is the app's primary chat input: ~25 signals/refs (attachments, paste state, text
+// preview, drag-drop, provider/model/effort/mode, suggestions) shared across dozens of event
+// handlers and closures in one function body. Splitting it into composables/child components (the
+// pattern used elsewhere in this pass) would need most of that state threaded across the new
+// boundaries, and unlike every other component touched in this pass, it has zero test coverage of
+// its own behavior (composerAttachments.test.ts and composerChips.test.ts only cover its pure
+// helper libs, not this component) to verify a deeper split against. As the primary input surface,
+// a regression here has outsized user-facing impact, so a large low-confidence refactor isn't
+// forced — a real design change (e.g. a proper state-machine split), not extraction effort.
+// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): see comment above.
 export function Composer(props: {
   provider: AgentProvider;
   engine: AgentEngine;
@@ -863,7 +872,9 @@ export function Composer(props: {
       });
   };
 
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+  // Same justification as the component-level suppression above: closes over Composer's shared
+  // attachment/preparing state.
+  // eslint-disable-next-line complexity -- TODO(#263): see comment above.
   const onPaste = (event: ClipboardEvent) => {
     const data = event.clipboardData;
     if (!data) return;
@@ -1085,7 +1096,9 @@ export function Composer(props: {
     dispatchSend();
   };
 
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+  // Same justification as the component-level suppression above: closes over Composer's shared
+  // suggestions/attachment/text-preview state.
+  // eslint-disable-next-line complexity -- TODO(#263): see comment above.
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (event.isComposing) return;

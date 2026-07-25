@@ -169,7 +169,6 @@ impl PtyManager {
     /// Spawn a pty and stream its output to `sink`. Without `opts.command` this
     /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
     /// <command>` that exits when the command does. Returns the session id.
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
         let _start_permit = self
             .start_gate
@@ -178,37 +177,7 @@ impl PtyManager {
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
-        // One-shot command mode (Debug Console) is ALWAYS a raw `$SHELL -c` and
-        // never session-backed — a `program_override` would be wrong here (it
-        // would reattach to a stale session instead of running the command), so
-        // the one-shot path takes precedence and ignores any override.
-        let one_shot = opts
-            .command
-            .as_ref()
-            .filter(|c| !c.trim().is_empty())
-            .cloned();
-
-        let (program, args, remote_lease) = if let Some(remote) = opts.remote.as_ref() {
-            let (args, lease) = remote_pty_ssh_args(remote, one_shot.as_deref())?;
-            ("ssh".to_string(), args, lease)
-        } else {
-            let (program, args) = match (&one_shot, opts.program_override.clone()) {
-                // Session-backed chat shell: spawn the dtach/tmux client verbatim.
-                (None, Some((prog, prog_args))) => (prog, prog_args),
-                // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
-                _ => {
-                    let ShellInvocation { program, mut args } = resolve_shell();
-                    if let Some(command) = one_shot.as_ref() {
-                        args.push("-c".to_string());
-                        args.push(command.clone());
-                    }
-                    (program, args)
-                }
-            };
-            (program, args, None)
-        };
-        // A one-shot command can never run detached — it must reap normally.
-        let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
+        let (program, args, remote_lease, detach_on_drop) = resolve_spawn_command(&opts)?;
         if let Some(lease) = remote_lease.as_ref() {
             lease.prepare()?;
         }
@@ -221,33 +190,13 @@ impl PtyManager {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new(program);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        if let Some(cwd) = local_spawn_cwd(opts.remote.as_ref(), opts.cwd.as_deref()) {
-            cmd.cwd(cwd);
-        }
-        // Base the shell's env on the resolved login-shell environment (so PATH
-        // additions from rc files — bun/npm/asdf/mise/cargo — are present), then
-        // normalise colour vars and merge any caller extras (PICKFORGE_*).
-        // env_clear first so removed keys (NO_COLOR, …) really disappear.
-        cmd.env_clear();
-        let base = normalize_pty_env(user_shell_environment().clone());
-        // Local spawns only: the graphical askpass helper lives on THIS machine,
-        // so SUDO_ASKPASS is meaningless for the remote shell a `ssh` client
-        // attaches to (extra_env already only reaches the local ssh process for
-        // a remote PTY — see SpawnOptions::extra_env).
-        let askpass_helper = opts
-            .remote
-            .is_none()
-            .then(|| askpass_capability().helper())
-            .flatten();
-        let env = build_pty_env(base, opts.extra_env, askpass_helper);
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-
+        let cmd = build_pty_command(
+            program,
+            args,
+            opts.remote.as_ref(),
+            opts.cwd.as_deref(),
+            opts.extra_env,
+        );
         let mut child = pair.slave.spawn_command(cmd)?;
         // Crash containment: register the shell/client as an owned tree root
         // (no-op unless the guardian/job is active). A detachable dtach/tmux
@@ -309,17 +258,30 @@ impl PtyManager {
             sessions.insert(id, session);
         }
 
-        let sink = Arc::new(sink);
+        self.spawn_reader_thread(id, reader, Arc::new(sink))?;
+
+        Ok(id)
+    }
+
+    /// Spawns the reader thread for a just-registered session and attaches
+    /// its join handle so detach can join it after the client exits (the
+    /// session may already be gone if an instant-exit shell's reader removed
+    /// it before we got the lock back — fine, the thread is then already
+    /// finishing on its own). Rolls the session back out of the registry
+    /// (and reaps its child) if the thread itself fails to spawn, so a
+    /// failed reader spawn can't leak the child + PTY handles.
+    fn spawn_reader_thread<S: PtySink>(
+        &self,
+        id: u32,
+        reader: Box<dyn Read + Send>,
+        sink: Arc<S>,
+    ) -> Result<(), PtyError> {
         let sessions = Arc::clone(&self.sessions);
         match std::thread::Builder::new()
             .name(format!("pty-reader-{id}"))
             .spawn(move || read_loop(id, reader, sink, sessions))
         {
             Ok(handle) => {
-                // Store the join handle so detach can join the reader after the
-                // client exits. The session may already be gone if an instant-exit
-                // shell's reader removed it before we got the lock back — fine, the
-                // thread is then already finishing on its own.
                 if let Some(session) = self
                     .sessions
                     .lock()
@@ -328,10 +290,9 @@ impl PtyManager {
                 {
                     session.reader_thread = Some(handle);
                 }
+                Ok(())
             }
             Err(err) => {
-                // Roll back the just-registered session so a failed reader spawn
-                // can't leak the child + PTY handles.
                 let removed = self
                     .sessions
                     .lock()
@@ -344,11 +305,9 @@ impl PtyManager {
                     let _ = session.child.kill();
                     let _ = session.child.wait();
                 }
-                return Err(PtyError::from(err));
+                Err(PtyError::from(err))
             }
         }
-
-        Ok(id)
     }
 
     /// Send bytes (keystrokes / pasted text) to a session's shell.
@@ -549,6 +508,83 @@ fn teardown_session(mut session: Session) {
     if let Some(t) = session.reader_thread.take() {
         let _ = t.join();
     }
+}
+
+/// Resolves the program/args to spawn for `opts`: an ssh wrapper for a
+/// remote PTY, the verbatim `program_override` for a session-backed chat
+/// shell, or the resolved `$SHELL` (optionally one-shot `-c <command>`).
+/// One-shot command mode (Debug Console) is ALWAYS a raw `$SHELL -c` and
+/// never session-backed — a `program_override` would be wrong here (it
+/// would reattach to a stale session instead of running the command), so
+/// the one-shot path takes precedence and ignores any override. Also
+/// returns the remote lease (if any) and whether the session may detach
+/// (a one-shot command can never run detached — it must reap normally).
+fn resolve_spawn_command(
+    opts: &SpawnOptions,
+) -> Result<(String, Vec<String>, Option<RemoteLeaseHandle>, bool), PtyError> {
+    let one_shot = opts
+        .command
+        .as_ref()
+        .filter(|c| !c.trim().is_empty())
+        .cloned();
+
+    let (program, args, remote_lease) = if let Some(remote) = opts.remote.as_ref() {
+        let (args, lease) = remote_pty_ssh_args(remote, one_shot.as_deref())?;
+        ("ssh".to_string(), args, lease)
+    } else {
+        let (program, args) = match (&one_shot, opts.program_override.clone()) {
+            // Session-backed chat shell: spawn the dtach/tmux client verbatim.
+            (None, Some((prog, prog_args))) => (prog, prog_args),
+            // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
+            _ => {
+                let ShellInvocation { program, mut args } = resolve_shell();
+                if let Some(command) = one_shot.as_ref() {
+                    args.push("-c".to_string());
+                    args.push(command.clone());
+                }
+                (program, args)
+            }
+        };
+        (program, args, None)
+    };
+    let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
+    Ok((program, args, remote_lease, detach_on_drop))
+}
+
+/// Builds the PTY child command: `program`/`args` plus the local cwd (remote
+/// PTYs ignore it — `remote_root` handles the remote `cd`) and environment.
+/// The shell's env is based on the resolved login-shell environment (so PATH
+/// additions from rc files — bun/npm/asdf/mise/cargo — are present), then
+/// normalised and merged with `extra_env`. `env_clear` runs first so removed
+/// keys (NO_COLOR, …) really disappear. Local spawns only get the graphical
+/// askpass helper — it's meaningless for the remote shell a `ssh` client
+/// attaches to (`extra_env` already only reaches the local ssh process for a
+/// remote PTY — see `SpawnOptions::extra_env`).
+fn build_pty_command(
+    program: String,
+    args: Vec<String>,
+    remote: Option<&RemotePty>,
+    cwd: Option<&str>,
+    extra_env: HashMap<String, String>,
+) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(program);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    if let Some(cwd) = local_spawn_cwd(remote, cwd) {
+        cmd.cwd(cwd);
+    }
+    cmd.env_clear();
+    let base = normalize_pty_env(user_shell_environment().clone());
+    let askpass_helper = remote
+        .is_none()
+        .then(|| askpass_capability().helper())
+        .flatten();
+    let env = build_pty_env(base, extra_env, askpass_helper);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    cmd
 }
 
 fn remote_pty_ssh_args(

@@ -21,29 +21,47 @@ const PAD = 6;
 const CARD_W = 320;
 const GAP = 14;
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** Measures the current step's `data-tour` target, or `null` if there is
+ * none / it's not mounted / it's collapsed to zero size. */
+function measureTourTarget(target: string | null | undefined): Rect | null {
+  if (!target) return null;
+  const el = document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) return null;
+  return { top: r.top, left: r.left, width: r.width, height: r.height };
+}
+
+function tourSpotlightRect(rect: Rect | null): Rect | null {
+  if (!rect) return null;
+  return {
+    top: rect.top - PAD,
+    left: rect.left - PAD,
+    width: rect.width + PAD * 2,
+    height: rect.height + PAD * 2,
+  };
+}
+
+function tourCardPosition(spotlight: Rect | null): { top: number; left: number } {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (!spotlight) {
+    return { top: Math.max(GAP, vh / 2 - 90), left: Math.max(GAP, vw / 2 - CARD_W / 2) };
+  }
+  let left = spotlight.left + spotlight.width / 2 - CARD_W / 2;
+  left = Math.max(GAP, Math.min(left, vw - CARD_W - GAP));
+  const below = spotlight.top + spotlight.height + GAP;
+  let top = below;
+  if (below + 170 > vh) {
+    top = Math.max(GAP, spotlight.top - 170 - GAP);
+  }
+  return { top, left };
+}
+
 export function Tour() {
   const [rect, setRect] = createSignal<Rect | null>(null);
   const step = () => TOUR_STEPS[tourStep()];
-
-  const measure = () => {
-    const target = step()?.target;
-    if (!target) {
-      setRect(null);
-      return;
-    }
-    const el = document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
-    if (!el) {
-      setRect(null);
-      return;
-    }
-    const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) {
-      setRect(null);
-      return;
-    }
-    setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-  };
+  const measure = () => setRect(measureTourTarget(step()?.target));
 
   createEffect(() => {
     if (!tourActive()) return;
@@ -72,34 +90,8 @@ export function Tour() {
     });
   });
 
-  const spotlight = () => {
-    const r = rect();
-    if (!r) return null;
-    return {
-      top: r.top - PAD,
-      left: r.left - PAD,
-      width: r.width + PAD * 2,
-      height: r.height + PAD * 2,
-    };
-  };
-
-  const cardPos = (): { top: number; left: number } => {
-    const s = spotlight();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    if (!s) {
-      return { top: Math.max(GAP, vh / 2 - 90), left: Math.max(GAP, vw / 2 - CARD_W / 2) };
-    }
-    let left = s.left + s.width / 2 - CARD_W / 2;
-    left = Math.max(GAP, Math.min(left, vw - CARD_W - GAP));
-    const below = s.top + s.height + GAP;
-    let top = below;
-    if (below + 170 > vh) {
-      top = Math.max(GAP, s.top - 170 - GAP);
-    }
-    return { top, left };
-  };
-
+  const spotlight = () => tourSpotlightRect(rect());
+  const cardPos = () => tourCardPosition(spotlight());
   const isLast = () => tourStep() >= TOUR_STEPS.length - 1;
 
   return (

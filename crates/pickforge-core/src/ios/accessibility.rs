@@ -387,9 +387,7 @@ mod tests {
         assert_eq!(root.text.as_deref(), Some("42"));
     }
 
-    #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
-    fn maps_key_ios_roles() {
+    fn assert_maps_ios_input_and_toggle_roles() {
         assert_eq!(map_role("Button", ""), A11yRole::Button);
         assert_eq!(map_role("", "AXButton"), A11yRole::Button);
         assert_eq!(map_role("StaticText", ""), A11yRole::Text);
@@ -399,6 +397,9 @@ mod tests {
         assert_eq!(map_role("SearchField", ""), A11yRole::Input);
         assert_eq!(map_role("Switch", ""), A11yRole::SwitchControl);
         assert_eq!(map_role("Toggle", ""), A11yRole::SwitchControl);
+    }
+
+    fn assert_maps_ios_list_and_fallback_roles() {
         assert_eq!(map_role("Checkbox", ""), A11yRole::Checkbox);
         assert_eq!(map_role("Cell", ""), A11yRole::List);
         assert_eq!(map_role("Table", ""), A11yRole::List);
@@ -407,6 +408,12 @@ mod tests {
         assert_eq!(map_role("Button", "AXStaticText"), A11yRole::Button);
         assert_eq!(map_role("mystery", "AXMystery"), A11yRole::Unknown);
         assert_eq!(map_role("button", ""), A11yRole::Button);
+    }
+
+    #[test]
+    fn maps_key_ios_roles() {
+        assert_maps_ios_input_and_toggle_roles();
+        assert_maps_ios_list_and_fallback_roles();
     }
 
     #[test]

@@ -70,43 +70,25 @@ const STREAMS: Record<LogViewSource, StreamWiring> = {
   },
 };
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function LogcatView(props: { source?: LogViewSource }) {
-  const wiring = () => STREAMS[props.source ?? "logcat"];
-  let scroller!: HTMLDivElement;
+/** The pending-line ring buffer: log lines can arrive far faster than one per
+ * frame (adb logcat during app startup easily bursts hundreds/sec), so
+ * incoming lines are buffered and flushed together on a short timer or once
+ * the buffer gets large — one signal update, one MCP push, in arrival order
+ * — instead of one of each per line, while preserving the drop-oldest cap.
+ * A composable, called synchronously from `LogcatView`'s own setup so its
+ * `onCleanup` runs under the same reactive owner as if written inline. */
+function createLogBuffer() {
   const [lines, setLines] = createSignal<BufferedLine[]>([]);
-  const [active, setActive] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const [follow, setFollow] = createSignal(true);
-  let unlisten: UnlistenFn | undefined;
   let seq = 0;
-  let streaming: string | null = null; // the serial we're streaming, if any
   let pending: NormalizedLine[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const device = () => resolveSelectedDevice();
-  // Logcat only attaches to an online device (a stopped AVD has no log stream).
-  const serial = () => {
-    const d = device();
-    return d && d.state === "running" ? d.serial : null;
+  const cancelScheduledFlush = () => {
+    if (flushTimer === undefined) return;
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
   };
 
-  const scrollToTail = () => {
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  };
-
-  // Follow the tail as lines arrive, unless the user scrolled up.
-  createEffect(on(lines, () => follow() && queueMicrotask(scrollToTail)));
-
-  const onScroll = () => {
-    const nearBottom =
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
-    setFollow(nearBottom);
-  };
-
-  // Flush the pending buffer: one signal update, one MCP push, in arrival
-  // order — same drop-oldest ring-buffer cap as the old per-line append.
   const flush = () => {
     if (pending.length === 0) return;
     const batch = pending;
@@ -120,12 +102,6 @@ export function LogcatView(props: { source?: LogViewSource }) {
     // here, not in the run PTY that the Debug Console taps. Best effort (no-op
     // until the endpoint is up).
     pushMcpLogs(batch.map((line) => line.text));
-  };
-
-  const cancelScheduledFlush = () => {
-    if (flushTimer === undefined) return;
-    clearTimeout(flushTimer);
-    flushTimer = undefined;
   };
 
   const append = (line: NormalizedLine) => {
@@ -143,14 +119,43 @@ export function LogcatView(props: { source?: LogViewSource }) {
     }
   };
 
+  const clear = () => {
+    cancelScheduledFlush();
+    pending = [];
+    setLines([]);
+  };
+
+  onCleanup(cancelScheduledFlush);
+
+  return { lines, append, clear, flushPending: () => { cancelScheduledFlush(); flush(); } };
+}
+
+/** The stream start/stop lifecycle. A composable, called synchronously from
+ * `LogcatView`'s own setup so its `onCleanup` runs under the same reactive
+ * owner as if written inline. `onStarted` fires right after `active` flips
+ * true (matching the original's inline `setFollow(true)` at that point),
+ * and `flushPending` runs before the stop IPC call so no buffered lines are
+ * lost. */
+function createDeviceLogStream(
+  wiring: () => StreamWiring,
+  serial: () => string | null,
+  onLine: (line: NormalizedLine) => void,
+  flushPending: () => void,
+  onStarted: () => void,
+) {
+  const [active, setActive] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  let unlisten: UnlistenFn | undefined;
+  let streaming: string | null = null; // the serial we're streaming, if any
+
   const stop = async () => {
     unlisten?.();
     unlisten = undefined;
     setActive(false);
     const s = streaming;
     streaming = null;
-    cancelScheduledFlush();
-    flush();
+    flushPending();
     if (s) await wiring().stop(s).catch(() => {});
   };
 
@@ -163,10 +168,10 @@ export function LogcatView(props: { source?: LogViewSource }) {
     setError(null);
     setBusy(true);
     try {
-      await wiring().start(s, append);
+      await wiring().start(s, onLine);
       streaming = s;
       setActive(true);
-      setFollow(true);
+      onStarted();
       unlisten = await listen<string>(wiring().disconnectEvent, (e) => {
         if (e.payload === s) void stop();
       });
@@ -178,67 +183,124 @@ export function LogcatView(props: { source?: LogViewSource }) {
     }
   };
 
-  const clear = () => {
-    cancelScheduledFlush();
-    pending = [];
-    setLines([]);
-    setFollow(true);
-  };
-
   onCleanup(() => {
     unlisten?.();
-    cancelScheduledFlush();
     if (streaming) void wiring().stop(streaming).catch(() => {});
   });
 
+  return { active, busy, error, start, stop };
+}
+
+function LogcatHeader(props: {
+  follow: () => boolean;
+  onToggleFollow: () => void;
+  active: () => boolean;
+  busy: () => boolean;
+  serial: () => string | null;
+  linesCount: () => number;
+  onClear: () => void;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  return (
+    <div class="pf-logcat-head">
+      <MonoEyebrow text="Device logs" />
+      <span class="pf-logcat-spacer" />
+      <button
+        class="pf-logcat-toggle"
+        classList={{ "pf-logcat-toggle--on": props.follow() }}
+        title={props.follow() ? "Following the tail — click to pause" : "Paused — click to follow the tail"}
+        disabled={!props.active()}
+        onClick={props.onToggleFollow}
+      >
+        follow
+      </button>
+      <button
+        class="pf-dc-btn"
+        title="Clear device logs"
+        disabled={props.linesCount() === 0}
+        onClick={props.onClear}
+      >
+        <IconClear size={13} />
+      </button>
+      <Show
+        when={props.active()}
+        fallback={
+          <button
+            class="pf-dc-btn"
+            title="Stream device logs"
+            disabled={props.busy() || !props.serial()}
+            onClick={props.onStart}
+          >
+            <IconPlay size={12} />
+          </button>
+        }
+      >
+        <button class="pf-dc-btn pf-dc-btn--stop" title="Stop streaming device logs" onClick={props.onStop}>
+          <IconStop size={12} />
+        </button>
+      </Show>
+    </div>
+  );
+}
+
+export function LogcatView(props: { source?: LogViewSource }) {
+  const wiring = () => STREAMS[props.source ?? "logcat"];
+  let scroller!: HTMLDivElement;
+  const [follow, setFollow] = createSignal(true);
+
+  const device = () => resolveSelectedDevice();
+  // Logcat only attaches to an online device (a stopped AVD has no log stream).
+  const serial = () => {
+    const d = device();
+    return d && d.state === "running" ? d.serial : null;
+  };
+
+  const buffer = createLogBuffer();
+  const { active, busy, error, start, stop } = createDeviceLogStream(
+    wiring,
+    serial,
+    buffer.append,
+    buffer.flushPending,
+    () => setFollow(true),
+  );
+  const lines = buffer.lines;
+
+  const scrollToTail = () => {
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  };
+
+  // Follow the tail as lines arrive, unless the user scrolled up.
+  createEffect(on(lines, () => follow() && queueMicrotask(scrollToTail)));
+
+  const onScroll = () => {
+    const nearBottom =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 24;
+    setFollow(nearBottom);
+  };
+
+  const clear = () => {
+    buffer.clear();
+    setFollow(true);
+  };
+
   return (
     <div class="pf-logcat">
-      <div class="pf-logcat-head">
-        <MonoEyebrow text="Device logs" />
-        <span class="pf-logcat-spacer" />
-        <button
-          class="pf-logcat-toggle"
-          classList={{ "pf-logcat-toggle--on": follow() }}
-          title={follow() ? "Following the tail — click to pause" : "Paused — click to follow the tail"}
-          disabled={!active()}
-          onClick={() => {
-            const next = !follow();
-            setFollow(next);
-            if (next) scrollToTail();
-          }}
-        >
-          follow
-        </button>
-        <button
-          class="pf-dc-btn"
-          title="Clear device logs"
-          disabled={lines().length === 0}
-          onClick={clear}
-        >
-          <IconClear size={13} />
-        </button>
-        <Show
-          when={active()}
-          fallback={
-            <button
-              class="pf-dc-btn"
-              title="Stream device logs"
-              disabled={busy() || !serial()}
-              onClick={() => void start()}
-            >
-              <IconPlay size={12} />
-            </button>
-          }
-        >
-          <button
-            class="pf-dc-btn pf-dc-btn--stop"
-            title="Stop streaming device logs"
-            onClick={() => void stop()}
-          >
-            <IconStop size={12} />
-          </button>
-        </Show>
-      </div>
+      <LogcatHeader
+        follow={follow}
+        onToggleFollow={() => {
+          const next = !follow();
+          setFollow(next);
+          if (next) scrollToTail();
+        }}
+        active={active}
+        busy={busy}
+        serial={serial}
+        linesCount={() => lines().length}
+        onClear={clear}
+        onStart={() => void start()}
+        onStop={() => void stop()}
+      />
 
       <div class="pf-logcat-body" ref={scroller} onScroll={onScroll}>
         <Show

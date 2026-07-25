@@ -72,12 +72,17 @@ export function PaneShell(props: { pane: PaneId; actions?: JSX.Element; children
   );
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.Element }) {
-  const panes = () => layout().docks[props.dock];
+/** Drag-to-reorder panes within a dock: tracks the drop insertion index
+ *  during a drag and commits the move on drop. A composable, called
+ *  synchronously from `DockColumn`'s own setup so its signal lives under
+ *  the same reactive owner as if written inline. */
+function createPaneDropZone(
+  dock: DockId,
+  panes: () => PaneId[],
+  slotEls: Map<PaneId, HTMLElement>,
+  dockEl: () => HTMLDivElement,
+) {
   const [dropIndex, setDropIndex] = createSignal<number | null>(null);
-  const slotEls = new Map<PaneId, HTMLElement>();
-  let dockEl!: HTMLDivElement;
 
   const isPaneDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(PANE_MIME);
 
@@ -99,7 +104,7 @@ export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.
     setDropIndex(computeIndex(e.clientY));
   };
   const onDragLeave = (e: DragEvent) => {
-    if (!dockEl.contains(e.relatedTarget as Node)) setDropIndex(null);
+    if (!dockEl().contains(e.relatedTarget as Node)) setDropIndex(null);
   };
   const onDrop = (e: DragEvent) => {
     const pane = e.dataTransfer?.getData(PANE_MIME) as PaneId;
@@ -107,37 +112,108 @@ export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.
     setDropIndex(null);
     if (!pane || idx === null) return;
     e.preventDefault();
-    movePane(pane, props.dock, idx);
+    movePane(pane, dock, idx);
   };
 
-  // --- vertical resize between two adjacent expanded panes ---
-  const startResize = (e: PointerEvent, aboveId: PaneId, belowId: PaneId) => {
-    e.preventDefault();
-    const aEl = slotEls.get(aboveId);
-    const bEl = slotEls.get(belowId);
-    if (!aEl || !bEl) return;
-    const startY = e.clientY;
-    const aH = aEl.offsetHeight;
-    const sum = aH + bEl.offsetHeight;
-    const sumW = paneWeight(aboveId) + paneWeight(belowId);
-    const MIN = 64;
-    document.body.classList.add("pf-resizing");
-    const onMove = (ev: PointerEvent) => {
-      let na = aH + (ev.clientY - startY);
-      na = Math.max(MIN, Math.min(sum - MIN, na));
-      setPaneWeights({
-        [aboveId]: (na / sum) * sumW,
-        [belowId]: ((sum - na) / sum) * sumW,
-      });
-    };
-    const end = () => {
-      document.body.classList.remove("pf-resizing");
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", end);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", end);
+  return { dropIndex, onDragOver, onDragLeave, onDrop };
+}
+
+// Vertical resize between two adjacent expanded panes. Plain DOM/event logic,
+// no Solid reactivity of its own.
+function startPaneResize(
+  e: PointerEvent,
+  aboveId: PaneId,
+  belowId: PaneId,
+  slotEls: Map<PaneId, HTMLElement>,
+): void {
+  e.preventDefault();
+  const aEl = slotEls.get(aboveId);
+  const bEl = slotEls.get(belowId);
+  if (!aEl || !bEl) return;
+  const startY = e.clientY;
+  const aH = aEl.offsetHeight;
+  const sum = aH + bEl.offsetHeight;
+  const sumW = paneWeight(aboveId) + paneWeight(belowId);
+  const MIN = 64;
+  document.body.classList.add("pf-resizing");
+  const onMove = (ev: PointerEvent) => {
+    let na = aH + (ev.clientY - startY);
+    na = Math.max(MIN, Math.min(sum - MIN, na));
+    setPaneWeights({
+      [aboveId]: (na / sum) * sumW,
+      [belowId]: ((sum - na) / sum) * sumW,
+    });
   };
+  const end = () => {
+    document.body.classList.remove("pf-resizing");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", end);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", end);
+}
+
+/** One pane's drop-placeholder + slot + trailing resizer within a dock. A
+ *  presentational child component — everything is an accessor/callback
+ *  prop, so reactivity is preserved. */
+function DockSlot(props: {
+  pane: PaneId;
+  index: () => number;
+  panes: () => PaneId[];
+  dropIndex: () => number | null;
+  render: (pane: PaneId) => JSX.Element;
+  registerSlotEl: (pane: PaneId, el: HTMLElement) => void;
+  unregisterSlotEl: (pane: PaneId) => void;
+  onStartResize: (e: PointerEvent, aboveId: PaneId, belowId: PaneId) => void;
+}) {
+  const next = () => props.panes()[props.index() + 1];
+  const expanded = () => !isCollapsed(props.pane);
+  const resizable = () => expanded() && next() && !isCollapsed(next());
+  onCleanup(() => props.unregisterSlotEl(props.pane)); // drop the ref when this pane leaves the dock
+  return (
+    <>
+      <Show when={props.dropIndex() === props.index()}>
+        <div class="pf-drop-placeholder" />
+      </Show>
+      <div
+        class="pf-dock-slot"
+        classList={{ "pf-dock-slot--expanded": expanded() }}
+        // Animatable flex longhands: collapsing eases flex-grow → 0 and
+        // flex-basis → the header height, so the slot rolls up smoothly
+        // while siblings expand to fill the freed space.
+        style={{
+          "flex-grow": expanded() ? `${paneWeight(props.pane)}` : "0",
+          "flex-shrink": "1",
+          "flex-basis": expanded() ? "0px" : "var(--pf-pane-head-h)",
+        }}
+        ref={(el) => props.registerSlotEl(props.pane, el)}
+      >
+        {props.render(props.pane)}
+      </div>
+      <Show when={resizable()}>
+        <div
+          class="pf-pane-vresizer"
+          title="Drag to resize"
+          onPointerDown={(e) => props.onStartResize(e, props.pane, next()!)}
+        >
+          <span class="pf-pane-vresizer-grip" />
+        </div>
+      </Show>
+    </>
+  );
+}
+
+export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.Element }) {
+  const panes = () => layout().docks[props.dock];
+  const slotEls = new Map<PaneId, HTMLElement>();
+  let dockEl!: HTMLDivElement;
+
+  const { dropIndex, onDragOver, onDragLeave, onDrop } = createPaneDropZone(
+    props.dock,
+    panes,
+    slotEls,
+    () => dockEl,
+  );
 
   const width = () => (props.dock === "left" ? layout().leftWidth : layout().rightWidth);
 
@@ -152,43 +228,18 @@ export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.
       onDrop={onDrop}
     >
       <For each={panes()}>
-        {(pane, i) => {
-          const next = () => panes()[i() + 1];
-          const expanded = () => !isCollapsed(pane);
-          const resizable = () => expanded() && next() && !isCollapsed(next());
-          onCleanup(() => slotEls.delete(pane)); // drop the ref when this pane leaves the dock
-          return (
-            <>
-              <Show when={dropIndex() === i()}>
-                <div class="pf-drop-placeholder" />
-              </Show>
-              <div
-                class="pf-dock-slot"
-                classList={{ "pf-dock-slot--expanded": expanded() }}
-                // Animatable flex longhands: collapsing eases flex-grow → 0 and
-                // flex-basis → the header height, so the slot rolls up smoothly
-                // while siblings expand to fill the freed space.
-                style={{
-                  "flex-grow": expanded() ? `${paneWeight(pane)}` : "0",
-                  "flex-shrink": "1",
-                  "flex-basis": expanded() ? "0px" : "var(--pf-pane-head-h)",
-                }}
-                ref={(el) => slotEls.set(pane, el)}
-              >
-                {props.render(pane)}
-              </div>
-              <Show when={resizable()}>
-                <div
-                  class="pf-pane-vresizer"
-                  title="Drag to resize"
-                  onPointerDown={(e) => startResize(e, pane, next()!)}
-                >
-                  <span class="pf-pane-vresizer-grip" />
-                </div>
-              </Show>
-            </>
-          );
-        }}
+        {(pane, i) => (
+          <DockSlot
+            pane={pane}
+            index={i}
+            panes={panes}
+            dropIndex={dropIndex}
+            render={props.render}
+            registerSlotEl={(p, el) => slotEls.set(p, el)}
+            unregisterSlotEl={(p) => slotEls.delete(p)}
+            onStartResize={(e, a, b) => startPaneResize(e, a, b, slotEls)}
+          />
+        )}
       </For>
       <Show when={dropIndex() === panes().length}>
         <div class="pf-drop-placeholder" />

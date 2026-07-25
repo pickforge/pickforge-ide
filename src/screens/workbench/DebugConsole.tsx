@@ -59,7 +59,190 @@ const STATUS: Record<RunStatus, { label: string; intent: StatusIntent; pulse?: b
   stopped: { label: "stopped", intent: "warning" },
 };
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+// Drag the top edge to resize the panel height (mirror of the dock resizer).
+// Plain DOM/event logic, no Solid reactivity of its own.
+function startDebugConsoleResize(e: PointerEvent): void {
+  e.preventDefault();
+  const startY = e.clientY;
+  const startH = runConsole.height();
+  document.body.classList.add("pf-resizing");
+  const onMove = (ev: PointerEvent) => setConsoleHeight(startH + (startY - ev.clientY));
+  const end = () => {
+    document.body.classList.remove("pf-resizing");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", end);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", end);
+}
+
+// Tap the run console output for the MCP `get_run_logs` buffer: feed the VM-URL
+// scraper as before, and forward completed lines (ANSI stripped) to MCP. A small
+// carry buffer reassembles lines that straddle two output chunks. A factory (not
+// a composable — no Solid reactivity involved) so each mount gets its own carry.
+function createRunOutputTap(): (chunk: string) => void {
+  let logCarry = "";
+  return (chunk: string) => {
+    ingestRunOutput(chunk);
+    logCarry += chunk;
+    const parts = logCarry.split(/\r?\n/);
+    logCarry = parts.pop() ?? ""; // keep the trailing partial line
+    const lines = parts
+      .map((l) => l.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trimEnd())
+      .filter((l) => l.length > 0);
+    if (lines.length > 0) pushMcpLogs(lines);
+  };
+}
+
+/** The Run button plus its hot-reload/hot-restart/reattach/stop transport
+ *  controls. Store actions (`reloadRun`, `stopRun`, …) and store-only
+ *  accessors (`isBooting`, `workbenchPrefs`, …) are read straight from their
+ *  module-scope import, same as the original inline JSX did — only the
+ *  locally-derived accessors are threaded through as props. */
+function RunTransportControls(props: {
+  can: (c: string) => boolean;
+  isRunning: () => boolean;
+  isDisconnected: () => boolean;
+  bootNoun: () => ReturnType<typeof bootingKind>;
+}) {
+  return (
+    <>
+      {/* The actual Run, grouped with the transport controls to its right. */}
+      <button
+        class="pf-dc-btn pf-dc-btn--run"
+        classList={{ "pf-dc-btn--labeled": workbenchPrefs().runButtonLabels }}
+        title={
+          isBooting()
+            ? `Booting ${props.bootNoun()}…`
+            : props.isRunning()
+              ? "A run is active — stop it first"
+              : remoteDeviceLaunchReason() ?? "Run"
+        }
+        aria-label={remoteDeviceLaunchReason() ?? "Run"}
+        disabled={!hasRunTargets() || !canLaunchActiveTarget() || props.isRunning() || isBooting()}
+        onClick={() => void launchActiveTarget()}
+      >
+        <IconPlay size={12} />
+        <Show when={workbenchPrefs().runButtonLabels}>Run</Show>
+      </button>
+      <Show when={props.can("hotReload")}>
+        <button
+          class="pf-dc-auto"
+          classList={{ "pf-dc-auto--on": autoReloadEnabled() }}
+          title={
+            autoReloadEnabled()
+              ? "Auto hot-reload on save: ON — click to disable"
+              : "Auto hot-reload on save: OFF — click to enable"
+          }
+          onClick={() => {
+            toggleAutoReload();
+            syncAutoReloadWatch();
+          }}
+        >
+          auto
+        </button>
+        <button class="pf-dc-btn pf-dc-btn--reload" title="Hot reload (r)" disabled={!props.isRunning()} onClick={reloadRun}>
+          <IconRefresh size={13} />
+        </button>
+      </Show>
+      <Show when={props.can("hotRestart")}>
+        <button class="pf-dc-btn pf-dc-btn--restart" title="Hot restart (R)" disabled={!props.isRunning()} onClick={restartRun}>
+          <IconRestart size={13} />
+        </button>
+      </Show>
+      <Show when={props.isDisconnected()}>
+        <button
+          class="pf-dc-btn pf-dc-btn--restart pf-dc-btn--labeled"
+          title="Reconnect the inspector through a fresh SSH tunnel; console streaming cannot reattach"
+          onClick={() => void reattachRun()}
+        >
+          <IconRefresh size={13} />
+          Reattach
+        </button>
+      </Show>
+      <button class="pf-dc-btn pf-dc-btn--stop" title="Stop" disabled={!props.isRunning()} onClick={stopRun}>
+        <IconStop size={12} />
+      </button>
+    </>
+  );
+}
+
+/** The console/logs header: run target controls, hot reload/restart, stop,
+ *  clear, close. Everything not owned by `DebugConsole`'s local state (boot/
+ *  launch store accessors, the run actions) is read straight from its
+ *  module-scope store import, same as the original inline JSX did — only
+ *  the locally-derived accessors are threaded through as props. */
+function DebugConsoleHeader(props: {
+  meta: () => { label: string; intent: StatusIntent; pulse?: boolean };
+  can: (c: string) => boolean;
+  isRunning: () => boolean;
+  isDisconnected: () => boolean;
+  bootNoun: () => ReturnType<typeof bootingKind>;
+  hasDeviceLogs: () => boolean;
+  view: () => "console" | "logs";
+  onViewChange: (v: "console" | "logs") => void;
+}) {
+  return (
+    <header class="pf-dc-head">
+      <RunLauncher />
+      <Show when={props.hasDeviceLogs()}>
+        <div class="pf-dc-tabs" role="tablist">
+          <button
+            class="pf-dc-tab"
+            classList={{ "pf-dc-tab--on": props.view() === "console" }}
+            role="tab"
+            aria-selected={props.view() === "console"}
+            onClick={() => props.onViewChange("console")}
+          >
+            Console
+          </button>
+          <button
+            class="pf-dc-tab"
+            classList={{ "pf-dc-tab--on": props.view() === "logs" }}
+            role="tab"
+            aria-selected={props.view() === "logs"}
+            onClick={() => props.onViewChange("logs")}
+          >
+            Logs
+          </button>
+        </div>
+      </Show>
+      <Show when={isBooting()}>
+        <span class="pf-run-booting">booting…</span>
+        <button
+          class="pf-dc-btn pf-dc-btn--cancel pf-dc-btn--labeled"
+          title={`Cancel ${props.bootNoun()} boot`}
+          onClick={cancelBoot}
+        >
+          Cancel
+        </button>
+      </Show>
+      <Show when={!isBooting() && launchError()}>
+        <span class="pf-run-error" title={launchError()!}>{launchError()}</span>
+      </Show>
+      <StatusPill label={props.meta().label} intent={props.meta().intent} pulsing={props.meta().pulse} />
+      <span class="pf-dc-spacer" />
+      <RunTransportControls
+        can={props.can}
+        isRunning={props.isRunning}
+        isDisconnected={props.isDisconnected}
+        bootNoun={props.bootNoun}
+      />
+      <button
+        class="pf-dc-btn"
+        title="Clear console"
+        disabled={!runConsole.current()}
+        onClick={clearConsole}
+      >
+        <IconClear size={13} />
+      </button>
+      <button class="pf-dc-btn" title="Hide console" onClick={closeConsole}>
+        <IconClose size={14} />
+      </button>
+    </header>
+  );
+}
+
 export function DebugConsole() {
   const target = runConsole.target;
   const status = runConsole.status;
@@ -70,21 +253,7 @@ export function DebugConsole() {
   // Boot copy tracks what's actually booting (Android emulator vs iOS simulator).
   const bootNoun = () => bootingKind();
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
-
-  // Tap the run console output for the MCP `get_run_logs` buffer: feed the VM-URL
-  // scraper as before, and forward completed lines (ANSI stripped) to MCP. A small
-  // carry buffer reassembles lines that straddle two output chunks.
-  let logCarry = "";
-  const onRunOutput = (chunk: string) => {
-    ingestRunOutput(chunk);
-    logCarry += chunk;
-    const parts = logCarry.split(/\r?\n/);
-    logCarry = parts.pop() ?? ""; // keep the trailing partial line
-    const lines = parts
-      .map((l) => l.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trimEnd())
-      .filter((l) => l.length > 0);
-    if (lines.length > 0) pushMcpLogs(lines);
-  };
+  const onRunOutput = createRunOutputTap();
 
   // Console | Logs switch — Logs exists for any target whose device logs don't
   // reach the run PTY: RN / native-Android (`adb logcat`) and native-iOS
@@ -102,134 +271,21 @@ export function DebugConsole() {
 
   onCleanup(detachConsole);
 
-  // Drag the top edge to resize the panel height (mirror of the dock resizer).
-  const startResize = (e: PointerEvent) => {
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = runConsole.height();
-    document.body.classList.add("pf-resizing");
-    const onMove = (ev: PointerEvent) => setConsoleHeight(startH + (startY - ev.clientY));
-    const end = () => {
-      document.body.classList.remove("pf-resizing");
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", end);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", end);
-  };
-
   return (
     <section class="pf-debug-console" style={{ height: `${runConsole.height()}px` }}>
-      <div class="pf-dc-resizer" title="Drag to resize" onPointerDown={startResize}>
+      <div class="pf-dc-resizer" title="Drag to resize" onPointerDown={startDebugConsoleResize}>
         <span class="pf-dc-resizer-grip" />
       </div>
-      <header class="pf-dc-head">
-        <RunLauncher />
-        <Show when={hasDeviceLogs()}>
-          <div class="pf-dc-tabs" role="tablist">
-            <button
-              class="pf-dc-tab"
-              classList={{ "pf-dc-tab--on": view() === "console" }}
-              role="tab"
-              aria-selected={view() === "console"}
-              onClick={() => setView("console")}
-            >
-              Console
-            </button>
-            <button
-              class="pf-dc-tab"
-              classList={{ "pf-dc-tab--on": view() === "logs" }}
-              role="tab"
-              aria-selected={view() === "logs"}
-              onClick={() => setView("logs")}
-            >
-              Logs
-            </button>
-          </div>
-        </Show>
-        <Show when={isBooting()}>
-          <span class="pf-run-booting">booting…</span>
-          <button
-            class="pf-dc-btn pf-dc-btn--cancel pf-dc-btn--labeled"
-            title={`Cancel ${bootNoun()} boot`}
-            onClick={cancelBoot}
-          >
-            Cancel
-          </button>
-        </Show>
-        <Show when={!isBooting() && launchError()}>
-          <span class="pf-run-error" title={launchError()!}>{launchError()}</span>
-        </Show>
-        <StatusPill label={meta().label} intent={meta().intent} pulsing={meta().pulse} />
-        <span class="pf-dc-spacer" />
-        {/* The actual Run, grouped with the transport controls to its right. */}
-        <button
-          class="pf-dc-btn pf-dc-btn--run"
-          classList={{ "pf-dc-btn--labeled": workbenchPrefs().runButtonLabels }}
-          title={
-            isBooting()
-              ? `Booting ${bootNoun()}…`
-              : isRunning()
-                ? "A run is active — stop it first"
-                : remoteDeviceLaunchReason() ?? "Run"
-          }
-          aria-label={remoteDeviceLaunchReason() ?? "Run"}
-          disabled={!hasRunTargets() || !canLaunchActiveTarget() || isRunning() || isBooting()}
-          onClick={() => void launchActiveTarget()}
-        >
-          <IconPlay size={12} />
-          <Show when={workbenchPrefs().runButtonLabels}>Run</Show>
-        </button>
-        <Show when={can("hotReload")}>
-          <button
-            class="pf-dc-auto"
-            classList={{ "pf-dc-auto--on": autoReloadEnabled() }}
-            title={
-              autoReloadEnabled()
-                ? "Auto hot-reload on save: ON — click to disable"
-                : "Auto hot-reload on save: OFF — click to enable"
-            }
-            onClick={() => {
-              toggleAutoReload();
-              syncAutoReloadWatch();
-            }}
-          >
-            auto
-          </button>
-          <button class="pf-dc-btn pf-dc-btn--reload" title="Hot reload (r)" disabled={!isRunning()} onClick={reloadRun}>
-            <IconRefresh size={13} />
-          </button>
-        </Show>
-        <Show when={can("hotRestart")}>
-          <button class="pf-dc-btn pf-dc-btn--restart" title="Hot restart (R)" disabled={!isRunning()} onClick={restartRun}>
-            <IconRestart size={13} />
-          </button>
-        </Show>
-        <Show when={isDisconnected()}>
-          <button
-            class="pf-dc-btn pf-dc-btn--restart pf-dc-btn--labeled"
-            title="Reconnect the inspector through a fresh SSH tunnel; console streaming cannot reattach"
-            onClick={() => void reattachRun()}
-          >
-            <IconRefresh size={13} />
-            Reattach
-          </button>
-        </Show>
-        <button class="pf-dc-btn pf-dc-btn--stop" title="Stop" disabled={!isRunning()} onClick={stopRun}>
-          <IconStop size={12} />
-        </button>
-        <button
-          class="pf-dc-btn"
-          title="Clear console"
-          disabled={!runConsole.current()}
-          onClick={clearConsole}
-        >
-          <IconClear size={13} />
-        </button>
-        <button class="pf-dc-btn" title="Hide console" onClick={closeConsole}>
-          <IconClose size={14} />
-        </button>
-      </header>
+      <DebugConsoleHeader
+        meta={meta}
+        can={can}
+        isRunning={isRunning}
+        isDisconnected={isDisconnected}
+        bootNoun={bootNoun}
+        hasDeviceLogs={hasDeviceLogs}
+        view={view}
+        onViewChange={setView}
+      />
 
       <div class="pf-dc-body">
         {/* Console + Logs are display-toggled (not unmounted) so switching tabs

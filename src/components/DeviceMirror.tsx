@@ -9,9 +9,82 @@ import { remotePtyFor } from "../lib/remoteContext";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
 import { workspace } from "../stores/workspace";
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function DeviceMirror() {
-  let canvas!: HTMLCanvasElement;
+/** The stats strip's content — reserved for the whole session (fixed-height,
+ * single line) so toggling a stat (e.g. "skipped N") never reflows and
+ * resizes the mirror stage. A child component so `stats()` stays a
+ * per-attribute reactive read here rather than in the parent. */
+function MirrorStatsBar(props: { stats: () => MirrorStats | null }) {
+  return (
+    <Show when={props.stats()}>
+      {(s) => (
+        <>
+          <span>{s().renderer}</span>
+          <span>avc {s().avc}</span>
+          <span>
+            {s().width}×{s().height}
+          </span>
+          <span>frames {s().rendered}</span>
+          <Show when={s().skipped > 0}>
+            <span>skipped {s().skipped}</span>
+          </Show>
+          <Show when={s().error}>
+            <span class="pf-mirror-stats-err">{s().error}</span>
+          </Show>
+        </>
+      )}
+    </Show>
+  );
+}
+
+/** Pointer-drag → touch-injection handlers. A plain factory (no Solid
+ * reactivity involved — `handle` is a mutable ref, not a signal): `down`
+ * tracks the drag across the three handlers, and `getCanvas`/`getHandle`
+ * are read at event time so they see the current ref/mirror handle. */
+function createMirrorTouchHandlers(
+  getCanvas: () => HTMLCanvasElement,
+  getHandle: () => MirrorHandle | null,
+) {
+  let down = false;
+  const ratio = (e: PointerEvent) => {
+    const r = getCanvas().getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  };
+  const onDown = (e: PointerEvent) => {
+    const handle = getHandle();
+    if (!handle) return;
+    down = true;
+    getCanvas().setPointerCapture(e.pointerId);
+    const { x, y } = ratio(e);
+    handle.touch("down", x, y);
+  };
+  const onMove = (e: PointerEvent) => {
+    const handle = getHandle();
+    if (!handle || !down) return;
+    const { x, y } = ratio(e);
+    handle.touch("move", x, y);
+  };
+  const onUp = (e: PointerEvent) => {
+    const handle = getHandle();
+    if (!handle || !down) return;
+    down = false;
+    const { x, y } = ratio(e);
+    handle.touch("up", x, y);
+  };
+  return { onDown, onMove, onUp };
+}
+
+/** The mirror session's start/stop lifecycle: signals, the current handle,
+ * and the epoch/unlisten/poll bookkeeping that guards against a stale
+ * `start()` (e.g. the project switched to remote, or a newer start/stop
+ * raced in) from installing state after it's no longer current. A
+ * composable, called synchronously from `DeviceMirror`'s own setup so its
+ * `createEffect`/`onCleanup` run under the same reactive owner as if
+ * written inline. */
+function createMirrorSessionController(
+  getCanvas: () => HTMLCanvasElement,
+  remote: () => ReturnType<typeof remotePtyFor>,
+  serial: () => string | null,
+) {
   const [active, setActive] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -20,15 +93,6 @@ export function DeviceMirror() {
   let unlisten: UnlistenFn | undefined;
   let poll: ReturnType<typeof setInterval> | undefined;
   let epoch = 0;
-  let down = false;
-
-  const remote = () => remotePtyFor(workspace.activeRoot);
-  const device = () => resolveSelectedDevice();
-  // Mirror only attaches to an online device (a stopped AVD has no screen).
-  const serial = () => {
-    const d = device();
-    return d && d.state === "running" ? d.serial : null;
-  };
 
   const stop = async () => {
     epoch += 1;
@@ -54,7 +118,7 @@ export function DeviceMirror() {
     setBusy(true);
     const startEpoch = ++epoch;
     try {
-      const started = await startMirror(s, canvas);
+      const started = await startMirror(s, getCanvas());
       if (startEpoch !== epoch || remote()) {
         await started.stop();
         return;
@@ -92,28 +156,24 @@ export function DeviceMirror() {
     void handle?.stop();
   });
 
-  const ratio = (e: PointerEvent) => {
-    const r = canvas.getBoundingClientRect();
-    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  return { active, busy, error, stats, start, stop, getHandle: () => handle };
+}
+
+export function DeviceMirror() {
+  let canvas!: HTMLCanvasElement;
+  const remote = () => remotePtyFor(workspace.activeRoot);
+  const device = () => resolveSelectedDevice();
+  // Mirror only attaches to an online device (a stopped AVD has no screen).
+  const serial = () => {
+    const d = device();
+    return d && d.state === "running" ? d.serial : null;
   };
-  const onDown = (e: PointerEvent) => {
-    if (!handle) return;
-    down = true;
-    canvas.setPointerCapture(e.pointerId);
-    const { x, y } = ratio(e);
-    handle.touch("down", x, y);
-  };
-  const onMove = (e: PointerEvent) => {
-    if (!handle || !down) return;
-    const { x, y } = ratio(e);
-    handle.touch("move", x, y);
-  };
-  const onUp = (e: PointerEvent) => {
-    if (!handle || !down) return;
-    down = false;
-    const { x, y } = ratio(e);
-    handle.touch("up", x, y);
-  };
+  const { active, busy, error, stats, start, stop, getHandle } = createMirrorSessionController(
+    () => canvas,
+    remote,
+    serial,
+  );
+  const { onDown, onMove, onUp } = createMirrorTouchHandlers(() => canvas, getHandle);
 
   return (
     <div class="pf-mirror">
@@ -174,24 +234,7 @@ export function DeviceMirror() {
           the mirror stage. */}
       <Show when={!remote() && active()}>
         <div class="pf-mirror-stats">
-          <Show when={stats()}>
-            {(s) => (
-              <>
-                <span>{s().renderer}</span>
-                <span>avc {s().avc}</span>
-                <span>
-                  {s().width}×{s().height}
-                </span>
-                <span>frames {s().rendered}</span>
-                <Show when={s().skipped > 0}>
-                  <span>skipped {s().skipped}</span>
-                </Show>
-                <Show when={s().error}>
-                  <span class="pf-mirror-stats-err">{s().error}</span>
-                </Show>
-              </>
-            )}
-          </Show>
+          <MirrorStatsBar stats={stats} />
         </div>
       </Show>
       <Show when={!remote() && error()}>

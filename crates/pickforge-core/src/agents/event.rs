@@ -185,10 +185,10 @@ pub enum TurnStatus {
 mod tests {
     use super::*;
 
-    #[test]
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-    fn round_trips_all_event_variants() {
-        let events = vec![
+    /// The lifecycle/text/command/file-change event variants exercised by
+    /// `round_trips_all_event_variants`.
+    fn lifecycle_and_command_event_samples() -> Vec<AgentEvent> {
+        vec![
             AgentEvent::SessionStarted {
                 provider_session_id: "provider-session-1".to_string(),
             },
@@ -249,6 +249,13 @@ mod tests {
                     },
                 ],
             },
+        ]
+    }
+
+    /// The tool/plan/approval/usage/terminal/provider event variants
+    /// exercised by `round_trips_all_event_variants`.
+    fn tool_and_terminal_event_samples() -> Vec<AgentEvent> {
+        vec![
             AgentEvent::McpToolCall {
                 item_id: "tool-1".to_string(),
                 server: "server".to_string(),
@@ -315,7 +322,14 @@ mod tests {
             AgentEvent::Noise {
                 line: "raw line".to_string(),
             },
-        ];
+        ]
+    }
+
+    #[test]
+    fn round_trips_all_event_variants() {
+        let events = lifecycle_and_command_event_samples()
+            .into_iter()
+            .chain(tool_and_terminal_event_samples());
 
         for event in events {
             let json = serde_json::to_string(&event).unwrap();

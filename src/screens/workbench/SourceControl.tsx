@@ -37,20 +37,182 @@ interface RepoStatus {
   status: GitStatus;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function SourceControl() {
+type DiffTarget = { repo: string; file: GitFileStatus; staged: boolean; text: string };
+
+/** The branch/view-toggle/refresh toolbar. A presentational child component —
+ *  everything is an accessor/callback prop, so reactivity is preserved. */
+function SourceControlToolbar(props: {
+  repos: () => RepoStatus[];
+  flat: () => boolean;
+  view: () => "changes" | "graph";
+  onViewChange: (v: "changes" | "graph") => void;
+  total: () => number;
+  canRefresh: () => boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div class="pf-pane-toolbar pf-sc-toolbar">
+      <span class="pf-sc-branch" title={props.flat() ? props.repos()[0].status.branch ?? "" : ""}>
+        {props.flat()
+          ? props.repos()[0].status.branch ?? "—"
+          : props.repos().length > 1
+            ? `${props.repos().length} repos`
+            : "—"}
+      </span>
+      <div class="pf-sc-toolbar-end">
+        <div class="pf-sc-viewtoggle">
+          <button
+            classList={{ "pf-sc-view--on": props.view() === "changes" }}
+            title="Changes"
+            onClick={() => props.onViewChange("changes")}
+          >
+            Changes
+          </button>
+          <button
+            classList={{ "pf-sc-view--on": props.view() === "graph" }}
+            title="Commit graph"
+            onClick={() => props.onViewChange("graph")}
+          >
+            Graph
+          </button>
+        </div>
+        <Show when={props.view() === "changes" && props.total() > 0}>
+          <span class="pf-sc-count">{props.total()}</span>
+        </Show>
+        <button class="pf-icon-btn" title="Refresh" disabled={!props.canRefresh()} onClick={props.onRefresh}>
+          <IconRefresh size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The changed-file list for the "Changes" view: a flat single-repo list, or
+ *  collapsible per-repo sections for a monorepo. A presentational child
+ *  component — everything is an accessor/callback prop, so reactivity is
+ *  preserved. */
+function ChangesList(props: {
+  repos: () => RepoStatus[];
+  total: () => number;
+  flat: () => boolean;
+  loading: () => boolean;
+  repoName: (path: string) => string;
+  onOpenDiff: (repo: string, file: GitFileStatus, staged: boolean) => void;
+}) {
+  return (
+    <Show
+      when={props.repos().length > 0}
+      fallback={
+        <div class="pf-rail-empty">{props.loading() ? "Checking…" : "Not a git repository"}</div>
+      }
+    >
+      <Show when={props.total() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
+        <div class="pf-rail-list pf-sc-list">
+          <For each={props.repos()}>
+            {(repo) => {
+              // Sub-repo sections collapse (persisted per path); a single root
+              // repo keeps its original flat, always-open list.
+              const collapsed = () => !props.flat() && isScmCollapsed(repo.path);
+              return (
+                <Show when={repo.status.files.length > 0}>
+                  <Show when={!props.flat()}>
+                    <button
+                      class="pf-sc-section"
+                      classList={{ "pf-sc-section--collapsed": collapsed() }}
+                      title={repo.path}
+                      onClick={() => toggleScmCollapsed(repo.path)}
+                    >
+                      <span class="pf-sc-section-chevron">
+                        <IconChevronDown size={12} />
+                      </span>
+                      <span class="pf-sc-section-name">{props.repoName(repo.path)}</span>
+                      <Show when={repo.status.branch}>
+                        <span class="pf-sc-section-branch">{repo.status.branch}</span>
+                      </Show>
+                      <span class="pf-sc-count">{repo.status.files.length}</span>
+                    </button>
+                  </Show>
+                  <Show when={!collapsed()}>
+                    <For each={repo.status.files}>
+                      {(f) => (
+                        <div
+                          class="pf-sc-row"
+                          title={f.path}
+                          onClick={() => props.onOpenDiff(repo.path, f, f.staged && !f.unstaged)}
+                        >
+                          <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
+                          <span class="pf-sc-name">{baseName(f.path)}</span>
+                          <span class="pf-sc-dir">{dirName(f.path)}</span>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </Show>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+    </Show>
+  );
+}
+
+/** The portaled unified-diff overlay for a selected file. A presentational
+ *  child component — everything is an accessor/callback prop. */
+function DiffModal(props: {
+  diffFor: () => DiffTarget | null;
+  onClose: () => void;
+  onSelectTab: (repo: string, file: GitFileStatus, staged: boolean) => void;
+}) {
+  return (
+    <Show when={props.diffFor()}>
+      {(d) => (
+        <Portal>
+          <div class="pf-diff-overlay" onClick={props.onClose}>
+            <div class="pf-diff-modal" onClick={(e) => e.stopPropagation()}>
+              <div class="pf-diff-head">
+                <span class="pf-diff-path">{d().file.path}</span>
+                <div class="pf-diff-tabs">
+                  <button
+                    classList={{ active: !d().staged }}
+                    onClick={() => props.onSelectTab(d().repo, d().file, false)}
+                  >
+                    Working
+                  </button>
+                  <button
+                    classList={{ active: d().staged }}
+                    onClick={() => props.onSelectTab(d().repo, d().file, true)}
+                  >
+                    Staged
+                  </button>
+                </div>
+                <button class="pf-icon-btn" title="Close" onClick={props.onClose}>
+                  <IconClose size={14} />
+                </button>
+              </div>
+              <div class="pf-diff-body">
+                <Show when={d().text.trim()} fallback={<div class="pf-rail-empty">No diff</div>}>
+                  <For each={d().text.split("\n")}>
+                    {(line) => <div class={`pf-diff-line ${diffLineClass(line)}`}>{line || " "}</div>}
+                  </For>
+                </Show>
+              </div>
+            </div>
+          </div>
+        </Portal>
+      )}
+    </Show>
+  );
+}
+
+/** Discovers repos beneath the active project root and their status,
+ *  re-scanning whenever the active project changes. A composable, called
+ *  synchronously from `SourceControl`'s own setup so its `createEffect`
+ *  runs under the same reactive owner as if written inline. */
+function createRepoScanner() {
   const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);
-  const [view, setView] = createSignal<"changes" | "graph">("changes");
   const [graphVersion, setGraphVersion] = createSignal(0);
-  const [graphSel, setGraphSel] = createSignal("");
-  const [diffFor, setDiffFor] = createSignal<{ repo: string; file: GitFileStatus; staged: boolean; text: string } | null>(null);
-  // The repo to graph: the user's pick if still present, else the first repo.
-  const graphRepo = () => {
-    const sel = graphSel();
-    if (sel && repos().some((r) => r.path === sel)) return sel;
-    return repos()[0]?.path ?? workspace.activeRoot ?? "";
-  };
 
   const refresh = async () => {
     const root = workspace.activeRoot;
@@ -84,6 +246,21 @@ export function SourceControl() {
     void refresh();
   });
 
+  return { repos, loading, graphVersion, refresh };
+}
+
+export function SourceControl() {
+  const { repos, loading, graphVersion, refresh } = createRepoScanner();
+  const [view, setView] = createSignal<"changes" | "graph">("changes");
+  const [graphSel, setGraphSel] = createSignal("");
+  const [diffFor, setDiffFor] = createSignal<DiffTarget | null>(null);
+  // The repo to graph: the user's pick if still present, else the first repo.
+  const graphRepo = () => {
+    const sel = graphSel();
+    if (sel && repos().some((r) => r.path === sel)) return sel;
+    return repos()[0]?.path ?? workspace.activeRoot ?? "";
+  };
+
   const openDiff = async (repo: string, file: GitFileStatus, staged: boolean) => {
     try {
       const text = await gitDiff(repo, file.path, staged);
@@ -105,39 +282,15 @@ export function SourceControl() {
 
   return (
     <div class="pf-pane-scroll pf-sc">
-      <div class="pf-pane-toolbar pf-sc-toolbar">
-        <span class="pf-sc-branch" title={flat() ? repos()[0].status.branch ?? "" : ""}>
-          {flat()
-            ? repos()[0].status.branch ?? "—"
-            : repos().length > 1
-              ? `${repos().length} repos`
-              : "—"}
-        </span>
-        <div class="pf-sc-toolbar-end">
-          <div class="pf-sc-viewtoggle">
-            <button
-              classList={{ "pf-sc-view--on": view() === "changes" }}
-              title="Changes"
-              onClick={() => setView("changes")}
-            >
-              Changes
-            </button>
-            <button
-              classList={{ "pf-sc-view--on": view() === "graph" }}
-              title="Commit graph"
-              onClick={() => setView("graph")}
-            >
-              Graph
-            </button>
-          </div>
-          <Show when={view() === "changes" && total() > 0}>
-            <span class="pf-sc-count">{total()}</span>
-          </Show>
-          <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
-            <IconRefresh size={14} />
-          </button>
-        </div>
-      </div>
+      <SourceControlToolbar
+        repos={repos}
+        flat={flat}
+        view={view}
+        onViewChange={setView}
+        total={total}
+        canRefresh={() => !!workspace.activeRoot}
+        onRefresh={() => void refresh()}
+      />
 
       <Show when={view() === "graph"}>
         <Show
@@ -158,102 +311,21 @@ export function SourceControl() {
       </Show>
 
       <Show when={view() === "changes"}>
-
-      <Show
-        when={repos().length > 0}
-        fallback={
-          <div class="pf-rail-empty">
-            {loading() ? "Checking…" : "Not a git repository"}
-          </div>
-        }
-      >
-        <Show when={total() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
-          <div class="pf-rail-list pf-sc-list">
-            <For each={repos()}>
-              {(repo) => {
-                // Sub-repo sections collapse (persisted per path); a single root
-                // repo keeps its original flat, always-open list.
-                const collapsed = () => !flat() && isScmCollapsed(repo.path);
-                return (
-                  <Show when={repo.status.files.length > 0}>
-                    <Show when={!flat()}>
-                      <button
-                        class="pf-sc-section"
-                        classList={{ "pf-sc-section--collapsed": collapsed() }}
-                        title={repo.path}
-                        onClick={() => toggleScmCollapsed(repo.path)}
-                      >
-                        <span class="pf-sc-section-chevron">
-                          <IconChevronDown size={12} />
-                        </span>
-                        <span class="pf-sc-section-name">{repoName(repo.path)}</span>
-                        <Show when={repo.status.branch}>
-                          <span class="pf-sc-section-branch">{repo.status.branch}</span>
-                        </Show>
-                        <span class="pf-sc-count">{repo.status.files.length}</span>
-                      </button>
-                    </Show>
-                    <Show when={!collapsed()}>
-                      <For each={repo.status.files}>
-                        {(f) => (
-                          <div
-                            class="pf-sc-row"
-                            title={f.path}
-                            onClick={() => void openDiff(repo.path, f, f.staged && !f.unstaged)}
-                          >
-                            <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
-                            <span class="pf-sc-name">{baseName(f.path)}</span>
-                            <span class="pf-sc-dir">{dirName(f.path)}</span>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </Show>
-                );
-              }}
-            </For>
-          </div>
-        </Show>
-      </Show>
+        <ChangesList
+          repos={repos}
+          total={total}
+          flat={flat}
+          loading={loading}
+          repoName={repoName}
+          onOpenDiff={(repo, f, staged) => void openDiff(repo, f, staged)}
+        />
       </Show>
 
-      <Show when={diffFor()}>
-        {(d) => (
-          <Portal>
-            <div class="pf-diff-overlay" onClick={() => setDiffFor(null)}>
-              <div class="pf-diff-modal" onClick={(e) => e.stopPropagation()}>
-                <div class="pf-diff-head">
-                  <span class="pf-diff-path">{d().file.path}</span>
-                  <div class="pf-diff-tabs">
-                    <button
-                      classList={{ active: !d().staged }}
-                      onClick={() => void openDiff(d().repo, d().file, false)}
-                    >
-                      Working
-                    </button>
-                    <button
-                      classList={{ active: d().staged }}
-                      onClick={() => void openDiff(d().repo, d().file, true)}
-                    >
-                      Staged
-                    </button>
-                  </div>
-                  <button class="pf-icon-btn" title="Close" onClick={() => setDiffFor(null)}>
-                    <IconClose size={14} />
-                  </button>
-                </div>
-                <div class="pf-diff-body">
-                  <Show when={d().text.trim()} fallback={<div class="pf-rail-empty">No diff</div>}>
-                    <For each={d().text.split("\n")}>
-                      {(line) => <div class={`pf-diff-line ${diffLineClass(line)}`}>{line || " "}</div>}
-                    </For>
-                  </Show>
-                </div>
-              </div>
-            </div>
-          </Portal>
-        )}
-      </Show>
+      <DiffModal
+        diffFor={diffFor}
+        onClose={() => setDiffFor(null)}
+        onSelectTab={(repo, f, staged) => void openDiff(repo, f, staged)}
+      />
     </div>
   );
 }

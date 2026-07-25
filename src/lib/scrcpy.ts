@@ -118,8 +118,31 @@ const ACTION = {
   up: AndroidMotionEventAction.Up,
 } as const;
 
-/** Start mirroring `serial` onto `canvas`. Throws if WebCodecs is unavailable. */
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** Options must mirror the flags Rust passes the server (h264, codec+frame
+ * meta, no device meta) so the parser reads the stream correctly. */
+function buildScrcpyOptions() {
+  return new ScrcpyOptionsLatest({
+    audio: false,
+    video: true,
+    videoCodec: "h264",
+    sendDeviceMeta: false,
+    sendCodecMeta: true,
+    sendFrameMeta: true,
+    control: true,
+  });
+}
+
+/** Start mirroring `serial` onto `canvas`. Throws if WebCodecs is unavailable.
+ *
+ * Stays over the line cap: this constructs one stateful handle (decoder,
+ * renderer, and the `touch`/`stop`/`stats` closures returned to the caller)
+ * whose pieces share mutable pipeline state (`size`, `lastError`, `rendered`,
+ * the stream controller) read at call time, not snapshotted. Splitting those
+ * closures out would need either an accessor/getter for every shared field
+ * or a class-based rewrite — a real design change — and this WebCodecs/
+ * canvas pipeline has no unit test coverage (browser-only APIs) to verify
+ * either against, so it isn't forced here. */
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): see comment above.
 export async function startMirror(
   serial: string,
   canvas: HTMLCanvasElement,
@@ -129,18 +152,7 @@ export async function startMirror(
     throw new Error("WebCodecs (VideoDecoder) is not available in this webview");
   }
   const avc = await probeAvc();
-
-  // Options must mirror the flags Rust passes the server (h264, codec+frame meta,
-  // no device meta) so the parser reads the stream correctly.
-  const options = new ScrcpyOptionsLatest({
-    audio: false,
-    video: true,
-    videoCodec: "h264",
-    sendDeviceMeta: false,
-    sendCodecMeta: true,
-    sendFrameMeta: true,
-    control: true,
-  });
+  const options = buildScrcpyOptions();
 
   // The video socket bytes arrive on this channel; feed them into a stream.
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;

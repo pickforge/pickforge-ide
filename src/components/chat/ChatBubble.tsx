@@ -56,7 +56,59 @@ export function renderChatMarkdown(
   return renderMarkdown(source, { cache: !streaming });
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** Throttles `text()` updates while `streaming()` is true, so a fast token
+ * stream re-renders markdown at most once per `intervalMs` instead of on
+ * every delta — flushing immediately once streaming stops. A composable,
+ * called synchronously from the caller's setup so its `createEffect`/
+ * `onCleanup` run under the same reactive owner as if written inline. */
+function createThrottledText(
+  text: () => string,
+  streaming: () => boolean | undefined,
+  intervalMs: number,
+): () => string {
+  let renderTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRenderAt = 0;
+  let pendingText = text();
+  const [renderText, setRenderText] = createSignal(pendingText);
+
+  const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+
+  const flush = () => {
+    renderTimer = undefined;
+    lastRenderAt = now();
+    setRenderText(pendingText);
+  };
+
+  createEffect(() => {
+    pendingText = text();
+    if (!streaming()) {
+      if (renderTimer) {
+        clearTimeout(renderTimer);
+        renderTimer = undefined;
+      }
+      flush();
+      return;
+    }
+
+    const delay = Math.max(0, intervalMs - (now() - lastRenderAt));
+    if (delay === 0) {
+      if (renderTimer) {
+        clearTimeout(renderTimer);
+        renderTimer = undefined;
+      }
+      flush();
+      return;
+    }
+    if (!renderTimer) renderTimer = setTimeout(flush, delay);
+  });
+
+  onCleanup(() => {
+    if (renderTimer) clearTimeout(renderTimer);
+  });
+
+  return renderText;
+}
+
 export function ChatBubble(props: {
   role: "user" | "assistant";
   text: string;
@@ -64,46 +116,11 @@ export function ChatBubble(props: {
   images?: string[];
 }): JSX.Element {
   let mdEl: HTMLDivElement | undefined;
-  let renderTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastRenderAt = 0;
-  let pendingRenderText = props.text;
-  const [renderText, setRenderText] = createSignal(props.text);
-
-  const now = () =>
-    typeof performance !== "undefined" ? performance.now() : Date.now();
-
-  const flushRenderText = () => {
-    renderTimer = undefined;
-    lastRenderAt = now();
-    setRenderText(pendingRenderText);
-  };
-
-  createEffect(() => {
-    pendingRenderText = props.text;
-    if (!props.streaming) {
-      if (renderTimer) {
-        clearTimeout(renderTimer);
-        renderTimer = undefined;
-      }
-      flushRenderText();
-      return;
-    }
-
-    const delay = Math.max(0, STREAM_MARKDOWN_INTERVAL_MS - (now() - lastRenderAt));
-    if (delay === 0) {
-      if (renderTimer) {
-        clearTimeout(renderTimer);
-        renderTimer = undefined;
-      }
-      flushRenderText();
-      return;
-    }
-    if (!renderTimer) renderTimer = setTimeout(flushRenderText, delay);
-  });
-
-  onCleanup(() => {
-    if (renderTimer) clearTimeout(renderTimer);
-  });
+  const renderText = createThrottledText(
+    () => props.text,
+    () => props.streaming,
+    STREAM_MARKDOWN_INTERVAL_MS,
+  );
 
   const body = createMemo(() => {
     return renderChatMarkdown(props.role, renderText(), props.images, props.streaming);

@@ -58,27 +58,33 @@ export function timelineVirtualRowKey(row: TimelineVirtualRow): string {
   return row.kind === "working" ? "working" : `${row.item.type}:${row.item.seq}`;
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function userMessageBaseHeight(hasImages: boolean): number {
+  return hasImages ? 190 : 84;
+}
+
+/** A completed turn renders the compact, collapsed-by-default receipt (#231
+ *  PR3) instead of the raw per-file card, so its estimate is a small fixed
+ *  header height rather than growing with file count. No cap on the raw-card
+ *  branch: like estimateTextHeight, this feeds visibility culling for
+ *  unmeasured rows, so undercounting a many-file batch could drop its lower
+ *  files from the visible set until it mounts. */
+function estimateFileChangeRowHeight(item: Extract<AgentTimelineItem, { type: "fileChange" }>): number {
+  return item.turnComplete ? 56 : 76 + item.changes.length * 32;
+}
+
 export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
   if (row.kind === "working") return 40;
   const item = row.item;
   switch (item.type) {
     case "userMessage":
-      return estimateTextHeight(item.text, item.images?.length ? 190 : 84);
+      return estimateTextHeight(item.text, userMessageBaseHeight(!!item.images?.length));
     case "assistantText":
     case "thinking":
       return estimateTextHeight(item.text, 96);
     case "command":
       return item.outputTail ? 116 : 96;
     case "fileChange":
-      // A completed turn renders the compact, collapsed-by-default receipt
-      // (#231 PR3) instead of the raw per-file card, so its estimate is a
-      // small fixed header height rather than growing with file count.
-      if (item.turnComplete) return 56;
-      // No cap: like estimateTextHeight, this feeds visibility culling for
-      // unmeasured rows, so undercounting a many-file batch could drop its lower
-      // files from the visible set until it mounts.
-      return 76 + item.changes.length * 32;
+      return estimateFileChangeRowHeight(item);
     case "toolUse":
       return estimateTextHeight(item.detail ?? item.name, 72);
     case "mcpToolCall":

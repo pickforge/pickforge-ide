@@ -34,7 +34,8 @@
 .pf-chat-swarm-lane-meta,
 .pf-chat-swarm-lane-detail,
 .pf-approval-line,
-.pf-approval-quiet {
+.pf-approval-quiet,
+.pf-chat-queue-text {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -1230,6 +1231,164 @@
   flex-direction: column;
   border-top: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-1);
+}
+
+/* ---- Queued messages: pending user bubbles rising out of the composer. ---- */
+.pf-chat-queue {
+  flex: none;
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+}
+/* Screen-reader-only announcement channel for queue changes. The 1px box and
+   inset clip are the standard visually-hidden recipe — structural plumbing,
+   not design values, so they have no tokens. */
+.pf-chat-queue-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.pf-chat-queue-head {
+  margin-bottom: var(--pf-space-sm);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+}
+.pf-chat-queue-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--pf-space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pf-chat-queue-row {
+  display: grid;
+  grid-template-rows: 1fr;
+  width: fit-content;
+  max-width: 78%;
+  animation: pf-chat-queue-rise var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-chat-queue-collapse {
+  min-height: 0;
+  overflow: hidden;
+}
+.pf-chat-queue-item {
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-md);
+  background: transparent;
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-lg);
+  line-height: 1.55;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-queue-row:first-child .pf-chat-queue-item,
+.pf-chat-queue-item:hover,
+.pf-chat-queue-item:focus-within {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-chat-queue-thumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  margin-bottom: var(--pf-space-xs);
+}
+.pf-chat-queue-thumb {
+  display: block;
+  width: var(--pf-space-xl);
+  height: var(--pf-space-xl);
+  object-fit: cover;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+}
+.pf-chat-queue-thumb-more {
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-chat-queue-content {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-queue-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.pf-chat-queue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--pf-space-md);
+  height: var(--pf-space-md);
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-queue-item:hover .pf-chat-queue-remove,
+.pf-chat-queue-remove:focus-visible {
+  opacity: 1;
+}
+.pf-chat-queue-remove:focus-visible {
+  outline-color: var(--pf-text-med);
+}
+.pf-chat-queue-remove:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
+}
+@keyframes pf-chat-queue-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--pf-space-sm));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pf-chat-queue-remove {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.pf-chat-queue-row--removing {
+  animation: pf-chat-queue-remove var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-queue-row,
+  .pf-chat-queue-row--removing {
+    animation: none;
+    transform: none;
+  }
 }
 
 /* ---- Context-window meter + session cost: the input field's bottom gutter ----

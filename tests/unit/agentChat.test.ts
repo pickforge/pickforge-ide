@@ -45,6 +45,7 @@ const flags = vi.hoisted(() => {
     remoteProjects: false,
     ompAgents: false,
     changesReview: false,
+    messageQueue: false,
     listeners,
     // Mutates + notifies subscribers, mirroring the real flags module's
     // `subscribeToFlagChanges` contract — needed so agentChat.ts's own
@@ -126,7 +127,8 @@ vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
     (key === "ompAgents" && flags.ompAgents) ||
-    (key === "changesReview" && flags.changesReview),
+    (key === "changesReview" && flags.changesReview) ||
+    (key === "messageQueue" && flags.messageQueue),
   subscribeToFlagChanges: (listener: () => void) => {
     flags.listeners.add(listener);
     return () => flags.listeners.delete(listener);
@@ -136,11 +138,15 @@ vi.mock("../../src/stores/flags", () => ({
 import {
   agentChat,
   approveAgentRequest,
+  clearAgentQueue,
   disposeAgentChat,
+  drainAgentQueue,
+  enqueueAgentMessage,
   ensureAgentChat,
   hydrateAgentChatHistory,
   interruptAgentChat,
   latestPlanForChat,
+  removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
   setAgentChatEffort,
@@ -297,6 +303,7 @@ beforeEach(() => {
   flags.remoteProjects = false;
   flags.ompAgents = false;
   flags.changesReview = false;
+  flags.messageQueue = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -2273,6 +2280,255 @@ describe("setAgentChatMode", () => {
     await sendAgentMessage(chatId, "after failed de-escalation");
 
     expect(modeAtSend).toBe("bypassPermissions");
+  });
+});
+
+describe("agent message queue", () => {
+  beforeEach(() => {
+    flags.messageQueue = true;
+  });
+
+  it("appends queued messages in FIFO order with unique per-chat ids", async () => {
+    const { chatId } = await startChat();
+    const firstImages = ["/tmp/first.png"];
+
+    const firstId = enqueueAgentMessage(chatId, "first", firstImages);
+    firstImages.push("/tmp/mutated.png");
+    const secondId = enqueueAgentMessage(chatId, "second");
+
+    expect(firstId).not.toBe(secondId);
+    expect(agentChat(chatId)?.queue).toEqual([
+      { id: firstId, text: "first", images: ["/tmp/first.png"], queuedAt: expect.any(Number) },
+      { id: secondId, text: "second", images: [], queuedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("removes only the targeted queued message and preserves the remaining order", async () => {
+    const { chatId } = await startChat();
+    const firstId = enqueueAgentMessage(chatId, "first");
+    const secondId = enqueueAgentMessage(chatId, "second");
+    const thirdId = enqueueAgentMessage(chatId, "third");
+
+    removeQueuedMessage(chatId, secondId);
+    removeQueuedMessage(chatId, "missing");
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toEqual([firstId, thirdId]);
+  });
+
+  it("clears every queued message for one chat", async () => {
+    const { chatId } = await startChat();
+    enqueueAgentMessage(chatId, "first");
+    enqueueAgentMessage(chatId, "second");
+
+    clearAgentQueue(chatId);
+
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("drains only the first queued message after a completed turn", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const firstId = enqueueAgentMessage(chatId, "first", ["/tmp/first.png"]);
+    const secondId = enqueueAgentMessage(chatId, "second");
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "first",
+      effort: null,
+      model: null,
+      images: ["/tmp/first.png"],
+    });
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toEqual([secondId]);
+    expect(agentChat(chatId)?.queue.some((entry) => entry.id === firstId)).toBe(false);
+  });
+
+  it("drains after a failed turn", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "after failure");
+
+    emit({ kind: "turnFailed", error: "turn failed" });
+    await flushPromises();
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_send",
+      expect.objectContaining({ text: "after failure" }),
+    );
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("drains successive entries in FIFO order on successive turn completions", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "first");
+    enqueueAgentMessage(chatId, "second");
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["second"]);
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(
+      tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_send")
+        .map((call) => call[1].text),
+    ).toEqual(["first", "second"]);
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("holds the whole queue when the user interrupts the active turn", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "hold first");
+    enqueueAgentMessage(chatId, "hold second");
+
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnFailed", error: "interrupted" });
+    await flushPromises();
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual([
+      "hold first",
+      "hold second",
+    ]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+  });
+
+  it("holds the queue on an interrupted turnDone status", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "hold for later");
+
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["hold for later"]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+  });
+
+  it("surfaces a failed drain send and leaves the whole queue intact", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "will fail");
+    enqueueAgentMessage(chatId, "must remain");
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_send") return Promise.reject(new Error("queued send failed"));
+      return Promise.resolve(null);
+    });
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(agentChat(chatId)?.error).toBe("queued send failed");
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(1);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual([
+      "will fail",
+      "must remain",
+    ]);
+  });
+
+  it("keeps queues independent across chats", async () => {
+    const first = await startChat();
+    const second = await startChat();
+    first.emit({ kind: "turnStarted" });
+    second.emit({ kind: "turnStarted" });
+    enqueueAgentMessage(first.chatId, "first chat");
+    enqueueAgentMessage(second.chatId, "second chat");
+
+    first.emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(agentChat(first.chatId)?.queue).toEqual([]);
+    expect(agentChat(second.chatId)?.queue.map((entry) => entry.text)).toEqual(["second chat"]);
+  });
+
+  it("keeps queue APIs and automatic draining inert while the flag is off", async () => {
+    flags.messageQueue = false;
+    const { chatId, emit } = await startChat();
+
+    expect(enqueueAgentMessage(chatId, "not queued")).toBe("");
+    removeQueuedMessage(chatId, "missing");
+    clearAgentQueue(chatId);
+    await drainAgentQueue(chatId);
+    expect(agentChat(chatId)?.queue).toEqual([]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+
+    await sendAgentMessage(chatId, "normal send");
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(1);
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_send",
+      expect.objectContaining({ text: "normal send" }),
+    );
+  });
+
+  it("replays a turn close that lands while a drain is still in flight", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "first");
+    enqueueAgentMessage(chatId, "second");
+
+    const firstSend = deferred<null>();
+    let sends = 0;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd !== "agent_chat_send") return Promise.resolve(null);
+      sends += 1;
+      return sends === 1 ? firstSend.promise : Promise.resolve(null);
+    });
+
+    // Closes the turn and starts draining "first", which then hangs.
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    // A second close arrives before that drain lands: without the replay it
+    // is swallowed and "second" strands in the queue forever.
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    firstSend.resolve(null);
+    await flushPromises();
+
+    expect(
+      tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_send")
+        .map((call) => call[1].text),
+    ).toEqual(["first", "second"]);
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("keeps a message queued mid-hydration when history replaces the chat state", async () => {
+    const chatId = nextChatId();
+    const history = deferred<AgentTimelineEntry[]>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return history.promise;
+      return Promise.resolve(null);
+    });
+
+    const promise = hydrateAgentChatHistory(chatId, "/project", "codex", "gpt-5.5");
+    await Promise.resolve();
+    const queuedId = enqueueAgentMessage(chatId, "typed while hydrating");
+
+    history.resolve([]);
+    await promise;
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toEqual([queuedId]);
+  });
+
+  it("drops a chat queue when the chat is disposed", async () => {
+    const { chatId } = await startChat();
+    enqueueAgentMessage(chatId, "discard me");
+
+    await disposeAgentChat(chatId);
+    expect(agentChat(chatId)).toBeUndefined();
+
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    expect(agentChat(chatId)?.queue).toEqual([]);
   });
 });
 

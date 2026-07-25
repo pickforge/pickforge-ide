@@ -56,6 +56,7 @@ const definitions = {
   changesReview: { description: "In-chat changes receipt and Review-changes action (#231)" },
   flatChatList: { description: "Flat chat-first sidebar sorted by state (#306 PR1)" },
   orchestraBoard: { description: "Orchestra column-per-status board scaffold (#319, #196 PR1)" },
+  messageQueue: { description: "Queue messages while an agent turn is running (#357)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

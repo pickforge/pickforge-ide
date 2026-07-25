@@ -11,7 +11,9 @@ const store = vi.hoisted(() => ({
   ensure: vi.fn(),
   approve: vi.fn(),
   clearSwitched: vi.fn(),
+  enqueue: vi.fn(),
   interrupt: vi.fn(),
+  removeQueued: vi.fn(),
   retry: vi.fn(),
   send: vi.fn(),
   setEffort: vi.fn(),
@@ -25,8 +27,10 @@ vi.mock("../../src/stores/agentChat", () => ({
   agentChat: () => store.read(),
   approveAgentRequest: store.approve,
   clearProviderSwitched: store.clearSwitched,
+  enqueueAgentMessage: store.enqueue,
   ensureAgentChat: store.ensure,
   interruptAgentChat: store.interrupt,
+  removeQueuedMessage: store.removeQueued,
   retryAgentChatConnection: store.retry,
   sendAgentMessage: store.send,
   setAgentChatEffort: store.setEffort,
@@ -59,6 +63,7 @@ vi.mock("../../src/stores/swarm", () => ({ startSwarm: vi.fn(), swarmRuns: () =>
 vi.mock("../../src/components/chat/ChatTimeline", () => ({ ChatTimeline: () => null }));
 vi.mock("../../src/components/chat/SwarmRunCard", () => ({ SwarmRunCard: () => null }));
 vi.mock("../../src/components/chat/Composer", () => ({ Composer: () => null }));
+vi.mock("../../src/components/chat/QueueDock", () => ({ QueueDock: () => null }));
 vi.mock("../../src/components/chat/ImageLightbox", () => ({ ImageLightbox: () => null }));
 vi.mock("../../src/components/chat/ApprovalPrompt", () => ({ ApprovalPrompt: () => null }));
 vi.mock("../../src/components/chat/ContextMeter", () => ({ ContextMeter: () => null }));
@@ -80,6 +85,7 @@ function chatState(provider: Provider, overrides: Partial<AgentChatState> = {}):
     turnActive: false,
     error: "connection lost",
     timeline: [],
+    queue: [],
     approvals: [],
     contextUsed: null,
     contextWindow: null,

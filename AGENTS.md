@@ -87,9 +87,12 @@ PickForge has a first-class design system — read
 [`docs/design-system/`](docs/design-system/README.md) before any UI work, and
 keep new UI consistent with it.
 
-- **Tokens only — never raw values.** Use the CSS custom properties in
-  `src/styles/tokens.css` (color, spacing, radii, motion). No raw hex, font
-  sizes, radii, or durations in components.
+- **Tokens only — never raw values.** Use the `--pf-*` CSS custom properties
+  (color, spacing, radii, motion). They are defined in
+  `node_modules/@pickforge/brand/src/tokens.css` and imported through
+  `src/styles/global.css` — there is no `src/styles/tokens.css`. No raw hex,
+  font sizes, radii, or durations in components. If a value you need has no
+  token, raise it rather than inlining a literal.
 - **One ember per composition.** The ember accent is the only accent — reserve it
   for the single most important element (primary CTA, active/selected, live
   status). Everything else is surface / text / hairline / semantic status.

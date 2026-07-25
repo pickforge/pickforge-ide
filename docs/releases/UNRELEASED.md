@@ -48,6 +48,18 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- Message queuing while an agent turn is running (behind the default-off
+  `messageQueue` flag, #357 PR 1): typing and pressing Enter mid-turn now
+  queues the message instead of being refused, on every native backend —
+  previously Claude Code and OMP left the composer dead, and Codex and Pi
+  only offered steering. Queued messages rack above the composer as unfilled
+  ghosts of the bubbles they become, drain one at a time in FIFO order when
+  the turn closes, and can be removed before they send. Interrupting holds
+  the queue rather than firing it. A failed queued send surfaces the error
+  and leaves the backlog intact.
+- Corrected the design-system section of `AGENTS.md`, which pointed agents at
+  a non-existent `src/styles/tokens.css`; tokens live in
+  `@pickforge/brand/src/tokens.css` and are imported via `src/styles/global.css`.
 - update-vrt-baselines now re-dispatches ci on the branch after committing regenerated PNGs (GITHUB_TOKEN pushes trigger no workflows), so PRs no longer strand at "no checks reported"; ci is manually dispatchable and its token is pinned read-only.
 - The v2 SDK bridge now grants the skip-permissions capability at every spawn
   because its long-lived CLI process cannot gain that capability later;

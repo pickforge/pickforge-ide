@@ -12,8 +12,10 @@ import {
   agentChat,
   approveAgentRequest,
   clearProviderSwitched,
+  enqueueAgentMessage,
   ensureAgentChat,
   interruptAgentChat,
+  removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
   setAgentChatEffort,
@@ -48,6 +50,7 @@ import { changesListTurnChangeSets, type ChangeSet } from "../../lib/changes";
 import { flagEnabled } from "../../stores/flags";
 import { SwarmRunCard } from "./SwarmRunCard";
 import { Composer } from "./Composer";
+import { QueueDock } from "./QueueDock";
 import { ImageLightbox } from "./ImageLightbox";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { ContextMeter } from "./ContextMeter";
@@ -360,8 +363,14 @@ function ComposerFooter(props: {
   onEffortChange: (next: string) => void;
   onModeChange: (next: string) => void;
 }): JSX.Element {
+  let composerField: HTMLDivElement | undefined;
   return (
     <div class="pf-chat-footer">
+      <QueueDock
+        messages={props.state()?.queue ?? []}
+        onRemove={(id) => removeQueuedMessage(props.chatId, id)}
+        onFallbackFocus={() => composerField?.focus()}
+      />
       <Composer
         meter={
           <Show when={props.state()}>
@@ -401,7 +410,13 @@ function ComposerFooter(props: {
           undefined
         }
         emberYielded={props.hasApprovals()}
+        editorRef={(element) => {
+          composerField = element;
+        }}
         onSend={props.onSend}
+        onQueue={(text, images) => {
+          enqueueAgentMessage(props.chatId, text, images);
+        }}
         onSteer={(text) => steerAgentChat(props.chatId, text)}
         onInterrupt={() => void interruptAgentChat(props.chatId)}
         onProviderChange={props.onProviderChange}

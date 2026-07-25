@@ -61,6 +61,22 @@ migrated away. See `plans/rust-migration/`.)
   - `stores/` — app state (`workspace`). `router.ts` is the route table.
   - `styles/` — `tokens.css`, `fonts.css`, `global.css`.
 
+### Schema migrations (`crates/pickforge-core/src/db/mod.rs`)
+
+A numbered Rust migration that **backfills or rewrites data** must be
+dual-homed: call the same statement from `reconcile_data` as well. `migrate`
+sends any database with `user_version <= DRIFT_FINAL` — Drift v1..=10 *and* the
+unversioned-Rust `uv == 0` cohort — through `reconcile_schema`/`reconcile_data`
+and then stamps `LATEST_VERSION` directly, so `apply_rust_migrations` never runs
+and the backfill is skipped forever. Extract one shared helper and call it from
+both sites rather than duplicating the SQL. Pure `ALTER TABLE`/schema-shape
+migrations need no dual-home — `reconcile_schema` already covers them.
+
+Test both paths. A migration test seeded at `user_version = <previous>` only
+proves the numbered arm; add a `uv == 0` full-schema fixture too, and verify it
+fails when the `reconcile_data` call is removed. (v16 and v17 both shipped this
+bug; v17 was caught in review.)
+
 ## Design system & branding
 
 PickForge has a first-class design system — read

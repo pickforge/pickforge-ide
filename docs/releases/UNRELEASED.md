@@ -25,6 +25,7 @@ reset this file.
 - Fixed OMP 17.1.1 native chat being incorrectly reported as unavailable.
 - Stopped OMP turns now retain the user prompt, partial response, and interrupted status in chat history.
 - Fixed macOS window rubber-banding and popover menus selecting a neighboring row near the bottom of the window.
+- Terminal chats now use an honest terminal identity and icon instead of being labeled as Claude Code; existing falsely stamped terminal history is migrated automatically, and the new-chat menu now shows terminal and harness marks.
 - Fixed bypass-permissions mode breaking agent SDK sessions and leaving later sends stuck as working.
 - The Source Control pane now has a single refresh button that refreshes both the repo status and the Changes review listing (the duplicate header button is gone).
 - The chat composer's context-window and session-cost readout moved into the

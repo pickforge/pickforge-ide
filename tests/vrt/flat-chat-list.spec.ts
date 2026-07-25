@@ -60,13 +60,7 @@ test("flatChatList on sorts needs-you above working above quiet, quiet by activi
   await expect(page.locator(".pf-work-card--working")).toHaveCount(1);
 });
 
-// #331 review (finding 2): the harness mark was previously gated to
-// `chat.kind === "agent"`, so every quiet row here — all four are
-// terminal-kind chats with a recognized agentId (Login screen/claudeCode,
-// Settings polish/codex, Slider refactor/claudeCode, Local usage analytics
-// plan/pi) — silently rendered with NO mark at all, leaving only
-// "project · time" instead of the spec'd "mark · project · time".
-test("flatChatList: quiet terminal-kind rows still show their harness mark (#331 review)", async ({ page }) => {
+test("flatChatList: quiet terminal-kind rows show an honest terminal mark", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
     localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
@@ -76,7 +70,28 @@ test("flatChatList: quiet terminal-kind rows still show their harness mark (#331
 
   const quietRows = page.locator(".pf-flat-row");
   await expect(quietRows).toHaveCount(4);
-  await expect(quietRows.locator(".pf-flat-mark")).toHaveCount(4);
+  const marks = quietRows.locator(".pf-flat-mark");
+  await expect(marks).toHaveCount(4);
+  expect(await marks.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))))
+    .toEqual(["Terminal", "Terminal", "Terminal", "Terminal"]);
+});
+
+test("flatChatList: new-chat menu shows terminal and harness marks", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.getByTitle("New chat").click();
+  await page.locator(".pf-menu").getByRole("button", { name: "acme-app", exact: true }).click();
+
+  for (const label of ["Terminal", "Claude Code", "Codex", "Oh My Pi (OMP)", "Pi"]) {
+    const item = page.locator(".pf-menu").getByRole("button", { name: label, exact: true });
+    await expect(item).toHaveCount(1);
+    await expect(item.locator("svg")).toHaveCount(1);
+  }
 });
 
 // #306 PR1 review (P2-3, design decision): the project filter narrows

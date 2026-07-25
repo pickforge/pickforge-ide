@@ -29,6 +29,7 @@ import {
   IconOpenAI,
   IconPi,
   IconPlus,
+  IconTerminal,
 } from "../../components/icons";
 import {
   assignProject,
@@ -141,16 +142,24 @@ const AGENT_CHAT_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Ob
   omp: () => <IconOmp size={11} />,
   pi: () => <IconPi size={11} />,
 });
+const TERMINAL_AGENT_ID = "terminal";
+export type ChatMarkKind = "terminal" | "agent";
 const agentChatProvider = (agentId: string): string => normalizeAgentProvider(agentId) ?? agentId;
 const agentChatLabel = (agentId: string): string =>
   agentBackendDescriptor(agentChatProvider(agentId))?.label ?? "Agent";
-// A structured agent-kind chat always shows its mark (with the "AI" fallback
-// for a legacy/unrecognized provider id); a terminal-kind chat shows one too
-// when its agentId resolves to a recognized harness (#331 review, finding 2
-// — newTerminalChat always sets a real provider id, so terminal rows were
-// wrongly showing no mark at all in the flat list's two-line quiet rows).
-const showAgentChatMark = (chat: Chat): boolean =>
-  chat.kind === "agent" || AGENT_CHAT_ICON[agentChatProvider(chat.agentId)] !== undefined;
+export const chatMarkKind = (chat: Chat): ChatMarkKind | null =>
+  chat.kind === "terminal" ? "terminal" : chat.kind === "agent" ? "agent" : null;
+const chatMarkLabel = (chat: Chat): string =>
+  chatMarkKind(chat) === "terminal" ? "Terminal" : `Agent chat · ${agentChatLabel(chat.agentId)}`;
+const ChatMarkIcon = (props: { chat: Chat }) => (
+  <Show when={chatMarkKind(props.chat) === "terminal"} fallback={
+    <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+      {(icon) => icon()()}
+    </Show>
+  }>
+    <IconTerminal size={11} />
+  </Show>
+);
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
@@ -501,7 +510,7 @@ function createProjectsPaneController() {
   };
   const newTerminalChat = (root: string, title?: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
-    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
+    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, TERMINAL_AGENT_ID, root, "terminal");
   };
   const newAgentChat = (root: string, provider: string, title?: string) => {
     const availableProvider = nativeAgentProfile(provider);
@@ -738,13 +747,22 @@ const NewChatMenu = (props: { ctrl: ProjectsPaneController; root: string }) => {
           }}
         />
       </Show>
-      <button class="pf-menu-item pf-menu-item--accent" onClick={() => { ctrl.newTerminalChat(root, title()); ctrl.closeMenu(); }}>Terminal</button>
+      <button class="pf-menu-item pf-menu-item--accent pf-menu-item--chat-kind" onClick={() => { ctrl.newTerminalChat(root, title()); ctrl.closeMenu(); }}>
+        <IconTerminal size={11} />
+        Terminal
+      </button>
       <div class="pf-menu-sep" />
       <div class="pf-menu-label">Agent</div>
       <For each={nativeAgentProfiles()}>
-        {(a) => (
-          <button class="pf-menu-item" onClick={() => { ctrl.newAgentChat(root, a.id, title()); ctrl.closeMenu(); }}>{a.label}</button>
-        )}
+        {(a) => {
+          const icon = AGENT_CHAT_ICON[a.id];
+          return (
+            <button class="pf-menu-item pf-menu-item--chat-kind" onClick={() => { ctrl.newAgentChat(root, a.id, title()); ctrl.closeMenu(); }}>
+              <Show when={icon}>{(mark) => mark()()}</Show>
+              {a.label}
+            </button>
+          );
+        }}
       </For>
     </>
   );
@@ -1003,15 +1021,13 @@ const ChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; root: string
           void renameChat(id, v);
         }} />
       </Show>
-      <Show when={props.chat.kind === "agent"}>
+      <Show when={chatMarkKind(props.chat)}>
         <span
           class="pf-chat-agent-mark"
-          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          title={chatMarkLabel(props.chat)}
+          aria-label={chatMarkLabel(props.chat)}
         >
-          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
-            {(icon) => icon()()}
-          </Show>
+          <ChatMarkIcon chat={props.chat} />
         </span>
       </Show>
       <Show
@@ -1295,15 +1311,13 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
   // below — a real <input> (RenameField) can't nest inside a real <button>.
   const metaLine = () => (
     <span class="pf-flat-row-meta-line">
-      <Show when={showAgentChatMark(props.chat)}>
+      <Show when={chatMarkKind(props.chat)}>
         <span
           class="pf-flat-mark"
-          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          title={chatMarkLabel(props.chat)}
+          aria-label={chatMarkLabel(props.chat)}
         >
-          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
-            {(icon) => icon()()}
-          </Show>
+          <ChatMarkIcon chat={props.chat} />
         </span>
       </Show>
       <span class="pf-flat-meta">
@@ -1476,15 +1490,13 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
   const cardBody = () => (
     <>
       <div class="pf-work-card-top">
-        <Show when={showAgentChatMark(props.chat)}>
+        <Show when={chatMarkKind(props.chat)}>
           <span
             class="pf-work-card-mark"
-            title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-            aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+            title={chatMarkLabel(props.chat)}
+            aria-label={chatMarkLabel(props.chat)}
           >
-            <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
-              {(icon) => icon()()}
-            </Show>
+            <ChatMarkIcon chat={props.chat} />
           </span>
         </Show>
         <span class="pf-work-card-project">{project()?.displayName ?? "—"}</span>

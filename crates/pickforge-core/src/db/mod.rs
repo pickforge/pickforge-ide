@@ -34,7 +34,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 16;
+const LATEST_VERSION: u32 = 17;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -382,6 +382,10 @@ fn reconcile_data(
                 title_updated_at = created_at
           WHERE title_updated_at = 0;",
     )?;
+
+    // Rust v17: rows reconciled from Drift/unversioned schemas skip the numbered
+    // migration path, so remove the false Claude Code terminal identity here too.
+    rewrite_terminal_chat_agent_id(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -436,6 +440,7 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
         14 => migrate_v14_operator_audit(tx),
         15 => migrate_v15_project_remote_columns(tx),
         16 => migrate_v16_chat_title_source(tx),
+        17 => migrate_v17_terminal_chat_agent_id(tx),
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -557,6 +562,20 @@ fn migrate_v16_chat_title_source(tx: &mut rusqlite::Transaction<'_>) -> Result<(
           WHERE title_updated_at = 0;",
     )?;
     Ok(())
+}
+
+fn rewrite_terminal_chat_agent_id(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch(
+        "UPDATE chats
+            SET agent_id = 'terminal'
+          WHERE kind = 'terminal' AND agent_id = 'claudeCode';",
+    )?;
+    Ok(())
+}
+
+/// v17: removes the false Claude Code identity from shell-first terminal chats.
+fn migrate_v17_terminal_chat_agent_id(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    rewrite_terminal_chat_agent_id(tx)
 }
 
 /// Reconcile the on-disk schema with the current desired schema, choosing the
@@ -3307,6 +3326,102 @@ mod tests {
         assert_timeline_message(&timeline[0], 1, "user", "hello");
         assert_timeline_item(&timeline[1], 2, "toolCall", r#"{"name":"build"}"#);
         assert_timeline_item(&timeline[2], 3, "toolResult", r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn v17_rewrites_only_claude_stamped_terminal_chats() {
+        let path = temp_db_path("v17-terminal-agent-id");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Project', 1, 1);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, kind, created_at, last_activity_at)
+                   VALUES ('terminal-chat', '/p', 'Terminal', 'claudeCode', 'terminal', 1, 1);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, kind, created_at, last_activity_at)
+                   VALUES ('agent-chat', '/p', 'Agent', 'claudeCode', 'agent', 1, 1);
+                 PRAGMA user_version = 16;",
+            )
+            .unwrap();
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            let conn = db.lock();
+            assert_eq!(user_version(&conn), LATEST_VERSION);
+            let terminal_agent_id: String = conn
+                .query_row(
+                    "SELECT agent_id FROM chats WHERE chat_id = 'terminal-chat'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let agent_agent_id: String = conn
+                .query_row(
+                    "SELECT agent_id FROM chats WHERE chat_id = 'agent-chat'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(terminal_agent_id, "terminal");
+            assert_eq!(agent_agent_id, "claudeCode");
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unversioned_rust_db_rewrites_only_claude_stamped_terminal_chats() {
+        let path = temp_db_path("unversioned-rust-terminal-agent-id");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Project', 1, 1);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, kind, created_at, last_activity_at)
+                   VALUES ('terminal-chat', '/p', 'Terminal', 'claudeCode', 'terminal', 1, 1);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, kind, created_at, last_activity_at)
+                   VALUES ('agent-chat', '/p', 'Agent', 'claudeCode', 'agent', 1, 1);",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 0);
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            let conn = db.lock();
+            assert_eq!(user_version(&conn), LATEST_VERSION);
+            let terminal_agent_id: String = conn
+                .query_row(
+                    "SELECT agent_id FROM chats WHERE chat_id = 'terminal-chat'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let agent_agent_id: String = conn
+                .query_row(
+                    "SELECT agent_id FROM chats WHERE chat_id = 'agent-chat'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(terminal_agent_id, "terminal");
+            assert_eq!(agent_agent_id, "claudeCode");
+        }
+
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A DB stamped one past LATEST (a genuine downgrade / newer schema) is

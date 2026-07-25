@@ -48,6 +48,11 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- On Pi, a message typed while a turn is running is now handed to that turn
+  through the native follow-up RPC instead of waiting in the queue, so the
+  agent can act on it inside the same run (#357 PR 2). Backends whose protocol
+  has no equivalent still queue. A message carrying images, or a follow-up the
+  RPC rejects, falls back to the queue rather than being lost.
 - Message queuing while an agent turn is running (behind the default-off
   `messageQueue` flag, #357 PR 1): typing and pressing Enter mid-turn now
   queues the message instead of being refused, on every native backend —

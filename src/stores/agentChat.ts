@@ -8,6 +8,7 @@ import {
   agentChatSetMode,
   agentChatSetModel,
   agentChatStart,
+  agentChatFollowUp,
   agentChatSteer,
   normalizePlanItems,
   type AgentApprovalDecision,
@@ -2246,6 +2247,77 @@ export async function steerAgentChat(chatId: string, text: string): Promise<void
       ),
     });
     throw error;
+  }
+}
+
+/** Hands a message to the turn that is already running. Pi is the only backend
+ *  whose protocol accepts one; the agent picks it up inside the same lifecycle
+ *  rather than after the turn ends. Mirrors `steerAgentChat`, because the RPC
+ *  persists the row server-side but emits no live event for it. */
+export async function followUpAgentChat(chatId: string, text: string): Promise<void> {
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
+  const chat = chats[chatId];
+  const sessionId = chat?.sessionId;
+  if (!sessionId || !chat) throw new Error("Agent chat is not started");
+  if (!supportsBackendCapability(chat.provider, "followUpTurn", "nativeChat", chat.engine)) {
+    throw new Error(
+      backendCapabilityReason(chat.provider, "followUpTurn", "nativeChat", chat.engine) ??
+        "This backend cannot take a follow-up mid-turn",
+    );
+  }
+  flushPendingDeltas(chatId);
+  const optimisticSeq = takeSeq(chatId);
+  setChats(chatId, {
+    error: null,
+    timeline: [
+      ...chats[chatId].timeline,
+      { type: "userMessage", seq: optimisticSeq, text, optimistic: true },
+    ],
+  });
+  try {
+    await agentChatFollowUp(sessionId, text);
+  } catch (error) {
+    if (stale()) throw error;
+    if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
+      nextSeqByChat.set(chatId, optimisticSeq);
+    }
+    setChats(chatId, {
+      error: errorText(error),
+      timeline: (chats[chatId]?.timeline ?? []).filter(
+        (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
+      ),
+    });
+    throw error;
+  }
+}
+
+/** What Enter does mid-turn. On a backend that can take a follow-up the
+ *  message goes straight into the running turn — waiting would be strictly
+ *  worse, since the agent could have acted on it already. Everything else,
+ *  and anything carrying images (the follow-up RPC has no image payload),
+ *  goes to the local queue. */
+export async function queueAgentMessage(
+  chatId: string,
+  text: string,
+  images: string[] = [],
+): Promise<void> {
+  const chat = chats[chatId];
+  if (!chat) return;
+  const deliverable = chat.sessionId !== null
+    && chat.turnActive
+    && images.length === 0
+    && supportsBackendCapability(chat.provider, "followUpTurn", "nativeChat", chat.engine);
+  if (!deliverable) {
+    enqueueAgentMessage(chatId, text, images);
+    return;
+  }
+  try {
+    await followUpAgentChat(chatId, text);
+  } catch {
+    // It never reached the agent, so hold it rather than losing it; the queue
+    // sends it when the turn closes. `followUpAgentChat` already surfaced why.
+    enqueueAgentMessage(chatId, text, images);
   }
 }
 

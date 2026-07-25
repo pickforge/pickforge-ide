@@ -19,6 +19,7 @@ export const AGENT_BACKEND_CAPABILITY_KEYS = Object.freeze([
   "closeSession",
   "resumeSession",
   "steerTurn",
+  "followUpTurn",
   "textInput",
   "imageInput",
   "modelSelection",
@@ -156,6 +157,7 @@ function unsupported(reason: string): AgentBackendCapability {
 
 
 
+const NO_FOLLOW_UP = "Only Pi RPC accepts a follow-up into the turn that is already running";
 const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
 const NO_CLAUDE_EFFORT_SWITCH = "Changing Claude effort requires starting a new session";
 const NO_SESSION_MCP = "PickForge does not pass per-session MCP configuration to this native backend";
@@ -206,6 +208,7 @@ const CLAUDE_CAPABILITIES = Object.freeze({
   closeSession: NATIVE,
   resumeSession: NATIVE,
   steerTurn: unsupported(NO_CLAUDE_STEER),
+  followUpTurn: unsupported(NO_FOLLOW_UP),
   textInput: BOTH,
   imageInput: NATIVE_V2,
   modelSelection: BOTH,
@@ -239,6 +242,7 @@ const CODEX_CAPABILITIES = Object.freeze({
   closeSession: NATIVE,
   resumeSession: NATIVE,
   steerTurn: NATIVE_V2,
+  followUpTurn: unsupported(NO_FOLLOW_UP),
   textInput: BOTH,
   imageInput: NATIVE_V2,
   modelSelection: BOTH,
@@ -286,6 +290,7 @@ const OMP_CAPABILITIES = Object.freeze({
   closeSession: OMP_NATIVE,
   resumeSession: OMP_NATIVE,
   steerTurn: unsupported("OMP ACP does not advertise turn steering"),
+  followUpTurn: unsupported(NO_FOLLOW_UP),
   textInput: OMP_BOTH,
   imageInput: OMP_NATIVE,
   modelSelection: OMP_BOTH,
@@ -326,6 +331,7 @@ const PI_CAPABILITIES = Object.freeze({
   closeSession: NATIVE_V2,
   resumeSession: NATIVE_V2,
   steerTurn: NATIVE_V2,
+  followUpTurn: NATIVE_V2,
   textInput: BOTH,
   imageInput: unsupported("PickForge does not translate stashed image paths to Pi RPC image payloads"),
   modelSelection: BOTH,

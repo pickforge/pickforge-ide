@@ -12,9 +12,9 @@ import {
   agentChat,
   approveAgentRequest,
   clearProviderSwitched,
-  enqueueAgentMessage,
   ensureAgentChat,
   interruptAgentChat,
+  queueAgentMessage,
   removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
@@ -415,7 +415,7 @@ function ComposerFooter(props: {
         }}
         onSend={props.onSend}
         onQueue={(text, images) => {
-          enqueueAgentMessage(props.chatId, text, images);
+          void queueAgentMessage(props.chatId, text, images);
         }}
         onSteer={(text) => steerAgentChat(props.chatId, text)}
         onInterrupt={() => void interruptAgentChat(props.chatId)}

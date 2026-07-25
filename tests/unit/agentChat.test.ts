@@ -146,6 +146,7 @@ import {
   hydrateAgentChatHistory,
   interruptAgentChat,
   latestPlanForChat,
+  queueAgentMessage,
   removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
@@ -2615,6 +2616,71 @@ describe("agent message queue", () => {
         .map((call) => call[1].text),
     ).toEqual(["first", "second"]);
     expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("hands a Pi message to the running turn instead of queueing it", async () => {
+    const { chatId, emit } = await startChat([], "test/model", "pi");
+    emit({ kind: "turnStarted" });
+
+    await queueAgentMessage(chatId, "while you work");
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_follow_up", {
+      sessionId: "session-1",
+      text: "while you work",
+    });
+    // Delivered, so it belongs in the transcript — not the dock.
+    expect(agentChat(chatId)?.queue).toEqual([]);
+    expect(timeline(chatId)).toContainEqual(
+      expect.objectContaining({ type: "userMessage", text: "while you work", optimistic: true }),
+    );
+  });
+
+  it("queues rather than following up on a backend that cannot take one", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+
+    await queueAgentMessage(chatId, "codex waits");
+
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_follow_up")).toBe(false);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["codex waits"]);
+  });
+
+  it("queues a Pi message carrying images, which the follow-up RPC cannot take", async () => {
+    const { chatId, emit } = await startChat([], "test/model", "pi");
+    emit({ kind: "turnStarted" });
+
+    await queueAgentMessage(chatId, "look at this", ["/tmp/shot.png"]);
+
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_follow_up")).toBe(false);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.images)).toEqual([["/tmp/shot.png"]]);
+  });
+
+  it("falls back to the queue when a Pi follow-up fails, rather than losing it", async () => {
+    const { chatId, emit } = await startChat([], "test/model", "pi");
+    emit({ kind: "turnStarted" });
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_follow_up"
+        ? Promise.reject(new Error("pi rpc is gone"))
+        : Promise.resolve(null),
+    );
+
+    await queueAgentMessage(chatId, "must survive");
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["must survive"]);
+    expect(agentChat(chatId)?.error).toBe("pi rpc is gone");
+    // The optimistic row was rolled back, so the message is not shown twice.
+    expect(timeline(chatId)).not.toContainEqual(
+      expect.objectContaining({ type: "userMessage", text: "must survive" }),
+    );
+  });
+
+  it("queues a Pi message when no turn is running", async () => {
+    const { chatId } = await startChat([], "test/model", "pi");
+
+    await queueAgentMessage(chatId, "nothing running");
+
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_follow_up")).toBe(false);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["nothing running"]);
   });
 
   it("does not replay a missed turn close after a failed drain", async () => {

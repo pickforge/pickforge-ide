@@ -126,6 +126,12 @@ test("changes review surface — receipt-focus, file-select, and scope-switch ne
   await expect(surface.locator(".pf-crs-navrow")).toHaveCount(2);
   expect(await stillConnected()).toBe(true);
 
+  // #340: the Source Control pane exposes exactly ONE refresh button (the
+  // toolbar's, which kicks both the repo scanner and this store) — the
+  // surface header reports freshness but never duplicates the control.
+  await expect(page.locator(".pf-sc button[title=\"Refresh\"]")).toHaveCount(1);
+  await expect(surface.locator("button[title=\"Refresh\"]")).toHaveCount(0);
+
   // 2) File selection within the now-focused surface.
   const secondRow = surface.locator(".pf-crs-navrow").nth(1);
   await secondRow.click();

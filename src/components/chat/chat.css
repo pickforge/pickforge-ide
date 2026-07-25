@@ -1221,31 +1221,41 @@
   background: var(--pf-surface-1);
 }
 
-/* ---- Context-window meter + session cost, inline at the pickers' right ---- */
-.pf-chat-composer-meter {
-  display: flex;
-  align-items: center;
-  margin-left: auto;
-  min-width: 0;
-}
+/* ---- Context-window meter + session cost: the input field's bottom gutter ----
+ * Tokens sit at the field's left inset, cost at its right, and the track is a
+ * rule on the field's own bottom edge — so the gauge is as wide as the input
+ * and a few percent of a 1M window is still a visible mark (#342). Lives inside
+ * .pf-chat-field (below the editor, never over it), so a scrolling multiline
+ * draft can't run underneath either readout. */
 .pf-chat-context {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
+  padding: 0 var(--pf-space-md) var(--pf-space-sm);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-label-sm);
+  font-variant-numeric: tabular-nums;
   color: var(--pf-text-low);
+  /* A readout, not a target: clicks fall through to .pf-chat-field, which routes
+   * them into the editor. Only the overflow warning opts back in, for its
+   * hover tooltip. */
+  pointer-events: none;
 }
 .pf-chat-context-frac {
   flex: none;
   white-space: nowrap;
 }
+/* Starts under the fraction text (same inset as this row's padding) and clears
+ * the frame's corner curve, which a low reading — a few % of a 1M window — would
+ * otherwise land inside and render as a clipped stub instead of a gauge. */
 .pf-chat-context-track {
-  flex: none;
-  width: 72px;
-  height: 2px;
-  border-radius: var(--pf-radius-pill);
+  position: absolute;
+  left: var(--pf-space-md);
+  right: var(--pf-space-md);
+  bottom: 0;
+  height: var(--pf-bracket-width);
   background: var(--pf-hairline);
   overflow: hidden;
 }
@@ -1262,6 +1272,7 @@
 }
 .pf-chat-context-cost {
   flex: none;
+  margin-left: auto;
   color: var(--pf-text-med);
   white-space: nowrap;
 }
@@ -1271,25 +1282,13 @@
 .pf-chat-context--warn .pf-chat-context-frac {
   color: color-mix(in srgb, var(--pf-warning) 70%, var(--pf-text-low));
   cursor: help;
+  /* The only readout that is a hover target — it carries the explanatory
+   * tooltip for the inconsistent reading. */
+  pointer-events: auto;
 }
 .pf-chat-context--warn .pf-chat-context-fill {
   background: var(--pf-warning);
 }
-/* Narrow composer (the pickers wrap onto a second row): stack the meter —
- * fraction, full-width track, cost — instead of one long strip. The breakpoint
- * is the measured wrap point of a typical picker set. */
-@container chat-composer (max-width: 768px) {
-  .pf-chat-context {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: var(--pf-space-xs);
-  }
-  .pf-chat-context-track {
-    width: 100%;
-    min-width: 72px;
-  }
-}
-
 /* ---- Composer ---- */
 .pf-chat-composer {
   position: relative;
@@ -1298,7 +1297,6 @@
   flex-direction: column;
   gap: var(--pf-space-sm);
   padding: var(--pf-space-md) var(--pf-space-lg);
-  container: chat-composer / inline-size;
 }
 .pf-chat-composer::after {
   content: "";
@@ -1596,33 +1594,52 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The input frame. It wraps the editor plus the context/cost gutter and owns the
+ * border, radius and fill the editor used to carry itself, so the gutter reads
+ * as inside the input and the fill rule can ride the frame's bottom edge (#342).
+ * overflow:hidden lets the radius clip that rule's ends. */
+.pf-chat-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  overflow: hidden;
+  /* The whole frame takes a click into the editor (see .pf-chat-field's
+   * onMouseDown), so the whole frame reads as typable. */
+  cursor: text;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-field:focus-within {
+  border-color: var(--pf-hairline-strong);
+}
 .pf-chat-textarea {
   flex: 1 1 auto;
   min-width: 0;
   resize: none;
   max-height: 200px;
   padding: var(--pf-space-sm) var(--pf-space-md);
-  border-radius: var(--pf-radius-md);
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: var(--pf-surface-2);
   color: var(--pf-text-hi);
   font-family: var(--pf-font-sans);
   font-size: var(--pf-size-body-lg);
   line-height: 1.5;
-  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-chat-textarea:focus {
   outline: none;
-  border-color: var(--pf-hairline-strong);
 }
 
 /* Contenteditable editor: same box metrics as the textarea it replaced, one row
- * tall by default and capped at the old 200px autosize ceiling. */
+ * tall by default and capped at the old 200px autosize ceiling. The frame's own
+ * hairlines are excluded here — .pf-chat-field adds them, so an empty composer
+ * with no meter is still exactly .pf-chat-send's min-height. With the meter's
+ * gutter the frame is taller, and the row's flex-end keeps the button flush with
+ * the frame's bottom edge. */
 .pf-chat-editor {
   box-sizing: border-box;
-  min-height: calc(
-    1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm) + 2 * var(--pf-hairline-width)
-  );
+  min-height: calc(1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm));
   overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

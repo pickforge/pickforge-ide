@@ -97,6 +97,11 @@ keep new UI consistent with it.
   and `src/lib/terminal-theme.ts`.
 - **Verify visuals via VRT.** After UI changes run `bun run vrt` and review the
   Playwright snapshots under `tests/vrt/` before committing.
+- **A frame you can click must accept text.** When a wrapper takes over an
+  input's visible frame (border/background) from its editable element, route
+  mousedown on the frame into that element — otherwise part of what reads as the
+  input is click-dead, and a click on inert chrome inside it blurs the editor and
+  silently defeats the `activeElement === field` caret guards (#342 review).
 
 ## Testing
 
@@ -111,6 +116,14 @@ keep new UI consistent with it.
 - Rust: unit tests live beside their modules in `crates/pickforge-core/`;
   integration tests in `crates/pickforge-core/tests/`.
 - Frontend: Playwright VRT specs and baselines live under `tests/vrt/`.
+- VRT reuses whatever already serves port 1420 (`reuseExistingServer: !CI`). A
+  `bun run tauri dev` / `bun run dev` server from another branch or worktree has
+  no `VITE_PICKFORGE_VRT`, so every fixture-backed spec fails on a timeout that
+  looks like a layout break. Run VRT against an isolated port (local config on a
+  free port, `reuseExistingServer: false`) rather than trusting or killing the
+  running server. Committed baselines are CI-rendered Linux PNGs — regenerate
+  them with the `update-vrt-baselines` workflow, and never commit local
+  `*-chromium-darwin.png` output.
 - Any Rust test that mutates process-level home/env state (`HOME`,
   `PICKFORGE_HOME`) must take `test_support::PICKFORGE_HOME_ENV_LOCK` for
   its whole mutation scope and restore every var it touched via an

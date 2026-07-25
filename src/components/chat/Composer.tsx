@@ -1253,9 +1253,6 @@ export function Composer(props: {
             options={modeDropdownOptions()}
           />
         </Show>
-        <Show when={props.meter}>
-          <div class="pf-chat-composer-meter">{props.meter}</div>
-        </Show>
       </div>
       <Show when={pasteError()}>
         {(message) => (
@@ -1390,32 +1387,57 @@ export function Composer(props: {
             </For>
           </div>
         </Show>
+        {/* The frame (border, radius, fill) lives on this wrapper, not on the
+          * editor, so the context/cost readout can sit inside it as a bottom
+          * gutter without overlapping the editor's own scrolling content. */}
         <div
-          ref={field}
-          class="pf-chat-textarea pf-chat-editor"
-          role="textbox"
-          aria-multiline="true"
-          aria-label={placeholder()}
-          data-placeholder={placeholder()}
-          title={
-            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
-          }
-          aria-description={
-            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
-          }
-          contentEditable={!preparing()}
-          spellcheck={true}
-          onInput={onInput}
-          onPaste={onPaste}
-          onKeyDown={onKeyDown}
-          onCompositionStart={() => {
-            composing = true;
+          class="pf-chat-field"
+          onMouseDown={(event) => {
+            // The frame is wider than the editor now (it also holds the meter
+            // gutter), and a text field you can click without getting a caret
+            // reads as broken. Route clicks that land on the frame itself — the
+            // gutter, the readout, the padding — into the editor instead of
+            // letting them blur it. Non-primary buttons are left alone so the
+            // context menu and X11 middle-click paste keep their defaults.
+            if (event.button !== 0) return;
+            if (preparing() || field.contains(event.target as Node)) return;
+            event.preventDefault();
+            // Suppressing the default already preserved focus and any existing
+            // selection, so only an unfocused editor needs placing — otherwise a
+            // click on the readout mid-draft would collapse the caret to the end.
+            if (document.activeElement === field) return;
+            field.focus();
+            placeCaret(text().length);
           }}
-          onCompositionEnd={() => {
-            composing = false;
-            onInput();
-          }}
-        />
+        >
+          <div
+            ref={field}
+            class="pf-chat-textarea pf-chat-editor"
+            role="textbox"
+            aria-multiline="true"
+            aria-label={placeholder()}
+            data-placeholder={placeholder()}
+            title={
+              props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+            }
+            aria-description={
+              props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+            }
+            contentEditable={!preparing()}
+            spellcheck={true}
+            onInput={onInput}
+            onPaste={onPaste}
+            onKeyDown={onKeyDown}
+            onCompositionStart={() => {
+              composing = true;
+            }}
+            onCompositionEnd={() => {
+              composing = false;
+              onInput();
+            }}
+          />
+          {props.meter}
+        </div>
         <Show
           when={props.turnActive}
           fallback={

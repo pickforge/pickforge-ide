@@ -195,6 +195,64 @@ function createThrottledText(
   return renderText;
 }
 
+/** Concise, accessible feedback for a blocked/unsupported chat-link click —
+ *  never the rejected path itself. Auto-clears after `ms` so a stale notice
+ *  doesn't linger. A composable (same pattern as `createThrottledText`),
+ *  called synchronously from the caller's setup so its `onCleanup` runs
+ *  under the same reactive owner as if written inline. */
+function createLinkNotice(ms: number): {
+  notice: () => string | null;
+  notify: (message: string) => void;
+} {
+  const [notice, setNotice] = createSignal<string | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const notify = (message: string) => {
+    setNotice(message);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => setNotice(null), ms);
+  };
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
+  });
+  return { notice, notify };
+}
+
+/** Hydrates each inline `[Image #N]` thumbnail's real `src` (and keyboard/
+ *  button semantics) onto the sanitized markdown after it renders — the
+ *  sanitized HTML never carries an asset path, only a zero-based index, so
+ *  DOMPurify's default URI policy stays untouched. A composable (same
+ *  pattern as `createThrottledText`), called synchronously from the
+ *  caller's setup so its `createEffect` runs under the same reactive owner
+ *  as if written inline. */
+function hydrateInlineImageThumbnails(
+  el: () => HTMLDivElement | undefined,
+  images: () => string[] | undefined,
+  body: () => string,
+): void {
+  createEffect(() => {
+    const list = images();
+    if (!list || list.length === 0) return;
+    body();
+    queueMicrotask(() => {
+      const node = el();
+      if (!node || !list) return;
+      node
+        .querySelectorAll<HTMLImageElement>("img[data-pf-image-index]")
+        .forEach((img) => {
+          const idx = Number(img.dataset.pfImageIndex);
+          if (Number.isInteger(idx) && idx >= 0 && idx < list.length) {
+            img.src = convertFileSrc(list[idx]);
+            img.loading = "lazy";
+            img.decoding = "async";
+            img.tabIndex = 0;
+            img.setAttribute("role", "button");
+            img.setAttribute("aria-label", "View image");
+          }
+        });
+    });
+  });
+}
+
 export function ChatBubble(props: {
   role: "user" | "assistant";
   text: string;
@@ -210,15 +268,7 @@ export function ChatBubble(props: {
     STREAM_MARKDOWN_INTERVAL_MS,
   );
 
-  // Concise, accessible feedback for a blocked/unsupported link click — never
-  // the rejected path itself. Auto-clears so a stale notice doesn't linger.
-  const [linkNotice, setLinkNotice] = createSignal<string | null>(null);
-  let linkNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-  const notifyLink = (message: string) => {
-    setLinkNotice(message);
-    if (linkNoticeTimer) clearTimeout(linkNoticeTimer);
-    linkNoticeTimer = setTimeout(() => setLinkNotice(null), LINK_NOTICE_MS);
-  };
+  const { notice: linkNotice, notify: notifyLink } = createLinkNotice(LINK_NOTICE_MS);
   const linkCtx = (): ChatLinkContext => ({
     chatId: props.chatId,
     projectRoot: props.projectRoot,
@@ -226,40 +276,11 @@ export function ChatBubble(props: {
     notify: notifyLink,
   });
 
-  onCleanup(() => {
-    if (linkNoticeTimer) clearTimeout(linkNoticeTimer);
-  });
-
   const body = createMemo(() => {
     return renderChatMarkdown(props.role, renderText(), props.images, props.streaming);
   });
 
-  // The sanitized markdown never carries an asset path — only a zero-based
-  // index. Hydrate the real src (and button semantics for keyboard users) onto
-  // each inline thumbnail after the DOM updates, keeping DOMPurify's default
-  // URI policy untouched.
-  createEffect(() => {
-    const images = props.images;
-    if (!images || images.length === 0) return;
-    body();
-    queueMicrotask(() => {
-      const el = mdEl;
-      if (!el || !images) return;
-      el
-        .querySelectorAll<HTMLImageElement>("img[data-pf-image-index]")
-        .forEach((img) => {
-          const idx = Number(img.dataset.pfImageIndex);
-          if (Number.isInteger(idx) && idx >= 0 && idx < images.length) {
-            img.src = convertFileSrc(images[idx]);
-            img.loading = "lazy";
-            img.decoding = "async";
-            img.tabIndex = 0;
-            img.setAttribute("role", "button");
-            img.setAttribute("aria-label", "View image");
-          }
-        });
-    });
-  });
+  hydrateInlineImageThumbnails(() => mdEl, () => props.images, body);
 
   // Marker-referenced attachments render inline within the text — repeating
   // them in the strip above would show the same image twice.

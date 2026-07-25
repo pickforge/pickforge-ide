@@ -1136,6 +1136,23 @@ mod tests {
     }
 
     #[test]
+    fn safer_permission_modes_do_not_skip_permissions() {
+        for permission_mode in [None, Some("acceptEdits"), Some("plan")] {
+            let options = ClaudeTurnOptions {
+                permission_mode: permission_mode.map(str::to_string),
+                ..runner_opts(PathBuf::from("claude"))
+            };
+
+            let command = turn_command(&options).unwrap();
+
+            assert!(!command
+                .args
+                .iter()
+                .any(|arg| arg == "--dangerously-skip-permissions"));
+        }
+    }
+
+    #[test]
     fn remote_turn_uses_one_quoted_ssh_command() {
         let options = ClaudeTurnOptions {
             prompt: "say it's $HOME".to_string(),

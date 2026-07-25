@@ -29,6 +29,10 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- The v2 SDK bridge now grants the skip-permissions capability at every spawn
+  because its long-lived CLI process cannot gain that capability later;
+  permissions are still bypassed only when the user explicitly selects bypass
+  mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
 - Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
   section titles inside the content pane are now real headings (h2, with h3

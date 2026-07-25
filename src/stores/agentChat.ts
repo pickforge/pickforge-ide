@@ -181,6 +181,7 @@ const ensureGenerations = new Map<string, number>();
 // resumed-model DB lookup captures this before awaiting and skips its write
 // if it changed underneath it.
 const modelTouchByChat = new Map<string, number>();
+const modeTouchByChat = new Map<string, number>();
 const pendingProviderTitleByChat = new Map<string, string>();
 // Successful, visible user turns only. Timeline messages include failed turns,
 // so title cadence must use this completion ledger rather than recounting them.
@@ -1755,38 +1756,60 @@ export function setAgentChatEffort(chatId: string, effort: string | null) {
 export function setAgentChatMode(chatId: string, mode: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
+  const previousMode = chat.mode;
+  modeTouchByChat.set(chatId, (modeTouchByChat.get(chatId) ?? 0) + 1);
   setChats(chatId, { mode });
   // A live session pins its mode at start — push the change into the running
   // session (codex applies it next turn, claude via setPermissionMode).
   if (!chat.sessionId) return;
-  queueAgentChatSetMode(chatId, chat.sessionId, chat.provider, mode);
+  queueAgentChatSetMode(chatId, chat.sessionId, chat.provider, mode, previousMode);
 }
 
 // Sends read SessionState on the backend, so a send racing ahead of an
 // in-flight set-mode would run the turn under the OLD sandbox/permissions
 // while the picker shows the new one. sendAgentMessage awaits this chain.
-const pendingSetModeByChat = new Map<string, Promise<void>>();
+type PendingSetMode = {
+  promise: Promise<void>;
+  acknowledgedMode: string | null;
+};
+const pendingSetModeByChat = new Map<string, PendingSetMode>();
 
 function queueAgentChatSetMode(
   chatId: string,
   sessionId: string,
   provider: AgentProvider,
   mode: string | null,
+  previousMode: string | null,
 ) {
-  const previous = pendingSetModeByChat.get(chatId) ?? Promise.resolve();
-  const promise = previous
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const touch = modeTouchByChat.get(chatId) ?? 0;
+  const pending = pendingSetModeByChat.get(chatId) ?? {
+    promise: Promise.resolve(),
+    acknowledgedMode: previousMode,
+  };
+  const promise = pending.promise
     .catch(() => undefined)
     .then(async () => {
       const current = chats[chatId];
+      if ((ensureGenerations.get(chatId) ?? 0) !== generation) return;
       if (!current || current.sessionId !== sessionId) return;
       await agentChatSetMode(sessionId, modeOverrides(provider, mode));
+      pending.acknowledgedMode = mode;
     })
     .catch((error) => {
-      if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+      if ((ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId]) return;
+      if ((modeTouchByChat.get(chatId) ?? 0) === touch) {
+        setChats(chatId, { mode: pending.acknowledgedMode, error: errorText(error) });
+      } else {
+        setChats(chatId, { error: errorText(error) });
+      }
     });
-  pendingSetModeByChat.set(chatId, promise);
+  pending.promise = promise;
+  pendingSetModeByChat.set(chatId, pending);
   void promise.then(() => {
-    if (pendingSetModeByChat.get(chatId) === promise) pendingSetModeByChat.delete(chatId);
+    if (pendingSetModeByChat.get(chatId)?.promise === promise) {
+      pendingSetModeByChat.delete(chatId);
+    }
   });
 }
 
@@ -1909,7 +1932,7 @@ async function resolveSendTarget(
   }
   const pendingMode = pendingSetModeByChat.get(chatId);
   if (pendingMode) {
-    await pendingMode;
+    await pendingMode.promise;
     if (stale()) return null;
     target = sendTarget();
     if (!target) return null;
@@ -1988,14 +2011,16 @@ export async function sendAgentMessage(
 
     const target = await resolveSendTarget(chatId, sessionId, stale);
     if (!target) {
-      const current = chats[chatId];
-      if (current) {
-        rollbackFailedSend(
-          chatId,
-          current,
-          optimisticSeq,
-          new Error("Agent chat session ended before send"),
-        );
+      if (!stale()) {
+        const current = chats[chatId];
+        if (current) {
+          rollbackFailedSend(
+            chatId,
+            current,
+            optimisticSeq,
+            new Error("Agent chat session ended before send"),
+          );
+        }
       }
       return;
     }
@@ -2104,6 +2129,7 @@ export async function retryAgentChatConnection(chatId: string): Promise<void> {
   pendingSetModelByChat.delete(chatId);
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
+  modeTouchByChat.delete(chatId);
   dropPendingDeltas(chatId);
   setChats(chatId, {
     sessionId: null,
@@ -2147,6 +2173,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
   modelTouchByChat.delete(chatId);
+  modeTouchByChat.delete(chatId);
   pendingChangesReceiptReflow.delete(chatId);
   dropPendingDeltas(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));

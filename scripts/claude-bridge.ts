@@ -96,7 +96,12 @@ export type TurnClosedEvent = { ev: "turnClosed"; chatId: string };
 /** The chat's query ended (error or close) — the chat id is gone bridge-side. */
 export type ChatClosedEvent = { ev: "chatClosed"; chatId: string };
 export type FatalEvent = { ev: "fatal"; chatId?: string; error: string };
-export type ResponseEvent = { ev: "response"; reqId: string; data: unknown };
+export type ResponseEvent = {
+  ev: "response";
+  reqId: string;
+  data?: unknown;
+  error?: string;
+};
 export type BridgeEvent =
   | StartedEvent
   | RawEvent
@@ -127,7 +132,12 @@ type ApproveCommand = {
 type InterruptCommand = { op: "interrupt"; chatId: string };
 type CloseCommand = { op: "close"; chatId: string };
 type SetModelCommand = { op: "setModel"; chatId: string; model?: string | null };
-type SetPermissionModeCommand = { op: "setPermissionMode"; chatId: string; mode: string };
+type SetPermissionModeCommand = {
+  op: "setPermissionMode";
+  chatId: string;
+  mode: string;
+  reqId?: string;
+};
 type ListSessionsCommand = { op: "listSessions"; reqId: string; cwd: string };
 type SessionMessagesCommand = {
   op: "sessionMessages";
@@ -599,6 +609,7 @@ async function handleCommand(
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       await queuePermissionModeMutation(chat, command.mode as PermissionMode);
+      if (command.reqId) emit({ ev: "response", reqId: command.reqId, data: null });
       return;
     }
     case "listSessions": {
@@ -628,6 +639,10 @@ export function dispatchCommand(
   }
 
   const task = handleCommand(command, emit).catch((error: unknown) => {
+    if (command.op === "setPermissionMode" && command.reqId) {
+      emit({ ev: "response", reqId: command.reqId, error: serializeError(error) });
+      return;
+    }
     emit({ ev: "fatal", chatId: chatIdFrom(command), error: serializeError(error) });
   });
   inFlightCommands.add(task);

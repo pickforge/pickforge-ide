@@ -291,6 +291,23 @@ describe("dispatchCommand", () => {
     });
   });
 
+  it("grants the spawn capability without enabling bypass mode", () => {
+    const chatQuery = fakeQuery();
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+
+    dispatchCommand({
+      op: "start",
+      chatId: "chat-1",
+      cwd: "/project",
+      permissionMode: "plan",
+    });
+
+    const options = vi.mocked(query).mock.calls[0]?.[0].options;
+    expect(options?.permissionMode).toBe("plan");
+    expect(options?.allowDangerouslySkipPermissions).toBe(true);
+    expect(options?.canUseTool).toBeTypeOf("function");
+  });
+
   it("resolves an approval while interrupt is still in flight", async () => {
     const interrupt = deferred<void>();
     const chatQuery = fakeQuery({ interrupt: () => interrupt.promise });

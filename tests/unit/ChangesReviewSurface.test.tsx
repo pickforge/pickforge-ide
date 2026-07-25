@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { onCleanup, onMount } from "solid-js";
 import { render } from "solid-js/web";
 import type { ChangeSet, ChangedFile, WorkingTreeChanges } from "../../src/lib/changes";
 
@@ -280,5 +281,69 @@ describe("ChangesReviewSurface — scope switch", () => {
     root.querySelectorAll<HTMLButtonElement>(".pf-sc-viewtoggle button")[1].click();
     expect(root.querySelector(".pf-crs-navpath")?.textContent).toBe("wt-file.rs");
     expect(listingCallsBeforeSwitch()).toBe(before); // pure scope toggle, no re-listing
+  });
+});
+
+describe("ChangesReviewSurface — no-remount invariant", () => {
+  // Workbench.tsx's real tree keeps each chat's terminal/chat host (`ChatHostSlot`)
+  // as a SIBLING of the dock column, outside the Source Control pane's own
+  // conditional render — see that file's "Visited hosts stay mounted...
+  // switching chats/projects never kills a running shell" comment. This
+  // harness mirrors exactly that shape (a marker sibling, never a descendant
+  // of the surface under test) so a future refactor that accidentally nests
+  // the surface INSIDE the host's subtree, or gives the surface a side effect
+  // that tears down a sibling, fails this test instead of silently shipping.
+  function TerminalMarker(props: { onMountCount: () => void; onCleanupCount: () => void }) {
+    onMount(() => props.onMountCount());
+    onCleanup(() => props.onCleanupCount());
+    return <div class="terminal-marker" />;
+  }
+
+  it("receipt-focus retarget, file selection, and scope switching never remount the sibling terminal/chat host", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([
+      turnChangeSet([file({ path: "a.rs" }), file({ path: "b.rs" })], { turnSeq: 1 }),
+    ]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+
+    testEnv.invoke.mockResolvedValueOnce(workingTreeReady([file({ path: "c.rs", staged: false, unstaged: true })]));
+    testEnv.workspaceMock.activeRoot = "/project";
+
+    let mountCount = 0;
+    let cleanupCount = 0;
+
+    mount(() => (
+      <div>
+        <TerminalMarker onMountCount={() => (mountCount += 1)} onCleanupCount={() => (cleanupCount += 1)} />
+        <ChangesReviewSurface branch="main" />
+      </div>
+    ));
+
+    await vi.waitFor(() => expect(root.querySelectorAll(".pf-crs-navrow")).toHaveLength(2));
+    expect(mountCount).toBe(1);
+
+    // File selection.
+    root.querySelectorAll<HTMLButtonElement>(".pf-crs-navrow")[1].click();
+    expect(root.querySelector(".pf-crs-diffpath")?.textContent).toBe("b.rs");
+
+    // Scope switch to Working tree and back.
+    root.querySelectorAll<HTMLButtonElement>(".pf-sc-viewtoggle button")[1].click();
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffpath")?.textContent).toBe("c.rs"));
+    root.querySelectorAll<HTMLButtonElement>(".pf-sc-viewtoggle button")[0].click();
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffpath")?.textContent).toBe("a.rs"));
+
+    // A chat receipt's "Review changes" retarget (the store-level action a
+    // click on a DIFFERENT turn's receipt performs) while the surface is
+    // already mounted and showing something else.
+    testEnv.invoke.mockResolvedValueOnce([
+      turnChangeSet([file({ path: "z.rs" })], { id: "turn:chat-1:2", turnSeq: 2 }),
+    ]);
+    changesStore.openChangesReviewForTurn("chat-1", "/project", 2);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffpath")?.textContent).toBe("z.rs"));
+
+    expect(mountCount).toBe(1);
+    expect(cleanupCount).toBe(0);
+    expect(root.querySelector(".terminal-marker")).not.toBeNull();
   });
 });

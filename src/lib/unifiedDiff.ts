@@ -74,8 +74,21 @@ function startHunk(line: string): DiffHunk {
   };
 }
 
-function pushContentLine(hunk: DiffHunk, raw: string, pos: { old: number; new: number }): void {
-  const known = hunk.oldStart !== null;
+interface HunkPos {
+  old: number;
+  new: number;
+  /** Set once an unrecognized in-hunk line (not `+`, `-`, ` `, or the
+   *  no-newline `\` marker) is seen — the running old/new counters can no
+   *  longer be trusted from that point on, so every line from here through
+   *  the end of THIS hunk reports unknown gutters rather than a count that's
+   *  silently off by however many unrecognized lines preceded it. Reset per
+   *  hunk (a later hunk's own well-formed `@@` header re-establishes trust
+   *  independent of an earlier hunk's corruption). */
+  desynced: boolean;
+}
+
+function pushContentLine(hunk: DiffHunk, raw: string, pos: HunkPos): void {
+  const known = hunk.oldStart !== null && !pos.desynced;
   if (raw.startsWith("\\")) {
     hunk.lines.push({ kind: "noNewline", text: raw, oldLine: null, newLine: null });
     return;
@@ -91,12 +104,20 @@ function pushContentLine(hunk: DiffHunk, raw: string, pos: { old: number; new: n
     if (known) pos.old += 1;
     return;
   }
-  const text = marker === " " ? raw.slice(1) : raw;
-  hunk.lines.push({ kind: "context", text, oldLine: known ? pos.old : null, newLine: known ? pos.new : null });
-  if (known) {
-    pos.old += 1;
-    pos.new += 1;
+  if (marker === " ") {
+    hunk.lines.push({ kind: "context", text: raw.slice(1), oldLine: known ? pos.old : null, newLine: known ? pos.new : null });
+    if (known) {
+      pos.old += 1;
+      pos.new += 1;
+    }
+    return;
   }
+  // Unrecognized marker: render it as best-effort context (never drop the
+  // line), but position tracking is no longer trustworthy for the rest of
+  // this hunk — this line and everything after it in the hunk gets unknown
+  // gutters instead of a count built on a guess about what this line was.
+  pos.desynced = true;
+  hunk.lines.push({ kind: "context", text: raw, oldLine: null, newLine: null });
 }
 
 /** Parses one file's unified-diff body into hunks ready for gutter display.
@@ -104,13 +125,20 @@ function pushContentLine(hunk: DiffHunk, raw: string, pos: { old: number; new: n
  *  gutter numbers rather than failing to render. */
 export function parseUnifiedDiff(text: string): ParsedDiff {
   if (text.length === 0) return { meta: [], hunks: [] };
-  const lines = text.replace(/\n$/, "").split("\n");
+  // Normalize CRLF -> LF before splitting: a trailing \r left on a hunk
+  // header line makes the anchored `HUNK_HEADER` regex (which ends in `@@$`)
+  // reject an otherwise-valid header, silently degrading it to unknown
+  // gutters. Content lines get the same treatment for consistency (an "\r"
+  // left on a context/add/del line would otherwise render as a trailing
+  // invisible character).
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.replace(/\n$/, "").split("\n");
   const sawHunkHeader = lines.some((line) => line.startsWith("@@"));
 
   const meta: string[] = [];
   const hunks: DiffHunk[] = [];
   let current: DiffHunk | null = null;
-  const pos = { old: 0, new: 0 };
+  const pos: HunkPos = { old: 0, new: 0, desynced: false };
 
   for (const line of lines) {
     if (line.startsWith("@@")) {
@@ -118,6 +146,7 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
       hunks.push(current);
       pos.old = current.oldStart ?? 0;
       pos.new = current.newStart ?? 0;
+      pos.desynced = false;
       continue;
     }
     if (!current) {

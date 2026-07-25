@@ -119,4 +119,48 @@ describe("parseUnifiedDiff", () => {
       { kind: "add", text: "new", oldLine: null, newLine: 2 },
     ]);
   });
+
+  it("normalizes CRLF line endings so the hunk header still parses and gutters are numbered", () => {
+    const diff = "@@ -1,2 +1,3 @@\r\n context\r\n-removed\r\n+added\r\n";
+    const parsed = parseUnifiedDiff(diff);
+
+    expect(parsed.hunks).toHaveLength(1);
+    const hunk = parsed.hunks[0];
+    // A trailing \r left on the header line would make the anchored regex
+    // reject it, degrading the whole hunk to unknown positions.
+    expect(hunk.oldStart).toBe(1);
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.lines).toEqual([
+      { kind: "context", text: "context", oldLine: 1, newLine: 1 },
+      { kind: "del", text: "removed", oldLine: 2, newLine: null },
+      { kind: "add", text: "added", oldLine: null, newLine: 2 },
+    ]);
+    // No stray \r survives into any rendered line's text.
+    for (const line of hunk.lines) expect(line.text).not.toContain("\r");
+  });
+
+  it("marks an unrecognized in-hunk line, and every line after it in that hunk, unknown instead of silently mis-tracking position", () => {
+    const diff = "@@ -1,3 +1,3 @@\n context one\n?garbage line\n context two\n";
+    const parsed = parseUnifiedDiff(diff);
+
+    expect(parsed.hunks[0].lines).toEqual([
+      { kind: "context", text: "context one", oldLine: 1, newLine: 1 },
+      { kind: "context", text: "?garbage line", oldLine: null, newLine: null },
+      // Would be old:2/new:2 if the malformed line above had silently
+      // advanced the counters as an ordinary context line — must stay
+      // unknown instead, since the true position is no longer known.
+      { kind: "context", text: "context two", oldLine: null, newLine: null },
+    ]);
+  });
+
+  it("resets the unknown-position state at the next hunk's own well-formed header", () => {
+    const diff = "@@ -1,2 +1,2 @@\n context\n?garbage\n@@ -10,1 +10,1 @@\n context\n";
+    const parsed = parseUnifiedDiff(diff);
+
+    expect(parsed.hunks).toHaveLength(2);
+    expect(parsed.hunks[0].lines[1]).toEqual({ kind: "context", text: "?garbage", oldLine: null, newLine: null });
+    // The second hunk's own header re-establishes trustworthy tracking,
+    // independent of the first hunk's corruption.
+    expect(parsed.hunks[1].lines).toEqual([{ kind: "context", text: "context", oldLine: 10, newLine: 10 }]);
+  });
 });

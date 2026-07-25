@@ -300,3 +300,96 @@ describe("changes store — refresh triggers", () => {
     expect(testEnv.invoke).toHaveBeenCalledTimes(3);
   });
 });
+
+// A per-slice request generation guards every commit site (this-turn
+// listing, working-tree listing, and the lazy per-file diff cache's eviction
+// closure) against an older, slower request finishing after a newer one has
+// already landed — same pattern as `stores/agentChat.ts`'s `ensureGenerations`.
+describe("changes store — out-of-order request completion", () => {
+  it("this-turn: an older target's late response does not clobber a newer target's result", async () => {
+    const store = await loadStore();
+
+    let resolveA: (value: unknown) => void = () => {};
+    testEnv.invoke.mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }));
+    store.setThisTurnTarget("chat-1", "/repo", 1); // request A: turnSeq 1
+
+    let resolveB: (value: unknown) => void = () => {};
+    testEnv.invoke.mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    store.setThisTurnTarget("chat-1", "/repo", 2); // request B: turnSeq 2, supersedes A
+
+    // B resolves first...
+    resolveB([OTHER_TURN_CHANGE_SET]);
+    await vi.waitFor(() => expect(store.changesReviewChangeSet()).toEqual(OTHER_TURN_CHANGE_SET));
+    expect(store.changesReviewLoading()).toBe(false);
+
+    // ...then A's late response arrives. It must be a no-op: B's result stays,
+    // and A finishing must not flip `loading` back to true then immediately
+    // false either (it must simply never touch loading at all).
+    resolveA([TURN_CHANGE_SET]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(store.changesReviewChangeSet()).toEqual(OTHER_TURN_CHANGE_SET);
+    expect(store.changesReviewLoading()).toBe(false);
+  });
+
+  it("working-tree: an older project's late response does not clobber a newer project's result", async () => {
+    const store = await loadStore();
+    const OTHER_PROJECT_READY: WorkingTreeChanges = {
+      state: "ready",
+      changeSet: { ...WORKING_TREE_READY.changeSet, id: "workingTree:/other", repoRoot: "/other" },
+    };
+
+    let resolveA: (value: unknown) => void = () => {};
+    testEnv.invoke.mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }));
+    store.setChangesReviewScope("workingTree");
+    store.setWorkingTreeTarget("/repo"); // request A
+
+    let resolveB: (value: unknown) => void = () => {};
+    testEnv.invoke.mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+    store.setWorkingTreeTarget("/other"); // request B, supersedes A
+
+    resolveB(OTHER_PROJECT_READY);
+    await vi.waitFor(() => expect(store.changesReviewChangeSet()).toEqual(OTHER_PROJECT_READY.changeSet));
+    expect(store.changesReviewLoading()).toBe(false);
+
+    resolveA(WORKING_TREE_READY);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(store.changesReviewChangeSet()).toEqual(OTHER_PROJECT_READY.changeSet);
+    expect(store.changesReviewLoading()).toBe(false);
+  });
+
+  it("lazy diff fetch: an old target's late-rejecting fetch never evicts the new target's own cache entry for the same key", async () => {
+    testEnv.invoke.mockResolvedValueOnce([TURN_CHANGE_SET]);
+    const store = await loadStore();
+    store.setThisTurnTarget("chat-1", "/repo", 1);
+    await vi.waitFor(() => expect(store.changesReviewLoading()).toBe(false));
+
+    let rejectOld: (err: unknown) => void = () => {};
+    testEnv.invoke.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }));
+    const oldDiff = store.loadChangeDiff("src/lib.rs"); // in flight against turnSeq 1
+    oldDiff.catch(() => {}); // this test asserts on cache state, not on this rejection
+
+    // Switch target (turnSeq 1 -> 2): the diff cache resets to a fresh Map,
+    // so the in-flight `oldDiff` promise above belongs to a map no longer
+    // reachable via the store.
+    testEnv.invoke.mockResolvedValueOnce([OTHER_TURN_CHANGE_SET]);
+    store.setThisTurnTarget("chat-1", "/repo", 2);
+    await vi.waitFor(() => expect(store.changesReviewLoading()).toBe(false));
+
+    // The new target caches its OWN promise under the same path.
+    testEnv.invoke.mockImplementationOnce(
+      () => new Promise((resolve) => resolve({ diff: "+new\n", binary: false, truncated: false, available: true })),
+    );
+    const newDiff = store.loadChangeDiff("src/lib.rs");
+
+    // The OLD (superseded) fetch now rejects. If its eviction closure reads
+    // the mutable `turnDiffCache` binding instead of the map it was stored
+    // in, this would incorrectly delete the NEW target's cache entry.
+    rejectOld(new Error("stale target's fetch failed"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // A second call for the same path/target must still return the SAME
+    // cached promise — proof the new entry was never evicted.
+    expect(store.loadChangeDiff("src/lib.rs")).toBe(newDiff);
+    await expect(newDiff).resolves.toEqual({ diff: "+new\n", binary: false, truncated: false, available: true });
+  });
+});

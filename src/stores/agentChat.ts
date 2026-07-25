@@ -1523,7 +1523,7 @@ async function startEnsuredSession(
   // (the start captured the old overrides) — reconcile it now.
   const currentMode = chats[chatId]?.mode ?? null;
   if (currentMode !== startMode) {
-    queueAgentChatSetMode(chatId, sessionId, provider, currentMode);
+    queueAgentChatSetMode(chatId, sessionId, provider, currentMode, startMode);
   }
 }
 

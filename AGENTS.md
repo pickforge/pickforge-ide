@@ -113,6 +113,11 @@ keep new UI consistent with it.
   alone — neither type-checks. Always include `bunx tsc --noEmit` (or
   `bun run build`) in the validation pass (#329 review: a wrong-arity call
   passed tests and lint, failed only at build).
+- A Rust change is not validated by `cargo test` alone — CI runs
+  `cargo clippy --workspace --all-targets -- -D warnings`, where any lint is a
+  hard build failure. Always run that exact command locally before pushing
+  (#339 review: a `.iter().any(|x| *x == s)` collapse passed every local test
+  and failed CI on `clippy::manual_contains`).
 - When renaming or retiring an agent model id, grep for the version digits in
   free text too (`"opus 4.8"`, alias term arrays, swarm command parsing) — the
   exact-id grep misses natural-language sites — and migrate persisted

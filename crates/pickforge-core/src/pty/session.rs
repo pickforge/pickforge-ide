@@ -532,7 +532,7 @@ fn harness_for_arg(arg: &str) -> Option<&'static str> {
                 .any(|part| *part == "oh-my-pi" || *part == "@oh-my-pi")
             {
                 Some("omp")
-            } else if components.iter().any(|part| *part == "pi-coding-agent") {
+            } else if components.contains(&"pi-coding-agent") {
                 Some("pi")
             } else {
                 None

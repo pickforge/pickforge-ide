@@ -12,7 +12,7 @@ function createSettingsSection(key: SettingsSectionKey): Component<ParentProps> 
       data-settings-section={key}
       data-settings-category={section.category}
     >
-      <MonoEyebrow text={title} tick />
+      <MonoEyebrow text={title} tick as="h2" />
       <div class="pf-settings-body">{props.children}</div>
     </HairlinePanel>
   );

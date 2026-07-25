@@ -1,6 +1,7 @@
 // Design-system primitives, web port (SolidJS). Phase 0 subset:
 // MonoEyebrow, HairlinePanel, StatusPill, Chip, EmberButton.
 import { type JSX, Show, splitProps } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import "./ui.css";
 
 export type StatusIntent =
@@ -39,19 +40,29 @@ export function PaneReveal(props: {
   );
 }
 
-/** Uppercase, wide-tracked monospace section label with optional ember tick. */
+/** Uppercase, wide-tracked monospace section label with optional ember tick.
+ *  Renders as a bare `<span>` by default (unchanged for existing callers).
+ *  Pass `as="h2"`/`"h3"` where this label is a real content heading (e.g. a
+ *  settings section title) so assistive tech gets heading-navigable
+ *  structure; `pf-eyebrow-row--heading` strips the browser's default heading
+ *  margin so the visual result stays identical to the span form. */
 export function MonoEyebrow(props: {
   text: string;
   tick?: boolean;
   class?: string;
+  as?: "span" | "h2" | "h3";
 }): JSX.Element {
+  const tag = () => props.as ?? "span";
   return (
-    <span class={`pf-eyebrow-row ${props.class ?? ""}`}>
+    <Dynamic
+      component={tag()}
+      class={`pf-eyebrow-row ${tag() === "span" ? "" : "pf-eyebrow-row--heading "}${props.class ?? ""}`}
+    >
       <Show when={props.tick}>
         <span class="pf-eyebrow-tick" />
       </Show>
       <span class="pf-eyebrow">{props.text}</span>
-    </span>
+    </Dynamic>
   );
 }
 

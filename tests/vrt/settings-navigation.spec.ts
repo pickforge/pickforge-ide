@@ -429,6 +429,20 @@ test.describe("settings navigation", () => {
     await expect(claudeCode).toContainText("Not authenticated");
   });
 
+  test("honors reduced motion in category nav item transitions", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openSettings(page);
+    const general = page.getByRole("button", { name: "General", exact: true });
+    await expect(general).toBeVisible();
+    expect(
+      await general.evaluate((element) =>
+        getComputedStyle(element).transitionDuration
+          .split(",")
+          .every((duration) => Number.parseFloat(duration) === 0),
+      ),
+    ).toBe(true);
+  });
+
   test("honors reduced motion in connector controls", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);

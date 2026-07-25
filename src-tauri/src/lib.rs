@@ -31,7 +31,8 @@ use std::sync::Arc;
 
 use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
-    PickforgeHomeError, PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
+    PickforgeHomeError, PtyManager, SpeechSessionManager, TunnelManager, VmServiceClient,
+    VoiceSessionManager,
 };
 use tauri::{path::BaseDirectory, Manager, RunEvent};
 #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
@@ -304,6 +305,7 @@ pub fn run() {
         .manage(PtyManager::new())
         .manage(pickforge_core::android::EmulatorManager::new())
         .manage(Arc::new(VoiceSessionManager::new()))
+        .manage(Arc::new(SpeechSessionManager::new()))
         .manage(VmServiceClient::new())
         .manage(CdpClient::new())
         .manage(watch_commands::WatchManager::new())
@@ -406,6 +408,8 @@ pub fn run() {
             voice_commands::voice_stop,
             voice_commands::voice_cancel,
             voice_commands::voice_status,
+            voice_commands::voice_speak,
+            voice_commands::voice_speak_cancel,
             telemetry_commands::telemetry_get,
             telemetry_commands::telemetry_set,
             #[cfg(target_os = "linux")]

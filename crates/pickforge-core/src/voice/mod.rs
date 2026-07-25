@@ -5,10 +5,15 @@ use serde::Serialize;
 pub mod recorder;
 pub mod segments;
 pub mod session;
+pub mod speak;
 pub mod stt;
 
 pub use recorder::{ActiveRecording, PwRecordBackend, RecorderBackend};
 pub use session::{VoiceSessionManager, VoiceSessionPhase, VoiceStartRequest};
+pub use speak::{
+    OsTtsBackend, RunningSpeech, SpeakEvent, SpeakEventKind, SpeakSink, SpeechBackend,
+    SpeechSessionManager,
+};
 pub use stt::{PreparedTranscription, VoiceTranscriber, WhisperCliTranscriber};
 
 pub const DEFAULT_LANGUAGE: &str = "en";
@@ -134,6 +139,12 @@ pub enum VoiceError {
     MissingModel { expected: String },
     #[error("HOME is not set; cannot resolve the default whisper.cpp model path")]
     MissingHome,
+    #[error(
+        "local talk-back needs a TTS binary on PATH: say (macOS) or spd-say/espeak-ng (Linux)"
+    )]
+    MissingTtsBinary,
+    #[error("nothing to speak")]
+    EmptySpeechText,
     #[error("voice session manager is shutting down")]
     ShuttingDown,
     #[error("voice session {0} not found")]

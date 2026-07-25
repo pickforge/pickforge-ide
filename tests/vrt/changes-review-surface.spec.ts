@@ -88,3 +88,56 @@ test("changes review surface stays behind the flag — legacy Source Control ren
   await expect(page.locator(".pf-crs")).toHaveCount(0);
   await expect(sourceControlPane.locator(".pf-sc-row")).toHaveCount(3);
 });
+
+// The no-remount invariant, proven against the REAL composed tree (not a
+// stand-in): `Workbench.tsx`'s `ChatHostSlot` is a sibling of the dock
+// column, never a descendant of the Source Control pane's own reactive
+// state, so a receipt's "Review changes" retarget, a file selection, and a
+// scope switch must never tear down and recreate the chat host's own DOM
+// node. Pinned by holding an ElementHandle to that node across all three
+// interactions and asserting it's still `isConnected` (a real remount would
+// detach the ORIGINAL node from the document, which no amount of the new
+// content merely "looking the same" could hide) — no unit-test stand-in can
+// make this assertion meaningful, since a hand-written sibling in a test
+// file doesn't track `Workbench.tsx`'s actual composition.
+test("changes review surface — receipt-focus, file-select, and scope-switch never remount the chat host", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    localStorage.setItem("pickforge.flags", JSON.stringify({ changesReview: true }));
+  });
+
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  const hostSlot = page.locator(".pf-term-slot").first();
+  await hostSlot.waitFor();
+  const hostNode = await hostSlot.elementHandle();
+  if (!hostNode) throw new Error("expected the chat host's DOM node to resolve");
+  const stillConnected = () => hostNode.evaluate((el) => el.isConnected);
+
+  // 1) Receipt-focus retarget: the real "Review changes" seam
+  // (changesReceiptActions.reviewTurnChanges -> openChangesReviewForTurn +
+  // navigate + focusChangesReviewSurface).
+  await page.locator(".pf-chat-receipt-review").click();
+  const surface = page.locator(".pf-crs");
+  await surface.waitFor();
+  await expect(surface.locator(".pf-crs-navrow")).toHaveCount(2);
+  expect(await stillConnected()).toBe(true);
+
+  // 2) File selection within the now-focused surface.
+  const secondRow = surface.locator(".pf-crs-navrow").nth(1);
+  await secondRow.click();
+  await expect(surface.locator(".pf-crs-diffpath")).toHaveText("tests/vrt/agent-chat.spec.ts");
+  expect(await stillConnected()).toBe(true);
+
+  // 3) Scope switch to Working tree (a different fetch, a different file set).
+  await surface.getByRole("button", { name: "Working tree" }).click();
+  await expect(surface.locator(".pf-crs-navrow")).toHaveCount(3);
+  expect(await stillConnected()).toBe(true);
+
+  // The chat's own content survived untouched throughout — proof this was a
+  // stable host, not a remount that happened to reproduce the same text.
+  await expect(page.getByText("Built a deterministic VRT fixture")).toBeVisible();
+});

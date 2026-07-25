@@ -2246,6 +2246,34 @@ describe("setAgentChatMode", () => {
       permissionMode: "plan",
     });
   });
+
+  it("rolls a failed bypass de-escalation back before a later send", async () => {
+    const chatId = nextChatId();
+    let modeAtSend: string | null | undefined;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_chat_set_mode") return Promise.reject(new Error("mode rejected"));
+      if (cmd === "agent_chat_send") {
+        modeAtSend = agentChat(chatId)?.mode;
+        return Promise.resolve();
+      }
+      return Promise.resolve(null);
+    });
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-model", {
+      mode: "bypassPermissions",
+    });
+
+    setAgentChatMode(chatId, "plan");
+    await vi.waitFor(() => {
+      expect(agentChat(chatId)?.mode).toBe("bypassPermissions");
+      expect(agentChat(chatId)?.error).toBe("mode rejected");
+    });
+
+    await sendAgentMessage(chatId, "after failed de-escalation");
+
+    expect(modeAtSend).toBe("bypassPermissions");
+  });
 });
 
 describe("sendAgentMessage", () => {
@@ -2660,6 +2688,54 @@ describe("sendAgentMessage", () => {
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
       0,
     );
+  });
+
+  it("does not roll back a stale send after connection retry replaces its session", async () => {
+    flags.ompAgents = true;
+    const chatId = nextChatId();
+    const setMode = deferred<void>();
+    const dispose = deferred<void>();
+    let startCount = 0;
+    let emit: ((event: AgentEvent) => void) | undefined;
+    tauri.invoke.mockImplementation((cmd: string, args?: {
+      onEvent?: { onmessage?: (event: AgentEvent) => void };
+    }) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        emit = args?.onEvent?.onmessage;
+        return Promise.resolve(`session-${startCount}`);
+      }
+      if (cmd === "agent_chat_set_mode") return setMode.promise;
+      if (cmd === "agent_chat_dispose") return dispose.promise;
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "omp", null, { engine: "v2" });
+    setAgentChatMode(chatId, "default");
+    await flushPromises();
+
+    const sending = sendAgentMessage(chatId, "hello");
+    await flushPromises();
+    expect(agentChat(chatId)?.turnActive).toBe(true);
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
+
+    emit?.({ kind: "turnFailed", error: "session dropped" });
+    const retrying = retryAgentChatConnection(chatId);
+    setMode.resolve(undefined);
+    await sending;
+
+    expect(agentChat(chatId)?.turnActive).toBe(false);
+    expect(agentChat(chatId)?.error).toBe("session dropped");
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
+
+    dispose.resolve(undefined);
+    await retrying;
+    expect(agentChat(chatId)?.sessionId).toBe("session-2");
   });
 
   it("retries a failed start when sending and delivers the message", async () => {

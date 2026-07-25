@@ -25,9 +25,14 @@ reset this file.
 - Fixed OMP 17.1.1 native chat being incorrectly reported as unavailable.
 - Stopped OMP turns now retain the user prompt, partial response, and interrupted status in chat history.
 - Fixed macOS window rubber-banding and popover menus selecting a neighboring row near the bottom of the window.
+- Fixed bypass-permissions mode breaking agent SDK sessions and leaving later sends stuck as working.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- The v2 SDK bridge now grants the skip-permissions capability at every spawn
+  because its long-lived CLI process cannot gain that capability later;
+  permissions are still bypassed only when the user explicitly selects bypass
+  mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
 - Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
   section titles inside the content pane are now real headings (h2, with h3
@@ -42,6 +47,7 @@ reset this file.
 - `bun run lint`
 - `bun run build`
 - `bunx playwright test tests/vrt/dropdown.spec.ts` (against an isolated VRT dev server)
+- `cargo test -p pickforge-core`
 
 ### Not tested yet — release gates
 

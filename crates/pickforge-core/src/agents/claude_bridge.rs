@@ -386,11 +386,18 @@ impl ClaudeBridgeClient {
         chat_id: &str,
         mode: &str,
     ) -> Result<(), ClaudeBridgeError> {
-        self.send_value(json!({
-            "op": "setPermissionMode",
-            "chatId": chat_id,
-            "mode": mode,
-        }))
+        self.request(
+            |req_id| {
+                json!({
+                    "op": "setPermissionMode",
+                    "reqId": req_id,
+                    "chatId": chat_id,
+                    "mode": mode,
+                })
+            },
+            REQUEST_TIMEOUT,
+        )?;
+        Ok(())
     }
 
     pub fn list_sessions(&self, cwd: PathBuf) -> Result<Value, ClaudeBridgeError> {
@@ -1062,11 +1069,17 @@ while IFS= read -r line; do
       ;;
     *'"op":"approve"'*)
       ;;
+    *'"op":"setPermissionMode"'*)
+      req_id=$(printf '%s\n' "$line" | sed 's/.*"reqId":\([^,}}]*\).*/\1/')
+      printf '{{"ev":"response","reqId":%s,"data":null}}\n' "$req_id"
+      ;;
     *'"op":"listSessions"'*)
-      printf '%s\n' '{{"ev":"response","reqId":1,"data":{{"sessions":[{{"id":"session-1"}}]}}}}'
+      req_id=$(printf '%s\n' "$line" | sed 's/.*"reqId":\([^,}}]*\).*/\1/')
+      printf '{{"ev":"response","reqId":%s,"data":{{"sessions":[{{"id":"session-1"}}]}}}}\n' "$req_id"
       ;;
     *'"op":"sessionMessages"'*)
-      printf '%s\n' '{{"ev":"response","reqId":2,"data":{{"messages":[{{"role":"assistant","text":"hi"}}]}}}}'
+      req_id=$(printf '%s\n' "$line" | sed 's/.*"reqId":\([^,}}]*\).*/\1/')
+      printf '{{"ev":"response","reqId":%s,"data":{{"messages":[{{"role":"assistant","text":"hi"}}]}}}}\n' "$req_id"
       ;;
     *'"op":"shutdown"'*)
       exit 0

@@ -101,6 +101,7 @@ pub struct AgentChatManager {
     claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
     remote_sessions: Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     starting_chats: Arc<Mutex<HashSet<String>>>,
+    mode_mutations: Arc<Mutex<()>>,
     shutting_down: Arc<AtomicBool>,
     start_gate: Arc<StartGate>,
     #[cfg(test)]
@@ -260,6 +261,7 @@ impl AgentChatManager {
             claude_bridge: Arc::new(Mutex::new(None)),
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
+            mode_mutations: Arc::new(Mutex::new(())),
             shutting_down: Arc::new(AtomicBool::new(false)),
             start_gate: Arc::new(StartGate::default()),
             #[cfg(test)]
@@ -1642,73 +1644,70 @@ impl AgentChatManager {
         approval_policy: Option<String>,
         permission_mode: Option<String>,
     ) -> Result<(), AgentChatError> {
+        let _mutation_guard = self
+            .mode_mutations
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("agent mode mutation lock poisoned".to_string()))?;
         let sandbox = sandbox.map(|value| non_empty(Some(value)));
         let approval_policy = approval_policy.map(|value| non_empty(Some(value)));
         let permission_mode = permission_mode.map(|value| non_empty(Some(value)));
-        if let Some(mode) = permission_mode.as_ref().and_then(|mode| mode.as_deref()) {
-            let omp_client = {
-                let inner = self.lock_inner()?;
-                let state = inner
-                    .get(session_id)
-                    .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-                (state.provider == AgentProvider::Omp).then(|| state.omp_client.clone())
-            }
-            .flatten();
-            if let Some(client) = omp_client {
-                client
-                    .set_mode(mode)
-                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
-            }
-        }
-        let push_permission_mode = {
-            let mut inner = self.lock_inner()?;
+        let (provider, engine, omp_client) = {
+            let inner = self.lock_inner()?;
             let state = inner
-                .get_mut(session_id)
+                .get(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
             if state.provider == AgentProvider::Pi {
                 return Err(AgentChatError::Unsupported(
                     "Pi RPC exposes no native approval or sandbox mode control".to_string(),
                 ));
             }
-            if let Some(sandbox) = sandbox {
-                state.sandbox = sandbox;
-            }
-            if let Some(approval_policy) = approval_policy {
-                state.approval_policy = approval_policy;
-            }
-            if let Some(permission_mode) = permission_mode {
-                state.permission_mode = permission_mode.clone();
-                if let Some(permission_mode) = permission_mode {
-                    if state.engine == Engine::V2 && state.provider == AgentProvider::ClaudeCode {
-                        Some(permission_mode)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            (state.provider, state.engine, state.omp_client.clone())
         };
 
-        if let Some(permission_mode) = push_permission_mode {
-            let client = match self.cached_claude_bridge_client() {
-                Ok(client) => Some(client),
-                Err(AgentChatError::Spawn(message))
-                    if message == "claude bridge client is not running" =>
-                {
-                    None
-                }
-                Err(err) => return Err(err),
-            };
-            if let Some(client) = client {
-                if client.chat_started(session_id) {
-                    client
-                        .chat_set_permission_mode(session_id, &permission_mode)
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        if provider == AgentProvider::Omp {
+            if let (Some(client), Some(mode)) = (
+                omp_client,
+                permission_mode.as_ref().and_then(|mode| mode.as_deref()),
+            ) {
+                client
+                    .set_mode(mode)
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+            }
+        }
+
+        if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
+            if let Some(mode) = permission_mode.as_ref().and_then(|mode| mode.as_deref()) {
+                let client = match self.cached_claude_bridge_client() {
+                    Ok(client) => Some(client),
+                    Err(AgentChatError::Spawn(message))
+                        if message == "claude bridge client is not running" =>
+                    {
+                        None
+                    }
+                    Err(err) => return Err(err),
+                };
+                if let Some(client) = client {
+                    if client.chat_started(session_id) {
+                        client
+                            .chat_set_permission_mode(session_id, mode)
+                            .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    }
                 }
             }
+        }
+
+        let mut inner = self.lock_inner()?;
+        let state = inner
+            .get_mut(session_id)
+            .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+        if let Some(sandbox) = sandbox {
+            state.sandbox = sandbox;
+        }
+        if let Some(approval_policy) = approval_policy {
+            state.approval_policy = approval_policy;
+        }
+        if let Some(permission_mode) = permission_mode {
+            state.permission_mode = permission_mode;
         }
         Ok(())
     }
@@ -2154,6 +2153,7 @@ impl AgentChatManager {
             claude_bridge: Arc::new(Mutex::new(None)),
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
+            mode_mutations: Arc::new(Mutex::new(())),
             shutting_down: Arc::new(AtomicBool::new(false)),
             start_gate: Arc::new(StartGate::default()),
             test_binaries: TestBinaries {
@@ -5107,6 +5107,10 @@ while IFS= read -r line; do
     *'"op":"start"'*)
       printf '{"ev":"started","chatId":"%s"}\n' "$chat_id"
       ;;
+    *'"op":"setPermissionMode"'*)
+      req_id=$(printf '%s\n' "$line" | sed 's/.*"reqId":\([^,}]*\).*/\1/')
+      printf '{"ev":"response","reqId":%s,"data":null}\n' "$req_id"
+      ;;
     *'"op":"shutdown"'*)
       exit 0
       ;;
@@ -5137,6 +5141,72 @@ done
         let log = wait_for_file(&log, |text| text.contains(r#""op":"setPermissionMode""#));
         assert!(log.contains(r#""chatId":"#));
         assert!(log.contains(r#""mode":"plan""#));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_claude_failed_deescalation_keeps_acknowledged_bypass_mode() {
+        let script = test_script(
+            "claude-bridge-reject-mode",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  chat_id=$(printf '%s\n' "$line" | sed 's/.*"chatId":"\([^"]*\)".*/\1/')
+  case "$line" in
+    *'"op":"start"'*)
+      printf '{"ev":"started","chatId":"%s"}\n' "$chat_id"
+      ;;
+    *'"op":"setPermissionMode"'*)
+      req_id=$(printf '%s\n' "$line" | sed 's/.*"reqId":\([^,}]*\).*/\1/')
+      printf '{"ev":"response","reqId":%s,"error":"mode rejected"}\n' "$req_id"
+      ;;
+    *'"op":"shutdown"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = claude_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-claude-reject-mode",
+                script.dir.clone(),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    permission_mode: Some("bypassPermissions".to_string()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+
+        let error = manager
+            .set_mode(&session_id, None, None, Some("plan".to_string()))
+            .unwrap_err();
+        assert!(error.to_string().contains("mode rejected"));
+        assert_eq!(
+            manager
+                .inner
+                .lock()
+                .unwrap()
+                .get(&session_id)
+                .unwrap()
+                .permission_mode
+                .as_deref(),
+            Some("bypassPermissions")
+        );
+
+        manager.send(&session_id, "after failure", None, None, None).unwrap();
+        let log = wait_for_file(&log, |text| text.contains(r#""op":"send""#));
+        assert!(log.contains(r#""permissionMode":"bypassPermissions""#));
     }
 
     #[cfg(unix)]

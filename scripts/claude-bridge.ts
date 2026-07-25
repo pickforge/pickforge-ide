@@ -96,7 +96,12 @@ export type TurnClosedEvent = { ev: "turnClosed"; chatId: string };
 /** The chat's query ended (error or close) — the chat id is gone bridge-side. */
 export type ChatClosedEvent = { ev: "chatClosed"; chatId: string };
 export type FatalEvent = { ev: "fatal"; chatId?: string; error: string };
-export type ResponseEvent = { ev: "response"; reqId: string; data: unknown };
+export type ResponseEvent = {
+  ev: "response";
+  reqId: string;
+  data?: unknown;
+  error?: string;
+};
 export type BridgeEvent =
   | StartedEvent
   | RawEvent
@@ -127,7 +132,12 @@ type ApproveCommand = {
 type InterruptCommand = { op: "interrupt"; chatId: string };
 type CloseCommand = { op: "close"; chatId: string };
 type SetModelCommand = { op: "setModel"; chatId: string; model?: string | null };
-type SetPermissionModeCommand = { op: "setPermissionMode"; chatId: string; mode: string };
+type SetPermissionModeCommand = {
+  op: "setPermissionMode";
+  chatId: string;
+  mode: string;
+  reqId?: string;
+};
 type ListSessionsCommand = { op: "listSessions"; reqId: string; cwd: string };
 type SessionMessagesCommand = {
   op: "sessionMessages";
@@ -373,6 +383,10 @@ function buildOptions(
   const options: Options = {
     cwd: command.cwd,
     permissionMode: (command.permissionMode || "acceptEdits") as PermissionMode,
+    // The CLI process is long-lived and cannot gain this spawn-time capability
+    // when the user switches modes later. The active mode still controls
+    // whether permissions are bypassed.
+    allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     canUseTool: createPermissionHandler(command.chatId, gate, emit),
   };
@@ -395,7 +409,6 @@ function buildOptions(
 function queueModelMutation(
   chat: ChatSession,
   model: string | null,
-  emit: (event: BridgeEvent) => void,
 ): Promise<void> {
   const previousMutation = chat.mutationChain.catch(() => undefined);
   const nextMutation = previousMutation
@@ -406,13 +419,13 @@ function queueModelMutation(
     })
     .catch((error: unknown) => {
       chat.mutationFailure = { error };
-      emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
       throw error;
     });
   let queuedMutation: Promise<void>;
   queuedMutation = nextMutation.finally(() => {
     if (chat.mutationChain === queuedMutation && chat.mutationFailure) {
       chat.mutationChain = Promise.resolve();
+      chat.mutationFailure = null;
     }
   });
   chat.mutationChain = queuedMutation;
@@ -422,7 +435,6 @@ function queueModelMutation(
 function queuePermissionModeMutation(
   chat: ChatSession,
   mode: PermissionMode,
-  emit: (event: BridgeEvent) => void,
 ): Promise<void> {
   const previousMutation = chat.mutationChain.catch(() => undefined);
   const nextMutation = previousMutation
@@ -433,13 +445,13 @@ function queuePermissionModeMutation(
     })
     .catch((error: unknown) => {
       chat.mutationFailure = { error };
-      emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
       throw error;
     });
   let queuedMutation: Promise<void>;
   queuedMutation = nextMutation.finally(() => {
     if (chat.mutationChain === queuedMutation && chat.mutationFailure) {
       chat.mutationChain = Promise.resolve();
+      chat.mutationFailure = null;
     }
   });
   chat.mutationChain = queuedMutation;
@@ -476,11 +488,15 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     // truthful.
     const nextModel = command.model ?? null;
     if (existing.model !== nextModel) {
-      void queueModelMutation(existing, nextModel, emit).catch(() => undefined);
+      void queueModelMutation(existing, nextModel).catch((error: unknown) => {
+        emit({ ev: "fatal", chatId: existing.chatId, error: serializeError(error) });
+      });
     }
     const nextPermissionMode = (command.permissionMode || "acceptEdits") as PermissionMode;
     if (existing.permissionMode !== nextPermissionMode) {
-      void queuePermissionModeMutation(existing, nextPermissionMode, emit).catch(() => undefined);
+      void queuePermissionModeMutation(existing, nextPermissionMode).catch((error: unknown) => {
+        emit({ ev: "fatal", chatId: existing.chatId, error: serializeError(error) });
+      });
     }
     emit({ ev: "started", chatId: command.chatId });
     return;
@@ -586,21 +602,14 @@ async function handleCommand(
     case "setModel": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      try {
-        await queueModelMutation(chat, command.model ?? null, emit);
-      } catch {
-        return;
-      }
+      await queueModelMutation(chat, command.model ?? null);
       return;
     }
     case "setPermissionMode": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      try {
-        await queuePermissionModeMutation(chat, command.mode as PermissionMode, emit);
-      } catch {
-        return;
-      }
+      await queuePermissionModeMutation(chat, command.mode as PermissionMode);
+      if (command.reqId) emit({ ev: "response", reqId: command.reqId, data: null });
       return;
     }
     case "listSessions": {
@@ -630,6 +639,10 @@ export function dispatchCommand(
   }
 
   const task = handleCommand(command, emit).catch((error: unknown) => {
+    if (command.op === "setPermissionMode" && command.reqId) {
+      emit({ ev: "response", reqId: command.reqId, error: serializeError(error) });
+      return;
+    }
     emit({ ev: "fatal", chatId: chatIdFrom(command), error: serializeError(error) });
   });
   inFlightCommands.add(task);

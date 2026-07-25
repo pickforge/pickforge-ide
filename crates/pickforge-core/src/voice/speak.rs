@@ -463,10 +463,20 @@ impl<B: SpeechBackend> Drop for SpeechSessionManager<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The fake-binary idiom below (write a `#!/bin/sh` script, chmod it
+    // executable, point PATH at it) is inherently Unix-only — Windows has
+    // no shebang/exec-bit concept and can't run a shell-script fake TTS
+    // binary anyway. Every helper and test that depends on it is
+    // `#[cfg(unix)]`, mirroring recorder.rs's `#[cfg(target_os = "linux")]`
+    // gating of its own PermissionsExt-based fake-binary test.
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::sync::mpsc;
+    #[cfg(unix)]
     use std::time::SystemTime;
 
+    #[cfg(unix)]
     fn fake_bin_dir(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "pf-speak-{name}-{}-{}",
@@ -478,6 +488,7 @@ mod tests {
         ))
     }
 
+    #[cfg(unix)]
     fn write_script(dir: &std::path::Path, name: &str, body: &str) {
         std::fs::create_dir_all(dir).unwrap();
         let script = dir.join(name);
@@ -485,12 +496,14 @@ mod tests {
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    #[cfg(unix)]
     fn env_with_path(dir: &std::path::Path) -> HashMap<String, String> {
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), dir.to_string_lossy().into_owned());
         env
     }
 
+    #[cfg(unix)]
     fn backend_name() -> &'static str {
         if cfg!(target_os = "macos") {
             "say"
@@ -499,6 +512,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn drain(rx: &mpsc::Receiver<SpeakEvent>, timeout: Duration) -> Vec<SpeakEvent> {
         let mut events = Vec::new();
         let deadline = Instant::now() + timeout;
@@ -708,6 +722,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn empty_text_never_reaches_the_backend() {
         let dir = fake_bin_dir("unused");

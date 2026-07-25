@@ -45,6 +45,39 @@ const OMP_MODELS_FIXTURE = JSON.stringify({
     },
   ],
 });
+
+// A trimmed, representative slice of `codex debug models --bundled` output
+// (captured from a real codex-cli 0.144.6 install). `gpt-5.6-sol` is also in
+// the curated static table, so this exercises "curated metadata wins on
+// merge"; `codex-auto-review` is "hide" visibility, exercising the picker's
+// filter. Neither changes the default selected model in VRT.
+const CODEX_MODELS_FIXTURE = JSON.stringify({
+  models: [
+    {
+      slug: "gpt-5.6-sol",
+      display_name: "GPT-5.6-Sol",
+      default_reasoning_level: "low",
+      supported_reasoning_levels: [
+        { effort: "low" },
+        { effort: "medium" },
+        { effort: "high" },
+        { effort: "xhigh" },
+        { effort: "max" },
+        { effort: "ultra" },
+      ],
+      visibility: "list",
+      supported_in_api: true,
+    },
+    {
+      slug: "codex-auto-review",
+      display_name: "Codex Auto Review",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "medium" }],
+      visibility: "hide",
+      supported_in_api: true,
+    },
+  ],
+});
 const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
@@ -601,6 +634,15 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
           "  acp           Run Oh My Pi as an ACP (Agent Client Protocol) server over stdio",
         ].join("\n"),
         modelsOutput: OMP_MODELS_FIXTURE,
+        errors: [],
+      };
+    }
+    if (args.agentId === "codex") {
+      return {
+        installed: true,
+        versionOutput: "codex-cli 0.144.6",
+        helpOutput: "Usage: codex [OPTIONS] [PROMPT]",
+        modelsOutput: CODEX_MODELS_FIXTURE,
         errors: [],
       };
     }

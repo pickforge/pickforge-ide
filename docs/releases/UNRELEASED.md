@@ -6,6 +6,13 @@ reset this file.
 
 ## User-facing changes
 
+- The Codex agent-model picker now merges live-discovered models (`codex
+  debug models --bundled`) with the curated static table, so new Codex
+  releases can show up without a PickForge update. Curated entries keep
+  their hand-tuned labels/effort levels; a probe failure falls back to the
+  curated table only. Claude Code has no stable model-listing command, so
+  its picker stays the curated static table. Quick-launch chips are
+  unaffected — they still pin the curated cheap-model defaults.
 - OMP (Oh My Pi) native chat is now enabled by default: model catalog in the
   composer picker, honest cancel with persisted interrupted turns, and
   connector diagnostics. The `ompAgents` flag remains as an off-switch.

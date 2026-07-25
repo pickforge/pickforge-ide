@@ -146,10 +146,21 @@ const PI_AGENTS: AgentProfile[] = [
 ];
 
 /** Profiles exposed by the current build flags. The base AGENTS export remains
- * stable for native-chat callers, which only support Claude and Codex. */
+ * stable for native-chat callers, which only support Claude and Codex.
+ * Codex's models are the curated static table merged with whatever
+ * `discoverCodexModels` has found this session (see below) — every caller of
+ * `agentProfiles()` (the Settings picker, quick-launch, effort lookups) sees
+ * one merged list. */
 export function agentProfiles(): AgentProfile[] {
   return [
-    ...AGENTS,
+    ...AGENTS.map((agent) => (
+      agent.id === "codex"
+        ? profileWithDiscoveredModels(
+          agent,
+          mergeModelCatalogs("codex", agent.models, codexDiscoveredModels()),
+        )
+        : agent
+    )),
     ...(flagEnabled("ompAgents") ? OMP_AGENTS : []),
     ...PI_AGENTS,
   ];
@@ -307,6 +318,48 @@ export function ensurePiNativeCompatibility(force = false): Promise<boolean> {
   return piCompatibilityProbe;
 }
 
+// Codex model discovery (`codex debug models --bundled`) merges into the
+// curated static table so the picker/quick-launch composer see one list
+// (`agentProfiles()`), without a PickForge release per model launch. Claude
+// Code has no stable model-listing command (see `probe_spec` in
+// process_commands.rs) and is intentionally never probed here — its models
+// stay the curated static table only.
+const CODEX_MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+const [codexDiscoveredModels, setCodexDiscoveredModels] = createSignal<AgentModelOption[]>([]);
+let codexModelsCacheAt = 0;
+let codexModelsProbe: Promise<AgentModelOption[]> | null = null;
+
+/** Refreshes the discovered Codex model catalog, session-cached for
+ * `CODEX_MODEL_CATALOG_TTL_MS`. Never throws: a probe/parse failure is
+ * advisory-only and leaves the previously discovered set (or the initial
+ * empty set) untouched — `agentProfiles()`'s merge with the curated table
+ * means this never empties the picker, only forgoes newly discovered
+ * entries. Pass `force` to bypass the TTL (e.g. an explicit user refresh). */
+export function discoverCodexModels(force = false): Promise<AgentModelOption[]> {
+  const now = Date.now();
+  if (!force && now - codexModelsCacheAt < CODEX_MODEL_CATALOG_TTL_MS) {
+    return Promise.resolve(codexDiscoveredModels());
+  }
+  if (!force && codexModelsProbe) return codexModelsProbe;
+  codexModelsProbe = probeAgentCli("codex")
+    .then((probe) => {
+      if (probe.installed && probe.modelsOutput.trim()) {
+        setCodexDiscoveredModels(parseCodexModelCatalog(probe.modelsOutput));
+      }
+    })
+    .catch(() => {
+      // Advisory-only: leave the previously discovered set as-is.
+    })
+    .then(() => {
+      codexModelsCacheAt = Date.now();
+      return codexDiscoveredModels();
+    })
+    .finally(() => {
+      codexModelsProbe = null;
+    });
+  return codexModelsProbe;
+}
+
 export type NativeAgentProfile = AgentProfile & {
   id: "claudeCode" | "codex" | "omp" | "pi";
 };
@@ -407,6 +460,92 @@ export function parseOmpModelCatalog(raw: string): AgentModelOption[] {
     throw new Error("OMP returned an unsupported model catalog");
   }
   return uniqueModels(models);
+}
+
+function codexModelFromEntry(entry: unknown): AgentModelOption | null {
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const slug = record.slug;
+  if (typeof slug !== "string" || !slug) return null;
+  // "hide" visibility entries (e.g. "codex-auto-review") aren't meant for
+  // interactive model selection; only "list" (or an unspecified visibility,
+  // for forward compatibility) surfaces in the picker.
+  if (record.visibility !== undefined && record.visibility !== "list") return null;
+  const label = typeof record.display_name === "string" && record.display_name
+    ? record.display_name
+    : slug;
+  const levels = Array.isArray(record.supported_reasoning_levels)
+    ? record.supported_reasoning_levels
+    : [];
+  const efforts = levels
+    .map((level) =>
+      level && typeof level === "object" ? (level as Record<string, unknown>).effort : undefined)
+    .filter((effort): effort is string => typeof effort === "string" && effort.length > 0);
+  const defaultEffort = typeof record.default_reasoning_level === "string"
+    ? record.default_reasoning_level
+    : undefined;
+  const option: AgentModelOption = { id: slug, label };
+  if (efforts.length > 0) option.efforts = efforts;
+  if (defaultEffort && efforts.includes(defaultEffort)) option.defaultEffort = defaultEffort;
+  return option;
+}
+
+/** Parse the JSON catalog emitted by `codex debug models --bundled`, e.g.
+ * `{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol",
+ * "visibility":"list","supported_reasoning_levels":[{"effort":"low",...},
+ * ...],"default_reasoning_level":"low"},...]}`. Verified on codex-cli
+ * 0.144.6. */
+export function parseCodexModelCatalog(raw: string): AgentModelOption[] {
+  let models: AgentModelOption[] = [];
+  if (raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw) as { models?: unknown };
+      if (Array.isArray(parsed.models)) {
+        models = parsed.models
+          .map(codexModelFromEntry)
+          .filter((model): model is AgentModelOption => model !== null);
+      }
+    } catch {
+      // Falls through to the empty-catalog check below, which throws.
+    }
+  }
+  if (models.length === 0 && raw.trim()) {
+    throw new Error("Codex returned an unsupported model catalog");
+  }
+  return uniqueModels(models);
+}
+
+/** Generic effort set applied to a discovered-only model when its own
+ * catalog entry carries no per-model effort metadata (OMP/Pi today). Codex
+ * catalog entries already carry real `supported_reasoning_levels`, so this
+ * fallback rarely applies to them in practice — it exists for forward
+ * compatibility with a leaner catalog shape. */
+const GENERIC_PROVIDER_EFFORTS: Partial<Record<string, { efforts: string[]; defaultEffort: string }>> = {
+  claudeCode: { efforts: CLAUDE_EFFORTS, defaultEffort: "high" },
+  codex: { efforts: CODEX_EFFORTS, defaultEffort: "medium" },
+};
+
+/** Merge a curated static catalog with a freshly discovered one: curated
+ * entries always keep their hand-tuned label/effort metadata (a discovered
+ * entry sharing their id is dropped in favor of the curated one), and
+ * discovered-only entries are appended — with the discovered effort
+ * metadata when the source provided it, else a generic per-provider effort
+ * set. Pure so precedence/ordering/dedupe are unit-testable without IPC. */
+export function mergeModelCatalogs(
+  agentId: string,
+  curated: AgentModelOption[],
+  discovered: AgentModelOption[],
+): AgentModelOption[] {
+  const curatedIds = new Set(curated.map((model) => model.id));
+  const generic = GENERIC_PROVIDER_EFFORTS[agentId];
+  const discoveredOnly = discovered
+    .filter((model) => !curatedIds.has(model.id))
+    .map((model) => (
+      model.efforts && model.efforts.length > 0
+        ? model
+        : { ...model, efforts: generic?.efforts, defaultEffort: generic?.defaultEffort }
+    ));
+  return uniqueModels([...curated, ...discoveredOnly]);
 }
 
 function versionFromOutput(raw: string): string | null {

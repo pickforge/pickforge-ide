@@ -28,6 +28,16 @@ export function projectBranchOf(projectRoot: string): string | null | undefined 
   return branches[projectRoot];
 }
 
+// pickforge-core's `current_branch` runs `git rev-parse --abbrev-ref HEAD`,
+// which returns the literal string "HEAD" (not empty, not an error) when the
+// worktree is in detached-HEAD state — there is no branch to report. Treat
+// that the same as "no branch" rather than caching the bogus literal, so a
+// detached-HEAD project's footer stays branch-absent instead of showing the
+// word "HEAD" as if it were a real branch name.
+function normalizeBranch(branch: string | null): string | null {
+  return branch && branch !== "HEAD" ? branch : null;
+}
+
 /** Kicks off the cached branch fetch for `projectRoot`, once. Idempotent —
  *  a call while already cached (including a cached "no branch") or already
  *  in flight is a no-op, so callers (`FlatWorkCard`) can call this
@@ -36,7 +46,7 @@ export function ensureProjectBranch(projectRoot: string): void {
   if (projectRoot in branches || inFlight.has(projectRoot)) return;
   inFlight.add(projectRoot);
   void gitStatus(projectRoot)
-    .then((status) => setBranches(projectRoot, status.branch ?? null))
+    .then((status) => setBranches(projectRoot, normalizeBranch(status.branch)))
     .catch(() => setBranches(projectRoot, null))
     .finally(() => inFlight.delete(projectRoot));
 }

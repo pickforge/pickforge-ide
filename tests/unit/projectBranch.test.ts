@@ -42,6 +42,19 @@ describe("ensureProjectBranch — cached branch fetch, keyed by project root (#3
     expect(projectBranchOf("/proj/not-a-repo")).toBeNull();
   });
 
+  it("caches null for a detached HEAD, not the literal string 'HEAD' (P2 fix)", async () => {
+    // pickforge-core's current_branch is `git rev-parse --abbrev-ref HEAD`,
+    // which returns "HEAD" — not empty, not a rejection — when the worktree
+    // has no branch checked out. That must render as absent, never as a
+    // bogus "HEAD" branch name in the footer.
+    mockInvoke.mockResolvedValueOnce({ isRepo: true, branch: "HEAD", files: [] });
+
+    ensureProjectBranch("/proj/detached-head");
+    await flushPromises();
+
+    expect(projectBranchOf("/proj/detached-head")).toBeNull();
+  });
+
   it("caches null (not left undefined) when the git_status call rejects", async () => {
     mockInvoke.mockRejectedValueOnce(new Error("spawn failed"));
 

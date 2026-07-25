@@ -180,6 +180,20 @@ describe("ChangesReviewSurface — header honesty states", () => {
     mount(() => <ChangesReviewSurface branch="main" />);
     expect(root.querySelector(".pf-crs-branch")).toBeNull();
   });
+
+  it("shows a refresh error in the freshness pill instead of silently claiming up to date", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file()])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    expect(root.querySelector(".pf-crs-freshness .pf-pill")?.textContent).toBe("Up to date");
+
+    testEnv.invoke.mockRejectedValueOnce(new Error("git status timed out"));
+    await changesStore.refreshChangesReview();
+    expect(root.querySelector(".pf-crs-freshness .pf-pill")?.textContent).toBe("git status timed out");
+  });
 });
 
 describe("ChangesReviewSurface — file navigator + diff pane", () => {
@@ -343,6 +357,30 @@ describe("ChangesReviewSurface — hard states", () => {
         expect.objectContaining({ path: "x" }),
       ),
     );
+  });
+
+  // #231 PR5 review finding P3: a rename that's ALSO mode-only must not
+  // silently drop the rename fact behind a generic mode-only message.
+  it("mentions the rename source when a mode-only change is also a rename", async () => {
+    await mountWorkingTreeWithFile({ kind: "modeOnly", status: "rename", oldPath: "old-name.sh", additions: 0, deletions: 0 });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toBe(
+      "Renamed from old-name.sh — mode changed only (e.g. permissions), no content to diff.",
+    );
+  });
+
+  it("renders the honest invalid-UTF-8 notice alongside the lossily-decoded diff", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "a.rs" })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    testEnv.invoke.mockResolvedValueOnce(
+      diffFixture({ diff: "@@ -1,1 +1,1 @@\n-old\n+new �\n", available: true, invalidUtf8: true }),
+    );
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffline")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffnotice")?.textContent).toContain("invalid UTF-8");
   });
 });
 

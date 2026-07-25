@@ -314,23 +314,37 @@ pub fn classify_porcelain_status(code: &str) -> ChangeFileStatus {
     ChangeFileStatus::Modify
 }
 
-/// Joins a `--name-status -z` parse with a `--numstat -z` parse from the same
-/// diff invocation into [`ChangedFile`] rows. `staged` reflects which single
-/// invocation produced both inputs (`--cached` vs. not) — a file with both
-/// staged and unstaged changes requires the caller to merge two calls, which
-/// is a live working-tree (PR2) concern, not this pure join.
+/// Joins a `--name-status -z` parse with a `--numstat -z` parse AND a
+/// `--raw -z` parse from the same diff invocation into [`ChangedFile`] rows.
+/// `staged` reflects which single invocation produced all three inputs
+/// (`--cached` vs. not) — a file with both staged and unstaged changes
+/// requires the caller to merge two calls, which is a live working-tree
+/// (PR2) concern, not this pure join.
 ///
-/// Joins on [`DiffStatEntry::path_bytes`] / [`NameStatusEntry::path_bytes`]
-/// — the raw bytes git emitted — never on the lossily-decoded `path`
-/// `String`. Two distinct invalid-UTF-8 paths can decode to an identical
-/// lossy string; joining on that string would silently pair one file's
-/// status with a different file's stats.
+/// Joins on [`DiffStatEntry::path_bytes`] / [`NameStatusEntry::path_bytes`] /
+/// [`RawModeEntry::path_bytes`] — the raw bytes git emitted — NEVER on the
+/// lossily-decoded `path` `String`. Two distinct invalid-UTF-8 paths can
+/// decode to an identical lossy string; joining on that string would
+/// silently pair one file's status with a different file's stats (P2-3, see
+/// `merge_keys_on_raw_bytes_not_lossy_path_to_avoid_conflating_distinct_paths`)
+/// — and, since #231 PR5's review, would ALSO silently miss the raw-mode
+/// join for any non-UTF-8 path entirely: `raw_mode` was previously joined
+/// after the fact by `crate::git::working_tree::overlay_kind`, keyed off the
+/// already-lossy `ChangedFile::path` — a submodule/symlink/mode-only path
+/// with invalid UTF-8 bytes would never match and silently stay `Regular`.
+/// Joining here, while every entry's own `path_bytes` field is still in
+/// scope, closes that gap the same way the stats join already avoided it.
 pub fn merge_changed_files(
     name_status: &[NameStatusEntry],
     numstat: &[DiffStatEntry],
+    raw_mode: &[RawModeEntry],
     staged: bool,
 ) -> Vec<ChangedFile> {
     let stats_by_path: HashMap<&[u8], &DiffStatEntry> = numstat
+        .iter()
+        .map(|entry| (entry.path_bytes.as_slice(), entry))
+        .collect();
+    let raw_by_path: HashMap<&[u8], &RawModeEntry> = raw_mode
         .iter()
         .map(|entry| (entry.path_bytes.as_slice(), entry))
         .collect();
@@ -339,7 +353,8 @@ pub fn merge_changed_files(
         .iter()
         .map(|entry| {
             let stat = stats_by_path.get(entry.path_bytes.as_slice()).copied();
-            build_changed_file(entry, stat, staged)
+            let raw = raw_by_path.get(entry.path_bytes.as_slice()).copied();
+            build_changed_file(entry, stat, raw, staged)
         })
         .collect()
 }
@@ -347,6 +362,7 @@ pub fn merge_changed_files(
 fn build_changed_file(
     entry: &NameStatusEntry,
     stat: Option<&DiffStatEntry>,
+    raw: Option<&RawModeEntry>,
     staged: bool,
 ) -> ChangedFile {
     let binary = stat.is_some_and(|s| s.binary);
@@ -357,6 +373,13 @@ fn build_changed_file(
         binary,
         truncated,
     );
+    // No matching `--raw` entry (should not happen — that call covers the
+    // same diff range as the other two — but defensive, e.g. an untracked
+    // path which never appears in ANY `git diff` output) keeps the honest
+    // "can't tell" default rather than guessing.
+    let kind = raw
+        .map(|r| classify_change_file_kind(r, additions, deletions))
+        .unwrap_or(ChangeFileKind::Regular);
     ChangedFile {
         path: entry.path.clone(),
         old_path: entry
@@ -371,13 +394,7 @@ fn build_changed_file(
         binary,
         truncated,
         diff_available: true,
-        // This pure join has no file-mode information to classify from —
-        // `crate::git::working_tree::working_tree_change_set` overlays the
-        // real kind afterward from a separate `--raw` parse (see
-        // `classify_change_file_kind`/`RawModeEntry` below); a caller that
-        // never overlays anything (there is none today, but this join is a
-        // shared primitive) gets the honest "can't tell" default.
-        kind: ChangeFileKind::Regular,
+        kind,
     }
 }
 
@@ -641,15 +658,31 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
 
 /// Bounds a unified-diff body being returned to the renderer for DISPLAY —
 /// distinct from [`count_unified_diff_stat`], which bounds a body being
-/// scanned for STATS. Used by the lazy per-file diff fetch (#231 PR2, both
-/// the git-live and turn-snapshot sources): a diff big enough to blow the
-/// stat-counting bound is also too big to hand to the renderer whole.
+/// scanned for STATS. Used by the lazy per-file diff fetch (#231 PR2/PR5,
+/// both the git-live and turn-snapshot sources): a diff big enough to blow
+/// the stat-counting bound is also too big to hand to the renderer whole.
 ///
 /// Cuts at [`MAX_DIFF_BODY_BYTES`] first, walking back to the nearest UTF-8
-/// character boundary so the cut never splits a multi-byte character, then at
-/// [`MAX_DIFF_BODY_LINES`] lines (kept together with their trailing `\n` via
-/// `split_inclusive`, so re-joining the returned lines reproduces valid diff
-/// text). Either bound tripping sets the returned flag; neither ever panics
+/// character boundary so the cut never splits a multi-byte character, THEN
+/// walking back further to the last `'\n'` so the returned text never ends
+/// mid-line — critical for #231 PR5's "load more": that affordance re-fetches
+/// the FULL text and skips whole lines via [`skip_diff_lines`], so "how many
+/// lines this bounded prefix covers" and "how many whole lines to skip on the
+/// next fetch" must always agree. A mid-line byte cut would desync them —
+/// the cut line's suffix is silently dropped (skipped as part of "that
+/// line") and, when nothing textual remains after the skip, the next fetch
+/// would wrongly report `truncated: false`, making a genuinely lossy prefix
+/// look complete. The ONLY exception is a single line, on its own, already
+/// longer than [`MAX_DIFF_BODY_BYTES`] — there is no earlier line boundary to
+/// walk back to, so that one pathological case keeps a mid-line cut (a
+/// vanishingly rare shape: one diff line over 8MiB) rather than returning
+/// nothing at all.
+///
+/// After the byte cut, also bounds to [`MAX_DIFF_BODY_LINES`] lines (kept
+/// together with their trailing `\n` via `split_inclusive`, so re-joining the
+/// returned lines reproduces valid diff text — this pass never itself
+/// produces a mid-line cut, since `split_inclusive` never splits a line's own
+/// bytes). Either bound tripping sets the returned flag; neither ever panics
 /// on a pathological input (empty text, a single line longer than the byte
 /// bound, text with no trailing newline).
 pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
@@ -659,6 +692,13 @@ pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
         let mut end = MAX_DIFF_BODY_BYTES;
         while end > 0 && !text.is_char_boundary(end) {
             end -= 1;
+        }
+        // Walk back to the last line boundary within the byte-bounded
+        // prefix, keeping the newline itself — see the doc comment above.
+        // `rfind` on a `&str` searches by byte offset and is UTF-8-boundary
+        // safe regardless of where `end` landed.
+        if let Some(last_newline) = text[..end].rfind('\n') {
+            end = last_newline + 1;
         }
         &text[..end]
     } else {
@@ -975,7 +1015,7 @@ mod tests {
             binary: false,
             truncated: false,
         }];
-        let files = merge_changed_files(&statuses, &stats, true);
+        let files = merge_changed_files(&statuses, &stats, &[], true);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].additions, Some(4));
         assert_eq!(files[0].deletions, Some(1));
@@ -991,7 +1031,7 @@ mod tests {
             old_path: Some("old.txt".into()),
             status: ChangeFileStatus::Rename,
         }];
-        let files = merge_changed_files(&statuses, &[], false);
+        let files = merge_changed_files(&statuses, &[], &[], false);
         assert_eq!(files[0].old_path.as_deref(), Some("old.txt"));
         assert_eq!(files[0].unstaged, Some(true));
         assert_eq!(files[0].staged, None);
@@ -1049,7 +1089,7 @@ mod tests {
             },
         ];
 
-        let files = merge_changed_files(&statuses, &stats, true);
+        let files = merge_changed_files(&statuses, &stats, &[], true);
         assert_eq!(files.len(), 2);
         assert_eq!(
             files[0].additions,
@@ -1060,6 +1100,73 @@ mod tests {
             files[1].additions,
             Some(9),
             "second path keeps its own stats, not the first's"
+        );
+    }
+
+    #[test]
+    fn merge_keys_raw_mode_on_raw_bytes_too_a_non_utf8_submodule_path_gets_the_right_kind() {
+        // Same collision fixture as the stats test above, but exercising the
+        // THIRD (`--raw`) join (#231 PR5 review finding P2-1): an EARLIER
+        // version of this code joined raw-mode entries in a separate pass
+        // keyed off the already-lossy `ChangedFile::path`, which silently
+        // missed the join entirely for a non-UTF-8 path (both of these
+        // decode to the identical replacement-character string) — a
+        // submodule/symlink/mode-only path with invalid UTF-8 bytes would
+        // never resolve past `Regular`. Joining inside `merge_changed_files`
+        // itself, on the still-exact `path_bytes`, must get both right.
+        let path_a_bytes = [&[0xFFu8][..], b"file.txt"].concat();
+        let path_b_bytes = [&[0xFEu8][..], b"file.txt"].concat();
+        let lossy_a = String::from_utf8_lossy(&path_a_bytes).into_owned();
+        let lossy_b = String::from_utf8_lossy(&path_b_bytes).into_owned();
+        assert_eq!(
+            lossy_a, lossy_b,
+            "fixture must actually collide under lossy decoding"
+        );
+
+        let statuses = vec![
+            NameStatusEntry {
+                path: lossy_a.clone(),
+                path_bytes: path_a_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+            NameStatusEntry {
+                path: lossy_b.clone(),
+                path_bytes: path_b_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+        ];
+        let raw = vec![
+            RawModeEntry {
+                path: lossy_a.clone(),
+                path_bytes: path_a_bytes,
+                old_mode: "000000".into(),
+                new_mode: "160000".into(),
+                old_sha: "0".into(),
+                new_sha: "abc".into(),
+            },
+            RawModeEntry {
+                path: lossy_b,
+                path_bytes: path_b_bytes,
+                old_mode: "000000".into(),
+                new_mode: "120000".into(),
+                old_sha: "0".into(),
+                new_sha: "def".into(),
+            },
+        ];
+
+        let files = merge_changed_files(&statuses, &[], &raw, true);
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files[0].kind,
+            ChangeFileKind::Submodule,
+            "first path keeps its own raw-mode classification"
+        );
+        assert_eq!(
+            files[1].kind,
+            ChangeFileKind::Symlink,
+            "second path keeps its own, not the first's"
         );
     }
 
@@ -1273,6 +1380,73 @@ deadbeefdata\n";
         let (text, truncated) = bound_diff_display("");
         assert_eq!(text, "");
         assert!(!truncated);
+    }
+
+    #[test]
+    fn bound_diff_display_byte_cut_never_lands_mid_line() {
+        // Fixed 1000-byte lines: MAX_DIFF_BODY_BYTES (8*1024*1024) is not a
+        // multiple of 1000, so the raw byte cut lands mid-line unless walked
+        // back — and few enough lines (~8398) to stay well under
+        // MAX_DIFF_BODY_LINES, isolating the byte-bound path from the
+        // line-count bound.
+        let line = format!("{}\n", "x".repeat(999));
+        let lines_needed = MAX_DIFF_BODY_BYTES / line.len() + 10;
+        let mut diff = line.repeat(lines_needed);
+        diff.push_str("TAIL LINE AFTER THE CUT\n");
+
+        let (first_chunk, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(first_chunk.len() <= MAX_DIFF_BODY_BYTES);
+        assert!(
+            first_chunk.ends_with('\n'),
+            "the returned prefix must always end on a line boundary, never mid-line"
+        );
+    }
+
+    #[test]
+    fn load_more_seam_reconstructs_the_original_with_no_glued_or_dropped_line() {
+        // The full load-more round trip: bound the first chunk, count its
+        // lines the same way the client's `countDiffLines` would, skip that
+        // many lines in the FULL text (what a re-fetch does server-side),
+        // and verify concatenating the two reproduces the original text
+        // exactly — no content glued together mid-line, none silently
+        // dropped at the seam.
+        let line = format!("{}\n", "y".repeat(777));
+        let lines_needed = MAX_DIFF_BODY_BYTES / line.len() + 25;
+        let mut diff = line.repeat(lines_needed);
+        diff.push_str("+final marker line\n");
+
+        let (first_chunk, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(first_chunk.ends_with('\n'));
+
+        let already = first_chunk.matches('\n').count();
+        let remainder = skip_diff_lines(&diff, already);
+        assert_eq!(
+            format!("{first_chunk}{remainder}"),
+            diff,
+            "first chunk + remainder must reconstruct the original byte-for-byte"
+        );
+
+        // Once the remainder itself fits under the bound, a second
+        // `bound_diff_display` pass reports NOT truncated — and that claim
+        // is now honest, since nothing was lost getting here.
+        let (second_chunk, second_truncated) = bound_diff_display(remainder);
+        assert!(!second_truncated);
+        assert_eq!(second_chunk, remainder);
+    }
+
+    #[test]
+    fn bound_diff_display_keeps_a_partial_line_only_when_the_first_line_alone_exceeds_the_cap() {
+        // No newline anywhere within the byte-bounded prefix: the single
+        // pathological exception where there is no earlier line boundary to
+        // walk back to.
+        let mut diff = "x".repeat(MAX_DIFF_BODY_BYTES + 10);
+        diff.push('\n');
+        let (text, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(!text.ends_with('\n'), "the single oversized line has no boundary to cut back to");
+        assert!(text.len() <= MAX_DIFF_BODY_BYTES);
     }
 
     // ---- skip_diff_lines (#231 PR5 load-more) ----

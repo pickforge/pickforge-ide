@@ -229,8 +229,12 @@ export function toSplitRows(lines: DiffLine[]): SplitDiffRow[] {
  *  `crate::git::diff_stat::skip_diff_lines` uses server-side — so the
  *  frontend's "load more" accumulation asks for exactly the next chunk
  *  rather than off-by-one duplicating or dropping a line. A trailing
- *  partial line with no `\n` (only possible at the true end of a diff, per
- *  `bound_diff_display`'s bounding) still counts as one line. */
+ *  partial line with no `\n` counts as one line either way; in practice
+ *  `bound_diff_display` only ever RETURNS one at the true end of a diff — it
+ *  walks its byte cap back to the last line boundary specifically so a
+ *  bounded/truncated chunk always ends on a complete line (the one
+ *  vanishingly rare exception: a single diff line on its own longer than the
+ *  byte cap, where there is no earlier boundary to walk back to). */
 export function countDiffLines(text: string): number {
   if (text.length === 0) return 0;
   const newlineCount = (text.match(/\n/g) ?? []).length;

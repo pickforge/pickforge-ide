@@ -111,7 +111,14 @@ function hardStateMessage(file: ChangedFile): string | null {
     case "symlink":
       return "Symlink — this row is a link target, not diffed as text.";
     case "modeOnly":
-      return "File mode changed only (e.g. permissions) — no content to diff.";
+      // A rename that ALSO happens to be mode-only (e.g. `git mv` plus a
+      // `chmod`, with content byte-identical) still carries real rename
+      // information — say so rather than silently collapsing it into a
+      // generic mode-only message that drops which file this used to be
+      // (#231 PR5 review finding P3).
+      return file.status === "rename"
+        ? `Renamed from ${file.oldPath ?? "?"} — mode changed only (e.g. permissions), no content to diff.`
+        : "File mode changed only (e.g. permissions) — no content to diff.";
     default:
       return null;
   }

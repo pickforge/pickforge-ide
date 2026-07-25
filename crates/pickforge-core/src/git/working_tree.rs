@@ -42,14 +42,18 @@
 //! bounded call the issue's PR5 slice calls for to distinguish a submodule
 //! gitlink, a symlink, and a permissions-only change from an ordinary
 //! content change — none of those are recoverable from the two calls PR1/PR2
-//! already run. Parsed by [`diff_stat::parse_raw_z`] and classified by
-//! [`diff_stat::classify_change_file_kind`] into [`crate::changes::ChangeFileKind`],
-//! then overlaid onto the rows the numstat/name-status merge already built.
-//! An untracked path has no `git diff` output at all (same reasoning as the
-//! untracked block below), so its kind is read straight off the filesystem
-//! instead via a plain `fs::symlink_metadata` call — cheap, bounded, and
-//! reads no file content, same spirit as the rest of this module's "listing
-//! must not read file bodies" discipline.
+//! already run. Parsed by [`diff_stat::parse_raw_z`] and joined by
+//! [`diff_stat::merge_changed_files`] IN THE SAME PASS as the numstat/
+//! name-status join (not a separate post-hoc overlay keyed off the
+//! already-lossy `ChangedFile::path` — an earlier version of this code did
+//! that and silently missed the join for any non-UTF-8 path, since two
+//! distinct invalid-UTF-8 paths can collide once lossily decoded; see
+//! `merge_changed_files`'s doc comment). An untracked path has no `git diff`
+//! output at all (same reasoning as the untracked block below), so its kind
+//! is read straight off the filesystem instead via a plain
+//! `fs::symlink_metadata` call — cheap, bounded, and reads no file content,
+//! same spirit as the rest of this module's "listing must not read file
+//! bodies" discipline.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -211,24 +215,27 @@ fn staged_and_unstaged_files(top: &str) -> (Vec<ChangedFile>, bool) {
         || staged_raw_parse.truncated
         || unstaged_raw_parse.truncated;
 
-    let mut files =
-        diff_stat::merge_changed_files(&staged_name_parse.entries, &staged_num_parse.entries, true);
+    let mut files = diff_stat::merge_changed_files(
+        &staged_name_parse.entries,
+        &staged_num_parse.entries,
+        &staged_raw_parse.entries,
+        true,
+    );
     // A row from the staged merge is never itself an unstaged row — that's a
     // known `false`, not an inapplicable concept, for a git-live source (P3).
     for file in files.iter_mut() {
         file.unstaged = Some(false);
     }
-    overlay_kind(&mut files, &staged_raw_parse.entries);
 
     let mut unstaged_files = diff_stat::merge_changed_files(
         &unstaged_name_parse.entries,
         &unstaged_num_parse.entries,
+        &unstaged_raw_parse.entries,
         false,
     );
     for file in unstaged_files.iter_mut() {
         file.staged = Some(false);
     }
-    overlay_kind(&mut unstaged_files, &unstaged_raw_parse.entries);
 
     files.extend(unstaged_files);
     (files, truncated)
@@ -282,30 +289,6 @@ fn overlay_conflicts(files: &mut Vec<ChangedFile>, status: &super::GitStatus) {
     }
 }
 
-/// Sets `kind` on every row in `files` whose path has a matching
-/// [`diff_stat::RawModeEntry`] in `raw_entries` (#231 PR5), joined by exact
-/// path bytes — same rationale as `diff_stat::merge_changed_files`'s own
-/// join (two distinct invalid-UTF-8 paths can collide once lossily decoded
-/// to the same `String`). A path with no matching raw entry (should not
-/// happen — the raw call covers exactly the same diff range as the
-/// numstat/name-status calls — but defensive) keeps its already-set default.
-fn overlay_kind(files: &mut [ChangedFile], raw_entries: &[diff_stat::RawModeEntry]) {
-    let raw_by_path: HashMap<&[u8], &diff_stat::RawModeEntry> = raw_entries
-        .iter()
-        .map(|e| (e.path_bytes.as_slice(), e))
-        .collect();
-    for file in files.iter_mut() {
-        if let Some(entry) = raw_by_path.get(file.path.as_bytes()) {
-            // The mode-only check needs THIS row's own numstat-derived
-            // additions/deletions (see `classify_change_file_kind`'s doc
-            // comment) — always known-precise here since a binary/truncated
-            // row already carries `None`, which the classifier treats as
-            // "not provably zero", never as a fabricated match.
-            file.kind = diff_stat::classify_change_file_kind(entry, file.additions, file.deletions);
-        }
-    }
-}
-
 /// Reads an untracked path's [`ChangeFileKind`] straight off the filesystem
 /// (#231 PR5) — `git diff` never emits anything for an untracked path (see
 /// this module's doc comment), so there's no raw-mode record to classify
@@ -315,10 +298,65 @@ fn overlay_kind(files: &mut [ChangedFile], raw_entries: &[diff_stat::RawModeEntr
 /// [`ChangeFileKind::Regular`] on any I/O error (permissions, a race where
 /// the path vanished between `git status` and this read) — an honest "can't
 /// tell" default, not a guess.
+///
+/// `repo_relative_path` is resolved through [`resolve_repo_relative_leaf`]
+/// first — the same containment discipline [`file_diff`] gets from
+/// [`resolve_repo_relative`], adapted so it never follows the leaf itself if
+/// the leaf is a symlink (see that function's doc comment for why plain
+/// `resolve_repo_relative` can't be reused as-is here) — rather than a naive
+/// `Path::join`, even though `repo_relative_path` comes from `git status`'s
+/// own porcelain listing and so should already be repo-relative in practice
+/// (#231 PR5 review finding P2-2: this module must not have a
+/// filesystem-touching path anywhere that skips containment validation,
+/// git-sourced input or not). A rejected candidate (traversal, escape, an
+/// absolute path) falls back to the same honest `Regular` default as any
+/// other I/O failure here, never a leaked read outside the repo root.
 fn untracked_kind(repo_root: &str, repo_relative_path: &str) -> ChangeFileKind {
-    match std::fs::symlink_metadata(Path::new(repo_root).join(repo_relative_path)) {
+    let resolved = match resolve_repo_relative_leaf(Path::new(repo_root), repo_relative_path) {
+        Ok(path) => path,
+        Err(_) => return ChangeFileKind::Regular,
+    };
+    match std::fs::symlink_metadata(resolved) {
         Ok(meta) if meta.file_type().is_symlink() => ChangeFileKind::Symlink,
         _ => ChangeFileKind::Regular,
+    }
+}
+
+/// Same containment guarantee as [`resolve_repo_relative`] — no absolute
+/// path, no `..`, no escape via a symlinked ancestor DIRECTORY — but for a
+/// caller whose LEAF might itself be a symlink it wants to OBSERVE rather
+/// than follow (#231 PR5 review finding P2-2's fix). `resolve_repo_relative`
+/// canonicalizes the FULL path, which follows any symlink including the
+/// leaf's own — exactly right for a content-reading caller like [`file_diff`]
+/// (it needs the real backing location), but wrong for [`untracked_kind`]:
+/// canonicalizing a symlink leaf away resolves it to whatever it points AT,
+/// so a subsequent `symlink_metadata` call would inspect the TARGET instead
+/// of the link, and always report "not a symlink".
+///
+/// Resolves and validates only the PARENT directory chain through
+/// [`resolve_repo_relative`] (rejecting a traversal/escape/absolute
+/// candidate exactly as it does — the parent is still expected to follow
+/// directory symlinks for containment purposes, only the leaf itself is
+/// exempt), then joins the leaf's own file name onto that WITHOUT
+/// canonicalizing it.
+fn resolve_repo_relative_leaf(repo_root: &Path, candidate: &str) -> Result<PathBuf, String> {
+    if candidate.is_empty() {
+        return Err("path must not be empty".to_string());
+    }
+    let candidate_path = Path::new(candidate);
+    let file_name = candidate_path
+        .file_name()
+        .ok_or_else(|| "path has no file name component".to_string())?;
+    match candidate_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            let resolved_parent =
+                resolve_repo_relative(repo_root, &parent.to_string_lossy())?;
+            Ok(resolved_parent.join(file_name))
+        }
+        // A bare filename with no directory prefix at all — nothing to
+        // resolve above it, `repo_root` (already canonical by this
+        // function's own precondition) is the parent.
+        _ => Ok(repo_root.join(file_name)),
     }
 }
 
@@ -920,6 +958,33 @@ mod tests {
         let file = cs.files.iter().find(|f| f.path == "newlink.txt").expect("row");
         assert_eq!(file.status, ChangeFileStatus::Add);
         assert_eq!(file.kind, ChangeFileKind::Symlink);
+    }
+
+    #[test]
+    fn untracked_kind_rejects_a_traversal_shaped_path_and_never_touches_outside_the_repo() {
+        // Defensive (#231 PR5 review finding P2-2): `git status`'s own
+        // porcelain listing should never emit a `..`-shaped untracked path,
+        // but `untracked_kind` must not trust that — it goes through the
+        // same containment discipline `file_diff` uses (via
+        // `resolve_repo_relative_leaf`), not a naive `Path::join`. A secret file placed just outside the
+        // repo proves nothing outside the root is ever touched: a bug here
+        // would show up as `Symlink` if it followed the traversal to a real
+        // path, `Regular` is the only honest outcome for a rejected one.
+        let repo = init_repo("untracked-kind-traversal");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        let kind = untracked_kind(repo.to_str().unwrap(), "../../../../../../etc/passwd");
+        assert_eq!(kind, ChangeFileKind::Regular);
+    }
+
+    #[test]
+    fn untracked_kind_rejects_an_absolute_path() {
+        let repo = init_repo("untracked-kind-absolute");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        assert_eq!(untracked_kind(repo.to_str().unwrap(), "/etc/passwd"), ChangeFileKind::Regular);
     }
 
     #[cfg(unix)]

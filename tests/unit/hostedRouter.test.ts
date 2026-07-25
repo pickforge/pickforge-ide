@@ -106,6 +106,24 @@ describe("hostedRoute", () => {
     });
   });
 
+  it("reports exactly the allowlisted keys this request actually sent, not a hardcoded list", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 2 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/root";
+    env.chats = [{ chatId: "c1", title: "ci logs" }];
+    const { hostedRoute } = await loadHosted();
+
+    const withContext = await hostedRoute("open Billing");
+    expect(withContext).toMatchObject({ egressKeys: ["prompt", "project name", "chat titles"] });
+
+    // No active project or open chats this time — the same request now sends less,
+    // and the reported egress follows, rather than repeating the prior claim.
+    env.project = null;
+    env.chats = [];
+    const withoutContext = await hostedRoute("open Billing");
+    expect(withoutContext).toMatchObject({ egressKeys: ["prompt"] });
+  });
+
   it("generates a fresh idempotency key per attempt", async () => {
     env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
     const { hostedRoute } = await loadHosted();
@@ -185,6 +203,9 @@ describe("hostedRoute", () => {
       kind: "unclear",
       reason: "too vague",
       costCents: 1,
+      // No active project/chats in this test's env, so only the always-sent prompt
+      // itself is a real egress key here.
+      egressKeys: ["prompt"],
     });
   });
 

@@ -29,10 +29,21 @@ export const routerProposalSchema = z.union([
 
 export type RouterProposal = z.infer<typeof routerProposalSchema>;
 
+// egressKeys mirrors costCents: present only for a hosted route, and only ever the
+// keys that specific request actually sent (see hostedRouter.ts's egressKeysFor) — a
+// local route never sets it, so the preview shows no egress line at all rather than a
+// hardcoded claim.
 export type RouteResult =
-  | { kind: "proposal"; intent: OperatorIntent; confidence: number; latencyMs: number; costCents?: number }
-  | { kind: "unclear"; reason: string; costCents?: number }
-  | { kind: "error"; message: string; costCents?: number }
+  | {
+    kind: "proposal";
+    intent: OperatorIntent;
+    confidence: number;
+    latencyMs: number;
+    costCents?: number;
+    egressKeys?: string[];
+  }
+  | { kind: "unclear"; reason: string; costCents?: number; egressKeys?: string[] }
+  | { kind: "error"; message: string; costCents?: number; egressKeys?: string[] }
   | { kind: "unconfigured" };
 
 export type RouteOutcome = RouteResult | { kind: "needsCredits"; balance: number };

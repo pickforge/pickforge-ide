@@ -24,6 +24,9 @@ import { voiceOutputEnabled } from "./voiceSettings";
 export interface HostedRouteMeta {
   costCents: number;
   balanceCents: number | null;
+  /** Present only for a hosted route; the exact allowlisted keys THAT request sent
+   * (see hostedRouter.ts's egressKeysFor) — never a hardcoded claim. */
+  egressKeys?: string[];
 }
 
 export type DockView =
@@ -85,6 +88,12 @@ export function openBuyCredits() {
 function billedCost(routed: RouteOutcome): number | undefined {
   return routed.kind === "proposal" || routed.kind === "unclear" || routed.kind === "error"
     ? routed.costCents
+    : undefined;
+}
+
+function billedEgressKeys(routed: RouteOutcome): string[] | undefined {
+  return routed.kind === "proposal" || routed.kind === "unclear" || routed.kind === "error"
+    ? routed.egressKeys
     : undefined;
 }
 
@@ -160,7 +169,11 @@ async function submitViaRouter(text: string, provenance: OperatorProvenance): Pr
     if (cost !== undefined) await refreshCreditBalance();
     if (epoch !== requestEpoch) return;
     if (cost !== undefined) {
-      setRouteMeta({ costCents: cost, balanceCents: creditBalanceCents() });
+      setRouteMeta({
+        costCents: cost,
+        balanceCents: creditBalanceCents(),
+        egressKeys: billedEgressKeys(routed),
+      });
     }
     switch (routed.kind) {
       case "proposal":

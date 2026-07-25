@@ -323,6 +323,33 @@ describe("operatorDock store", () => {
     expect(s.operatorView()).toMatchObject({ kind: "result" });
   });
 
+  it("threads the router's reported egress keys into operatorRouteMeta", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.9,
+      latencyMs: 900,
+      costCents: 2,
+      egressKeys: ["prompt", "project name"],
+    });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project Billing" } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("open Billing");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorRouteMeta()).toEqual({
+      costCents: 2,
+      balanceCents: 148,
+      egressKeys: ["prompt", "project name"],
+    });
+  });
+
   it("surfaces the routing cost on an unclear hosted answer", async () => {
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
     deps.routeCommand.mockResolvedValue({ kind: "unclear", reason: "too vague", costCents: 1 });

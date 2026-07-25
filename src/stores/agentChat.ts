@@ -268,6 +268,8 @@ export function removeQueuedMessage(chatId: string, id: string): void {
   setChats(chatId, { queue: queue.filter((entry) => entry.id !== id) });
 }
 
+/** No production caller yet — this is the store half of the held-queue
+ *  DISCARD action landing in #357 PR 2. Delete it if that slice changes shape. */
 export function clearAgentQueue(chatId: string): void {
   const chat = chats[chatId];
   if (!flagEnabled("messageQueue") || !chat || chat.queue.length === 0) return;
@@ -2077,7 +2079,11 @@ export async function drainAgentQueue(chatId: string): Promise<void> {
   activeQueueDrainByChat.set(chatId, token);
   let drained = false;
   try {
-    await sendAgentMessage(chatId, entry.text, [...entry.images]);
+    // Only a dispatched send retires the entry. `sendAgentMessage` also
+    // resolves on paths that roll back without reaching the backend, and
+    // treating those as delivered would drop a message that never sent.
+    const sent = await sendAgentMessage(chatId, entry.text, [...entry.images]);
+    if (!sent) return;
     if ((ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId]) return;
     setChats(chatId, {
       queue: chats[chatId].queue.filter((queued) => queued.id !== entry.id),
@@ -2092,12 +2098,16 @@ export async function drainAgentQueue(chatId: string): Promise<void> {
   }
 }
 
+/** Returns true only once the message reached the backend. Some paths roll
+ *  back and resolve without dispatching, so callers that retire state on a
+ *  successful send (the queue drain) must gate on this rather than on the
+ *  promise merely settling. */
 export async function sendAgentMessage(
   chatId: string,
   text: string,
   images: string[] = [],
   options: SendAgentMessageOptions = {},
-): Promise<void> {
+): Promise<boolean> {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
   const chat = chats[chatId];
@@ -2128,7 +2138,7 @@ export async function sendAgentMessage(
         options,
         stale,
       );
-      if (!resolved) return;
+      if (!resolved) return false;
       sessionId = resolved.sessionId;
       optimisticSeq = resolved.optimisticSeq;
     }
@@ -2146,12 +2156,13 @@ export async function sendAgentMessage(
           );
         }
       }
-      return;
+      return false;
     }
     // ensureAgentChat can force a remote session onto v1 after the first
     // capability check. Gate the live state that will actually dispatch.
     assertImageInputSupported(target.chat, imageList);
     await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
+    return true;
   } catch (error) {
     if (stale()) throw error;
     rollbackFailedSend(chatId, chat, optimisticSeq, error);

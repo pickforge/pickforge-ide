@@ -13,68 +13,60 @@ function messageSummary(message: QueuedMessage): string {
 }
 
 function queuedMessageLabel(message: QueuedMessage, index: number, total: number): string {
-  const position = index === 0 ? " Sends next." : "";
-  return `Queued message ${index + 1} of ${total}: ${messageSummary(message)}. Sends when the turn ends.${position}`;
+  const next = index === 0 ? " Sends next." : "";
+  const count = message.images.length;
+  // The thumbnail strip is decorative, so attachments are invisible to a
+  // screen reader unless the label says so.
+  const images = count > 0 ? ` ${count} image${count === 1 ? "" : "s"} attached.` : "";
+  return `Queued message ${index + 1} of ${total}: ${messageSummary(message)}.${images} Sends when the turn ends.${next}`;
 }
 
-function queuedCount(count: number): string {
-  return `${count} ${count === 1 ? "message" : "messages"} queued`;
-}
-
-function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function remaining(count: number): string {
+  return count === 0 ? "none remaining" : `${count} remaining`;
 }
 
 function QueueEntry(props: {
   message: QueuedMessage;
   index: number;
   total: number;
-  removing: boolean;
   registerRemove: (id: string, element: HTMLButtonElement) => void;
   onRemove: (id: string) => void;
-  onRemoveAnimationEnd: (id: string) => void;
 }): JSX.Element {
   return (
     <li
       class="pf-chat-queue-row"
-      classList={{ "pf-chat-queue-row--removing": props.removing }}
       aria-label={queuedMessageLabel(props.message, props.index, props.total)}
-      onAnimationEnd={() => props.onRemoveAnimationEnd(props.message.id)}
     >
-      <div class="pf-chat-queue-collapse">
-        <div class="pf-chat-queue-item">
-          <Show when={props.message.images.length > 0}>
-            <div class="pf-chat-queue-thumbs" aria-hidden="true">
-              <For each={props.message.images.slice(0, MAX_THUMBNAILS)}>
-                {(image) => (
-                  <img class="pf-chat-queue-thumb" src={convertFileSrc(image)} alt="" />
-                )}
-              </For>
-              <Show when={props.message.images.length > MAX_THUMBNAILS}>
-                <span class="pf-chat-queue-thumb-more">
-                  +{props.message.images.length - MAX_THUMBNAILS}
-                </span>
-              </Show>
-            </div>
-          </Show>
-          <div class="pf-chat-queue-content">
-            <Show when={props.message.text.trim().length > 0}>
-              <span class="pf-chat-queue-text">{props.message.text}</span>
+      <div class="pf-chat-queue-item">
+        <Show when={props.message.images.length > 0}>
+          <div class="pf-chat-queue-thumbs" aria-hidden="true">
+            <For each={props.message.images.slice(0, MAX_THUMBNAILS)}>
+              {(image) => (
+                <img class="pf-chat-queue-thumb" src={convertFileSrc(image)} alt="" />
+              )}
+            </For>
+            <Show when={props.message.images.length > MAX_THUMBNAILS}>
+              <span class="pf-chat-queue-thumb-more">
+                +{props.message.images.length - MAX_THUMBNAILS}
+              </span>
             </Show>
-            <button
-              ref={(element) => {
-                props.registerRemove(props.message.id, element);
-              }}
-              type="button"
-              class="pf-chat-queue-remove"
-              aria-label={`Remove queued message ${props.index + 1}`}
-              onClick={() => props.onRemove(props.message.id)}
-            >
-              ✕
-            </button>
           </div>
+        </Show>
+        <div class="pf-chat-queue-content">
+          <Show when={props.message.text.trim().length > 0}>
+            <span class="pf-chat-queue-text">{props.message.text}</span>
+          </Show>
+          <button
+            ref={(element) => {
+              props.registerRemove(props.message.id, element);
+            }}
+            type="button"
+            class="pf-chat-queue-remove"
+            aria-label={`Remove queued message ${props.index + 1}`}
+            onClick={() => props.onRemove(props.message.id)}
+          >
+            ✕
+          </button>
         </div>
       </div>
     </li>
@@ -88,10 +80,9 @@ interface QueueDockProps {
 }
 
 export function QueueDock(props: QueueDockProps): JSX.Element {
-  const [removing, setRemoving] = createSignal<ReadonlySet<string>>(new Set());
-  const [announcement, setAnnouncement] = createSignal(queuedCount(props.messages.length));
+  const [announcement, setAnnouncement] = createSignal("");
   const removeButtons = new Map<string, HTMLButtonElement>();
-  let previousIds = props.messages.map((message) => message.id);
+  let previousIds: string[] = [];
   let manuallyRemovedId: string | null = null;
 
   createEffect(() => {
@@ -99,94 +90,74 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       previousIds = [];
       return;
     }
-    const messages = props.messages;
-    const ids = messages.map((message) => message.id);
-    if (messages.length === 0) {
+    const ids = props.messages.map((message) => message.id);
+    for (const id of removeButtons.keys()) {
+      if (!ids.includes(id)) removeButtons.delete(id);
+    }
+    if (previousIds.length === 0 && ids.length === 0) {
       previousIds = ids;
       return;
     }
-    if (previousIds.length === 0 || ids.length > previousIds.length) {
-      setAnnouncement(queuedCount(messages.length));
+    if (ids.length > previousIds.length) {
+      setAnnouncement(`${ids.length} ${ids.length === 1 ? "message" : "messages"} queued`);
     } else if (ids.length < previousIds.length) {
-      const removedManually = manuallyRemovedId !== null && !ids.includes(manuallyRemovedId);
+      const byHand = manuallyRemovedId !== null && !ids.includes(manuallyRemovedId);
       setAnnouncement(
-        removedManually
-          ? `Queued message removed, ${messages.length} remaining`
-          : `Message sent, ${messages.length} remaining`,
+        byHand
+          ? `Queued message removed, ${remaining(ids.length)}`
+          : `Message sent, ${remaining(ids.length)}`,
       );
       manuallyRemovedId = null;
     }
     previousIds = ids;
   });
 
-  const focusAfterRemoval = (id: string) => {
-    const available = props.messages.filter(
-      (message) => message.id !== id && !removing().has(message.id),
-    );
-    const removedIndex = props.messages.findIndex((message) => message.id === id);
-    const next = available.find(
-      (message) => props.messages.findIndex((candidate) => candidate.id === message.id) > removedIndex,
-    );
-    const previous = [...available].reverse().find(
-      (message) => props.messages.findIndex((candidate) => candidate.id === message.id) < removedIndex,
-    );
-    const target = next ?? previous;
-    if (target) {
-      removeButtons.get(target.id)?.focus();
-      return;
-    }
-    props.onFallbackFocus?.();
-  };
-
-  const finishRemove = (id: string) => {
-    manuallyRemovedId = id;
-    setRemoving((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
-    props.onRemove(id);
+  const focusAfterRemoval = (index: number) => {
+    const after = props.messages[index + 1];
+    const before = index > 0 ? props.messages[index - 1] : undefined;
+    const target = after ?? before;
+    const button = target ? removeButtons.get(target.id) : undefined;
+    if (button) button.focus();
+    else props.onFallbackFocus?.();
   };
 
   const remove = (id: string) => {
-    if (removing().has(id)) return;
-    focusAfterRemoval(id);
-    if (prefersReducedMotion()) {
-      finishRemove(id);
-      return;
-    }
-    setRemoving((current) => new Set(current).add(id));
+    const index = props.messages.findIndex((message) => message.id === id);
+    if (index < 0) return;
+    manuallyRemovedId = id;
+    focusAfterRemoval(index);
+    // Committed straight to the store. Deferring removal behind an exit
+    // animation would let a turn closing in that window drain the very entry
+    // the user just deleted, and a cancelled animation would strand it.
+    props.onRemove(id);
+    removeButtons.delete(id);
   };
 
   return (
-    <Show when={flagEnabled("messageQueue") && props.messages.length > 0}>
-      <section class="pf-chat-queue" role="region" aria-label="Message queue">
-        <div class="pf-chat-queue-head">QUEUED · {props.messages.length}</div>
-        {/* A live region announces its *content* changing, so the wording has
-            to be the element's text — putting it in `aria-label` on the visible
-            header would both go unspoken and override "QUEUED · n" as that
-            header's accessible name. */}
-        <span class="pf-chat-queue-live" role="status" aria-live="polite" aria-atomic="true">
-          {announcement()}
-        </span>
-        <ol class="pf-chat-queue-list">
-          <For each={props.messages}>
-            {(message, index) => (
-              <QueueEntry
-                message={message}
-                index={index()}
-                total={props.messages.length}
-                removing={removing().has(message.id)}
-                registerRemove={(id, element) => removeButtons.set(id, element)}
-                onRemove={remove}
-                onRemoveAnimationEnd={(id) => {
-                  if (removing().has(id)) finishRemove(id);
-                }}
-              />
-            )}
-          </For>
-        </ol>
-      </section>
-    </Show>
+    <>
+      {/* Always mounted: a live region that unmounts with the last entry can
+          never announce that the queue emptied. */}
+      <span class="pf-chat-queue-live" role="status" aria-live="polite" aria-atomic="true">
+        {announcement()}
+      </span>
+      <Show when={flagEnabled("messageQueue") && props.messages.length > 0}>
+        <section class="pf-chat-queue" role="region" aria-label="Message queue">
+          <div class="pf-chat-queue-head">QUEUED · {props.messages.length}</div>
+          <ol class="pf-chat-queue-list">
+            <For each={props.messages}>
+              {(message, index) => (
+                <QueueEntry
+                  message={message}
+                  index={index()}
+                  total={props.messages.length}
+                  registerRemove={(id, element) => removeButtons.set(id, element)}
+                  onRemove={remove}
+                />
+              )}
+            </For>
+          </ol>
+        </section>
+      </Show>
+    </>
   );
 }

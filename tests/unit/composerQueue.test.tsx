@@ -110,6 +110,22 @@ describe("Composer message queue keyboard behavior", () => {
     expect(editor.getAttribute("aria-label")).toBe("Queue the next message…");
   });
 
+  it("queues plain Enter on a steer-capable backend instead of steering", () => {
+    // Codex and Pi can steer, so this is the only place queue and steer
+    // collide. Enter must mean the same thing on all four backends — the
+    // protection is branch order inside dispatchSend, which a refactor can
+    // silently invert.
+    flags.messageQueue = true;
+    const { editor, onQueue, onSteer, onSend } = mount({ supportsSteer: true });
+    type(editor, "after this turn");
+
+    enter(editor);
+
+    expect(onQueue).toHaveBeenCalledWith("after this turn", undefined);
+    expect(onSteer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("does not enqueue Enter with the flag off and preserves existing steering", () => {
     const { editor, onQueue, onSteer } = mount({ supportsSteer: true });
     type(editor, "redirect now");

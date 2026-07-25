@@ -1268,15 +1268,9 @@
   list-style: none;
 }
 .pf-chat-queue-row {
-  display: grid;
-  grid-template-rows: 1fr;
   width: fit-content;
   max-width: 78%;
   animation: pf-chat-queue-rise var(--pf-dur-fast) var(--pf-ease-forge) both;
-}
-.pf-chat-queue-collapse {
-  min-height: 0;
-  overflow: hidden;
 }
 .pf-chat-queue-item {
   padding: var(--pf-space-sm) var(--pf-space-md);
@@ -1308,8 +1302,9 @@
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   border-radius: var(--pf-radius-sm);
 }
+/* --pf-text-low is ~3.7:1 on --pf-surface-1 in dark, under AA for 11px. */
 .pf-chat-queue-thumb-more {
-  color: var(--pf-text-low);
+  color: var(--pf-text-med);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-label-sm);
 }
@@ -1332,17 +1327,16 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: var(--pf-space-md);
-  height: var(--pf-space-md);
+  width: var(--pf-space-xl);
+  height: var(--pf-space-xl);
   margin: 0;
   padding: 0;
   border: none;
   border-radius: var(--pf-radius-pill);
   background: transparent;
-  color: var(--pf-text-low);
+  color: var(--pf-text-med);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-label-sm);
-  line-height: 1;
   opacity: 0;
   cursor: pointer;
   transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
@@ -1370,22 +1364,8 @@
     transform: none;
   }
 }
-@keyframes pf-chat-queue-remove {
-  from {
-    grid-template-rows: 1fr;
-    opacity: 1;
-  }
-  to {
-    grid-template-rows: 0fr;
-    opacity: 0;
-  }
-}
-.pf-chat-queue-row--removing {
-  animation: pf-chat-queue-remove var(--pf-dur-fast) var(--pf-ease-forge) both;
-}
 @media (prefers-reduced-motion: reduce) {
-  .pf-chat-queue-row,
-  .pf-chat-queue-row--removing {
+  .pf-chat-queue-row {
     animation: none;
     transform: none;
   }

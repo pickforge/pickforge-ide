@@ -2501,6 +2501,58 @@ describe("agent message queue", () => {
     expect(agentChat(chatId)?.queue).toEqual([]);
   });
 
+  it("does not replay a missed turn close after a failed drain", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "will fail");
+    enqueueAgentMessage(chatId, "must not retry");
+
+    const firstSend = deferred<null>();
+    let sends = 0;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd !== "agent_chat_send") return Promise.resolve(null);
+      sends += 1;
+      return sends === 1 ? firstSend.promise : Promise.resolve(null);
+    });
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    // A close arrives while the drain is in flight, so a replay is pending —
+    // but the drain then fails, and a failure must hold the whole queue.
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    firstSend.reject(new Error("queued send failed"));
+    await flushPromises();
+
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(1);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual([
+      "will fail",
+      "must not retry",
+    ]);
+  });
+
+  it("keeps a message queued while ensureAgentChat loads history", async () => {
+    // `preservedQueue` is dual-homed across both history paths; this pins the
+    // ensure path so reverting it there cannot pass on the hydrate test alone.
+    const chatId = nextChatId();
+    const history = deferred<AgentTimelineEntry[]>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return history.promise;
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      return Promise.resolve(null);
+    });
+
+    const promise = ensureAgentChat(chatId, "/project", "codex", null);
+    await Promise.resolve();
+    const queuedId = enqueueAgentMessage(chatId, "typed while ensuring");
+
+    history.resolve([]);
+    await promise;
+
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toEqual([queuedId]);
+  });
+
   it("keeps a message queued mid-hydration when history replaces the chat state", async () => {
     const chatId = nextChatId();
     const history = deferred<AgentTimelineEntry[]>();
@@ -2938,7 +2990,9 @@ describe("sendAgentMessage", () => {
 
     await disposeAgentChat(chatId);
     setModel.resolve(undefined);
-    await expect(sending).resolves.toBeUndefined();
+    // Reports "not dispatched" rather than merely settling, so a queue drain
+    // cannot mistake this abort for a delivered message.
+    await expect(sending).resolves.toBe(false);
 
     expect(agentChat(chatId)).toBeUndefined();
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(

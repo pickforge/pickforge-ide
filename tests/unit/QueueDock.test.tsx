@@ -39,8 +39,11 @@ describe("QueueDock", () => {
   it("renders nothing when the queue is empty", () => {
     dispose = render(() => <QueueDock messages={[]} onRemove={() => {}} />, root);
 
-    expect(root.innerHTML).toBe("");
+    // The live region stays mounted so emptying the queue can be announced;
+    // the dock itself must not render.
+    expect(root.querySelector(".pf-chat-queue")).toBeNull();
     expect(root.querySelector('[role="region"]')).toBeNull();
+    expect(root.textContent).toBe("");
   });
 
   it("renders nothing while the messageQueue flag is off", () => {
@@ -50,7 +53,41 @@ describe("QueueDock", () => {
       root,
     );
 
-    expect(root.innerHTML).toBe("");
+    expect(root.querySelector(".pf-chat-queue")).toBeNull();
+    expect(root.textContent).toBe("");
+  });
+
+  it("announces the queue emptying after the last entry leaves", () => {
+    // The live region used to unmount with the last row, so the transition
+    // that matters most — the queue draining to nothing — was silent.
+    const [messages, setMessages] = createSignal([queued("queued-1", "only")]);
+    dispose = render(
+      () => <QueueDock messages={messages()} onRemove={() => setMessages([])} />,
+      root,
+    );
+    const live = () => root.querySelector('[role="status"]')?.textContent;
+    expect(live()).toBe("1 message queued");
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Remove queued message 1"]')?.click();
+
+    expect(root.querySelector(".pf-chat-queue")).toBeNull();
+    expect(live()).toBe("Queued message removed, none remaining");
+  });
+
+  it("announces a drained message distinctly from a manual removal", () => {
+    const [messages, setMessages] = createSignal([
+      queued("queued-1", "first"),
+      queued("queued-2", "second"),
+    ]);
+    dispose = render(
+      () => <QueueDock messages={messages()} onRemove={() => {}} />,
+      root,
+    );
+
+    // The store drops the head entry when it drains — no remove click.
+    setMessages((current) => current.slice(1));
+
+    expect(root.querySelector('[role="status"]')?.textContent).toBe("Message sent, 1 remaining");
   });
 
   it("removes the selected entry and keeps the other queued message", () => {
@@ -70,9 +107,9 @@ describe("QueueDock", () => {
       '[aria-label="Remove queued message 2"]',
     );
     removeSecond?.click();
-    const collapsingRow = root.querySelector(".pf-chat-queue-row--removing");
-    collapsingRow?.dispatchEvent(new Event("animationend", { bubbles: true }));
 
+    // Removal commits straight to the store — it is never deferred behind an
+    // exit animation that a closing turn could race.
     expect(onRemove).toHaveBeenCalledWith("queued-2");
     expect(root.querySelector('[aria-label="Remove queued message 1"]')).not.toBeNull();
     expect(root.textContent).toContain("first");

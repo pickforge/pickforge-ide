@@ -1025,6 +1025,122 @@ describe("agentChat store reducer", () => {
       expect(items.every((item) => item.turnComplete)).toBe(true);
     });
 
+    it("re-defers instead of committing when a turn starts DURING the reflow's history fetch, so a just-sent message survives (#368)", async () => {
+      flags.setChangesReview(false);
+      const priorTurn: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const priorHistory = historyFromEvents(priorTurn);
+      const { chatId, emit } = await startChat(priorHistory);
+
+      // Flip mid-turn so the reflow defers to this turn's terminal event.
+      emit({ kind: "turnStarted" });
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+      flags.setChangesReview(true);
+      await flushPromises();
+
+      // Hold the deferred reflow's history fetch open. It is released by the
+      // terminal event below, and the send that follows lands inside its await
+      // window — which is exactly what a queue drain does, in the same tick.
+      const heldFetch = deferred<AgentTimelineEntry[]>();
+      let historyCallForThisChat = 0;
+      tauri.invoke.mockImplementation((cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === "agent_chat_history" && args.chatId === chatId) {
+          historyCallForThisChat += 1;
+          return historyCallForThisChat === 1 ? heldFetch.promise : Promise.resolve(priorHistory);
+        }
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        if (cmd === "agent_chat_send") return Promise.resolve();
+        return Promise.resolve(null);
+      });
+
+      emit({ kind: "turnDone", status: "completed" });
+      await flushPromises();
+      expect(historyCallForThisChat).toBe(1); // the deferred reflow is now in flight
+
+      // The drain sends: the optimistic row enters the timeline synchronously
+      // and re-opens the turn, while the reflow's fetch is still pending.
+      void sendAgentMessage(chatId, "queued follow-up");
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "userMessage", text: "queued follow-up", optimistic: true }),
+      );
+
+      // The backend has not persisted that message yet, so the in-flight
+      // history predates it. Committing this would wipe the row.
+      heldFetch.resolve(priorHistory);
+      await flushPromises();
+
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "userMessage", text: "queued follow-up", optimistic: true }),
+      );
+      // Deferred, not retried — an immediate re-fetch would also end at 2 below.
+      expect(historyCallForThisChat).toBe(1);
+
+      // Re-deferred, not dropped: the next terminal event runs it for real.
+      emit({ kind: "turnDone", status: "completed" });
+      await flushPromises();
+      expect(historyCallForThisChat).toBe(2);
+    });
+
+    it("survives the real queue drain: a message queued at flip is not wiped when the turn closes (#368)", async () => {
+      // The issue's literal repro. The reflow and the drain both start on the
+      // same terminal event — `trackTurnLifecycle` releases the deferred
+      // reflow, then `drainAgentQueue` sends — so the drain's optimistic row
+      // lands inside the reflow's history fetch deterministically, at
+      // same-tick speed rather than human speed.
+      flags.setChangesReview(false);
+      flags.messageQueue = true;
+      const priorTurn: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const priorHistory = historyFromEvents(priorTurn);
+      const { chatId, emit } = await startChat(priorHistory);
+
+      emit({ kind: "turnStarted" });
+      flags.setChangesReview(true);
+      await flushPromises();
+
+      enqueueAgentMessage(chatId, "drained follow-up");
+      expect(agentChat(chatId)?.queue).toHaveLength(1);
+
+      const heldFetch = deferred<AgentTimelineEntry[]>();
+      let historyCallForThisChat = 0;
+      tauri.invoke.mockImplementation((cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === "agent_chat_history" && args.chatId === chatId) {
+          historyCallForThisChat += 1;
+          return historyCallForThisChat === 1 ? heldFetch.promise : Promise.resolve(priorHistory);
+        }
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        if (cmd === "agent_chat_send") return Promise.resolve();
+        return Promise.resolve(null);
+      });
+
+      emit({ kind: "turnDone", status: "completed" });
+      await flushPromises();
+
+      // The drain ran and re-opened the turn while the reflow is still fetching.
+      expect(agentChat(chatId)?.queue).toHaveLength(0);
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "userMessage", text: "drained follow-up" }),
+      );
+
+      heldFetch.resolve(priorHistory);
+      await flushPromises();
+
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "userMessage", text: "drained follow-up" }),
+      );
+      // Deferred, not retried: the fetch resolving must not kick off another.
+      expect(historyCallForThisChat).toBe(1);
+
+      flags.messageQueue = false;
+    });
+
     it("clears a chat's pending reflow on disposal, so a reused chatId never inherits a stale pending flag", async () => {
       flags.setChangesReview(false);
       mockInvoke([]);

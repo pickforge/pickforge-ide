@@ -1269,6 +1269,19 @@ mod tests {
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
+    #[cfg(unix)]
+    fn supervisor_has_watchdog(supervisor_pid: i32, payload_pid: i32) -> bool {
+        let Ok(output) = Command::new("ps").args(["-axo", "pid=,ppid="]).output() else {
+            return false;
+        };
+        String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next().and_then(|value| value.parse::<i32>().ok());
+            let parent = fields.next().and_then(|value| value.parse::<i32>().ok());
+            parent == Some(supervisor_pid) && pid.is_some_and(|pid| pid != payload_pid)
+        })
+    }
+
     #[test]
     fn launch_uses_encoded_payload_and_record_protocol_is_redacted() {
         let hostile = "say 'hello' $HOME `uname` secret-prompt";
@@ -1537,18 +1550,25 @@ assert not m.establish_payload_group(42)"#;
         if !python3_available() { return; }
         let mut supervisor = LocalSupervisor::launch(
             "trap '' TERM; while :; do sleep 1; done".to_string(),
-            2.0,
+            10.0,
         );
-        wait_until(Duration::from_secs(3), || {
-            supervisor.state_path().exists()
-                && supervisor.state()["payload_pid"].as_i64().is_some()
+        let supervisor_pid = supervisor.child.id() as i32;
+        wait_until(Duration::from_secs(8), || {
+            if !supervisor.state_path().exists() {
+                return false;
+            }
+            let Some(payload_pid) = supervisor.state()["payload_pid"].as_i64() else {
+                return false;
+            };
+            supervisor_has_watchdog(supervisor_pid, payload_pid as i32)
         });
         let payload_pid = supervisor.state()["payload_pid"].as_i64().unwrap() as i32;
+        supervisor.control("beat", 2.0);
         unsafe {
-            libc::kill(supervisor.child.id() as i32, libc::SIGKILL);
+            libc::kill(supervisor_pid, libc::SIGKILL);
         }
         let _ = supervisor.child.wait();
-        wait_until(Duration::from_secs(10), || {
+        wait_until(Duration::from_secs(15), || {
             !process_exists(payload_pid) && !supervisor.state_path().exists()
         });
         let _ = std::fs::remove_dir_all(&supervisor.root);

@@ -91,6 +91,7 @@ import {
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import {
   type CardVisualState,
+  chatActivityMs,
   chatCardVisualState,
   shortRelTime,
   sortFlatChats,
@@ -1269,9 +1270,14 @@ const NewChatProjectMenu = (props: { ctrl: ProjectsPaneController }) => (
   </>
 );
 
-// One-liner row for quiet chats (#306 PR1). PR2 moved the rich work-card
-// visuals for busy/needs-you/just-finished to FlatWorkCard below, so every
-// chat reaching this renderer is quiet — no state prop to branch on anymore.
+// Two-line row for quiet chats (#306 PR1, #331 layout pass). PR2 moved the
+// rich work-card visuals for busy/needs-you/just-finished to FlatWorkCard
+// below, so every chat reaching this renderer is quiet — no state prop to
+// branch on anymore. OWNER DEVIATION from the approved sample's one-line
+// quiet rows (#331): title gets its own line, with harness mark · project ·
+// relative time as a second, quieter meta line below it — the sample's
+// single line reads too cramped once the app's full title lengths and
+// project names are in play.
 const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
   const ctrl = props.ctrl;
   const id = props.chat.chatId;
@@ -1285,37 +1291,41 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
       onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
     >
       <span class="pf-flat-dot" />
-      <Show
-        when={ctrl.renaming() === id}
-        fallback={
-          <span class="pf-flat-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
-            {chatTitleOverride(id) ?? props.chat.title}
-          </span>
-        }
-      >
-        <RenameField
-          ctrl={ctrl}
-          value={props.chat.title}
-          commit={(v) => {
-            if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
-            void renameChat(id, v);
-          }}
-        />
-      </Show>
-      <Show when={props.chat.kind === "agent"}>
-        <span
-          class="pf-flat-mark"
-          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+      <div class="pf-flat-row-lines">
+        <Show
+          when={ctrl.renaming() === id}
+          fallback={
+            <span class="pf-flat-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
+              {chatTitleOverride(id) ?? props.chat.title}
+            </span>
+          }
         >
-          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
-            {(icon) => icon()()}
+          <RenameField
+            ctrl={ctrl}
+            value={props.chat.title}
+            commit={(v) => {
+              if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+              void renameChat(id, v);
+            }}
+          />
+        </Show>
+        <span class="pf-flat-row-meta-line">
+          <Show when={props.chat.kind === "agent"}>
+            <span
+              class="pf-flat-mark"
+              title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+              aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+            >
+              <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+                {(icon) => icon()()}
+              </Show>
+            </span>
           </Show>
+          <span class="pf-flat-meta">
+            {project()?.displayName ?? "—"} · {shortRelTime(chatActivityMs(props.chat))}
+          </span>
         </span>
-      </Show>
-      <span class="pf-flat-meta">
-        {project()?.displayName ?? "—"} · {shortRelTime(props.chat.lastActivityAt)}
-      </span>
+      </div>
       <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
         <IconMore size={14} />
       </button>
@@ -1467,7 +1477,7 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
           </span>
         </Show>
         <span class="pf-work-card-project">{project()?.displayName ?? "—"}</span>
-        <span class="pf-work-card-when">{shortRelTime(props.chat.lastActivityAt)}</span>
+        <span class="pf-work-card-when">{shortRelTime(chatActivityMs(props.chat))}</span>
         <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
           <IconMore size={14} />
         </button>
@@ -1537,7 +1547,9 @@ const FlatChatList = (props: { ctrl: ProjectsPaneController }) => {
           <div class="pf-flat-quiet-divider">
             <span>quiet · {quiet().length}</span>
           </div>
-          <For each={quiet()}>{(chat) => <FlatChatRow ctrl={ctrl} chat={chat} />}</For>
+          <div class="pf-flat-quiet-list">
+            <For each={quiet()}>{(chat) => <FlatChatRow ctrl={ctrl} chat={chat} />}</For>
+          </div>
         </Show>
       </Show>
     </div>

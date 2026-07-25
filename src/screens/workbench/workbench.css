@@ -3063,12 +3063,24 @@ body.pf-resizing .pf-dc-resizer-grip {
   height: var(--pf-hairline-width);
   background: var(--pf-hairline);
 }
+/* Quiet rows sit further apart than the tight 2px used between a live card
+   and the divider — OWNER DEVIATION two-line rows (below) read cramped at
+   the list's default rhythm, so the quiet tail gets its own, roomier gap. */
+.pf-flat-quiet-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
 
+/* Two-line quiet row (#331 OWNER DEVIATION from the approved sample's single
+   line): title on its own line, harness mark · project · relative time as a
+   quieter second line below it. Taller and more vertically spaced than the
+   sample's one-liner on purpose — see pf-flat-quiet-list above. */
 .pf-flat-row {
   display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
-  padding: var(--pf-space-xs) var(--pf-space-sm);
+  padding: var(--pf-space-sm);
   border-radius: var(--pf-radius-sm);
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-med);
@@ -3085,25 +3097,6 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-hi);
   box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
-.pf-flat-row--busy:not(.active) {
-  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
-  box-shadow: inset var(--pf-bracket-width) 0 0 color-mix(in srgb, var(--pf-ember) 58%, transparent);
-}
-.pf-flat-row--busy:not(.active):hover {
-  background: color-mix(in srgb, var(--pf-ember) 12%, var(--pf-item-fill));
-}
-.pf-flat-row--attention {
-  background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-1));
-  color: var(--pf-text-hi);
-  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
-  animation: pf-chat-attention var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
-}
-.pf-flat-row--attention:hover {
-  background: color-mix(in srgb, var(--pf-warning) 22%, var(--pf-surface-2));
-}
-@media (prefers-reduced-motion: reduce) {
-  .pf-flat-row--attention { animation: none; }
-}
 .pf-flat-dot {
   width: 5px;
   height: 5px;
@@ -3114,20 +3107,24 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-flat-row.active .pf-flat-dot {
   background: var(--pf-text-hi);
 }
-.pf-flat-row--busy .pf-flat-dot {
-  background: var(--pf-ember);
-  box-shadow: var(--pf-glow-ember-soft);
-}
-.pf-flat-row--attention .pf-flat-dot {
-  background: var(--pf-warning);
-  box-shadow: 0 0 var(--pf-space-md) color-mix(in srgb, var(--pf-warning) 70%, transparent);
+.pf-flat-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
 }
 .pf-flat-title {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.pf-flat-row-meta-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  min-width: 0;
 }
 .pf-flat-mark {
   display: inline-flex;
@@ -3147,6 +3144,8 @@ body.pf-resizing .pf-dc-resizer-grip {
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-text-low);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pf-flat-row .pf-rail-row-action {
   opacity: 0;
@@ -3218,9 +3217,14 @@ body.pf-resizing .pf-dc-resizer-grip {
   border-color: color-mix(in srgb, var(--pf-ember) 55%, transparent);
 }
 /* needs-you drops the border in favor of the bracket corners below — the
-   card frame is either a hairline/ember border OR brackets, never both. */
+   card frame is either a hairline/ember border OR brackets, never both. The
+   sample's bracket-framed cards also draw a tighter radius than the plain
+   hairline/ember card (4px vs. 10px) so the corners read as a distinct
+   frame, not a rounded card with marks stuck on; --pf-radius-sm (6px) is the
+   closest token to that intent. */
 .pf-work-card--needsyou {
   border-color: transparent;
+  border-radius: var(--pf-radius-sm);
   background: color-mix(in srgb, var(--pf-warning) 9%, var(--pf-surface-2));
 }
 /* Linger (#306 PR2 design latitude): a just-finished card is neither working

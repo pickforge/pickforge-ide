@@ -216,7 +216,7 @@ describe("chatActivity — attention only for unseen output", () => {
     expect(sound.playAttentionSound).not.toHaveBeenCalled();
   });
 
-  it("clears attention when the chat becomes active", () => {
+  it("does NOT clear attention just from opening the chat (#331)", () => {
     const id = seed();
     setActiveChatForActivity("other-chat");
 
@@ -224,9 +224,13 @@ describe("chatActivity — attention only for unseen output", () => {
     expect(chatAttention(id)).toBe(true);
     expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
 
+    // Merely opening/viewing a needs-you chat must never silently demote it
+    // back to quiet mid-glance — it stays needs-you until the user actually
+    // acts (see the "structured agent chat turns" describe block below) or
+    // an explicit dismissal, neither of which happened here.
     setActiveChatForActivity(id);
 
-    expect(chatAttention(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
   });
 
   it("gates bell and notification attention to the agent-owned pane", () => {
@@ -262,7 +266,7 @@ describe("chatActivity — attention survives output; window focus", () => {
     expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
   });
 
-  it("alerts for the ACTIVE chat while the window is unfocused", () => {
+  it("alerts for the ACTIVE chat while the window is unfocused, and refocusing does not clear it (#331)", () => {
     const id = seed();
     setActiveChatForActivity(id);
     setWindowFocusForActivity(false);
@@ -272,9 +276,12 @@ describe("chatActivity — attention survives output; window focus", () => {
     expect(chatAttention(id)).toBe(true);
     expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
 
-    setWindowFocusForActivity(true); // coming back to the window catches up
+    // Coming back to the window is just looking, not acting — a needs-you
+    // chat must stay needs-you through a refocus, the same as through the
+    // user opening it (see the "does NOT clear attention" test above).
+    setWindowFocusForActivity(true);
 
-    expect(chatAttention(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
   });
 
   it("treats output streamed into the active chat of a blurred window as unseen", () => {
@@ -406,7 +413,7 @@ describe("chatActivity — structured agent chat turns", () => {
     expect(sound.playAttentionSound).not.toHaveBeenCalled();
   });
 
-  it("clears attention when the agent chat becomes active", () => {
+  it("does NOT clear attention just from the agent chat becoming active (#331)", () => {
     const id = seed(null);
     setActiveChatForActivity("other-chat");
 
@@ -414,7 +421,12 @@ describe("chatActivity — structured agent chat turns", () => {
     agentTurnDone(id);
     expect(chatAttention(id)).toBe(true);
 
-    setActiveChatForActivity(id);
+    setActiveChatForActivity(id); // opening it is just looking
+    expect(chatAttention(id)).toBe(true);
+
+    // Sending another message — a fresh turn — is the user actually acting,
+    // and that's what resolves the standing needs-you.
+    agentTurnStarted(id);
     expect(chatAttention(id)).toBe(false);
   });
 
@@ -485,7 +497,7 @@ describe("chatActivity — staged orchestra chats", () => {
     expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
   });
 
-  it("clears existing attention when a focused window stages the chat", () => {
+  it("does NOT clear existing attention just from a focused window staging the chat (#331)", () => {
     const id = seed(null);
     setActiveChatForActivity("other-chat");
 
@@ -493,9 +505,9 @@ describe("chatActivity — staged orchestra chats", () => {
     agentTurnDone(id);
     expect(chatAttention(id)).toBe(true);
 
-    setStagedChatsForActivity([id]);
+    setStagedChatsForActivity([id]); // staging it on screen is still just looking
 
-    expect(chatAttention(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
     expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
   });
 });
@@ -567,12 +579,12 @@ describe("chatActivity — justFinished linger (#306 PR2)", () => {
     expect(chatJustFinished(id)).toBe(false);
   });
 
-  it("does not start a linger just from the user opening a needs-you chat", () => {
-    // Mirrors the existing lastActivityMs exclusion exactly: clearing
-    // attention because the user looked (markChatSeen) is not real
-    // chat-driven activity, so it must not start a card linger any more than
-    // it should bump the sort timestamp — the user is already looking at it,
-    // there's nothing to catch on a glance.
+  it("does not start a linger just from the user opening a needs-you chat (#331)", () => {
+    // Opening a needs-you chat (markChatSeen) is not real chat-driven
+    // activity — it doesn't bump the sort timestamp, doesn't start a card
+    // linger, and (#331) doesn't even clear the standing attention flag: the
+    // chat stays needs-you, in the live section, exactly as it was before
+    // the user looked.
     const id = seed(null);
     setActiveChatForActivity("other-chat");
 
@@ -581,9 +593,9 @@ describe("chatActivity — justFinished linger (#306 PR2)", () => {
     expect(chatAttention(id)).toBe(true);
     expect(chatJustFinished(id)).toBe(false); // still live (needs-you), not finished yet
 
-    setActiveChatForActivity(id); // the user opens it, clearing attention
+    setActiveChatForActivity(id); // the user opens it — merely looking
 
-    expect(chatAttention(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
     expect(chatJustFinished(id)).toBe(false);
   });
 

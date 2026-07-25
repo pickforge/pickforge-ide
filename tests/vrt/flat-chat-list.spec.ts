@@ -172,11 +172,12 @@ test("flatChatList: bracket L-corners appear only on the needs-you card", async 
 // #306 PR2 review (P2): showBracket previously also depended on
 // active/staged, so a needs-you chat you'd just opened (or staged onto the
 // orchestra board) silently lost its L-corners — a needs-you card must
-// ALWAYS get the bracket, focus/stage never suppress it. Blurring the
-// window first keeps the fixture's chat genuinely needsYou (attention only
-// clears via markChatSeen while the window is focused — see
-// chatActivity.ts), so "active" here is a real reachable state, not a
-// contradiction.
+// ALWAYS get the bracket, focus/stage never suppress it. The blur here is
+// belt-and-suspenders, not load-bearing: since #331, merely opening/staging
+// a needs-you chat never clears its attention at all (only sending a
+// message / answering a permission prompt does — see chatActivity.ts), so
+// "active" is a real reachable state regardless; blurring first just also
+// covers the pre-#331 window-focus path for good measure.
 test("flatChatList: bracket L-corners survive on an ACTIVE needs-you card (P2 fix)", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));

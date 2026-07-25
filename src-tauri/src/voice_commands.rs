@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pickforge_core::{
-    voice_availability, VoiceAvailability, VoiceEvent, VoiceSessionManager, VoiceStartRequest,
+    voice_availability, SpeakEvent, SpeechSessionManager, VoiceAvailability, VoiceEvent,
+    VoiceSessionManager, VoiceStartRequest,
 };
 use tauri::ipc::Channel;
 use tauri::State;
@@ -77,4 +78,42 @@ pub async fn voice_status(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+/// Ember talk-back: speak `text` via local OS TTS. Mirrors `voice_start`'s
+/// shape — spawns in the background and returns a session id immediately;
+/// `on_event` carries started/finished/error as the utterance settles.
+#[tauri::command]
+pub async fn voice_speak(
+    manager: State<'_, Arc<SpeechSessionManager>>,
+    text: String,
+    on_event: Channel<SpeakEvent>,
+) -> Result<String, String> {
+    let manager = Arc::clone(manager.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .speak(&text, move |event: SpeakEvent| {
+                let _ = on_event.send(event);
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Barge-in: hard-kill an in-flight utterance. Idempotent — cancelling an
+/// already-finished or unknown session is not an error.
+#[tauri::command]
+pub async fn voice_speak_cancel(
+    manager: State<'_, Arc<SpeechSessionManager>>,
+    session_id: String,
+) -> Result<(), String> {
+    let manager = Arc::clone(manager.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .cancel(&session_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

@@ -31,11 +31,12 @@ export function projectBranchOf(projectRoot: string): string | null | undefined 
 // pickforge-core's `current_branch` runs `git rev-parse --abbrev-ref HEAD`,
 // which returns the literal string "HEAD" (not empty, not an error) when the
 // worktree is in detached-HEAD state — there is no branch to report. Treat
-// that the same as "no branch" rather than caching the bogus literal, so a
-// detached-HEAD project's footer stays branch-absent instead of showing the
-// word "HEAD" as if it were a real branch name.
+// that, and a blank/whitespace-only result, the same as "no branch" rather
+// than caching a bogus or empty literal — a detached-HEAD project's footer
+// stays branch-absent instead of showing "HEAD" or a blank chip.
 function normalizeBranch(branch: string | null): string | null {
-  return branch && branch !== "HEAD" ? branch : null;
+  const trimmed = branch?.trim() ?? "";
+  return trimmed && trimmed !== "HEAD" ? trimmed : null;
 }
 
 /** Kicks off the cached branch fetch for `projectRoot`, once. Idempotent —

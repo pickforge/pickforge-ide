@@ -55,6 +55,15 @@ describe("ensureProjectBranch — cached branch fetch, keyed by project root (#3
     expect(projectBranchOf("/proj/detached-head")).toBeNull();
   });
 
+  it("caches null for a blank/whitespace-only branch, never a blank chip", async () => {
+    mockInvoke.mockResolvedValueOnce({ isRepo: true, branch: "   ", files: [] });
+
+    ensureProjectBranch("/proj/blank-branch");
+    await flushPromises();
+
+    expect(projectBranchOf("/proj/blank-branch")).toBeNull();
+  });
+
   it("caches null (not left undefined) when the git_status call rejects", async () => {
     mockInvoke.mockRejectedValueOnce(new Error("spawn failed"));
 

@@ -37,7 +37,7 @@ import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { notifyChangesReviewTurnCompleted } from "./changes";
-import { flagEnabled } from "./flags";
+import { flagEnabled, subscribeToFlagChanges } from "./flags";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 import { remotePtyFor } from "../lib/remoteContext";
@@ -154,7 +154,15 @@ export interface AgentChatState {
   /** Next ordinal a newly-opened change-receipt group will receive. Seeded to
    *  0 and only ever incremented when a turn WITH file changes closes — a
    *  turn with none never opens a group, so it never consumes an ordinal
-   *  either, keeping this in lockstep with `changes_list_turn_change_sets`. */
+   *  either, keeping this in lockstep with `changes_list_turn_change_sets`.
+   *  This alignment is only valid while the fold that produced these ordinals
+   *  matches the CURRENT `changesReview` flag value — `reflowChangesReceiptFold`
+   *  re-derives it (and every ordinal) from scratch on every flag flip, so
+   *  fold-vs-flag agreement holds by construction, not by luck. Caveat: this
+   *  also assumes `TurnStarted` is never persisted server-side (see
+   *  `crates/.../changes/turn.rs`'s `decode_timeline_events` doc comment,
+   *  ~lines 12-13) — if that ever changes, the backend fold could emit an
+   *  empty turn slot this ordinal scheme doesn't currently account for. */
   nextChangesReceiptOrdinal: number;
 }
 
@@ -1167,6 +1175,65 @@ function stateFromHistory(
   nextSeqByChat.set(chatId, maxSeq + 1);
   return chat;
 }
+
+/** Re-derives `timeline` (and the change-receipt fold state riding on it —
+ *  `openChangesReceiptItemId`/`nextChangesReceiptOrdinal`) from persisted
+ *  history for an already-hydrated chat, WITHOUT touching live session
+ *  identity (`sessionId`/`turnActive`/`approvals`/...). Used when the
+ *  `changesReview` flag flips (#231 PR3 review fix): the fold's shape
+ *  (grouped-by-turn vs raw-per-event) depends on that flag, so a flip must
+ *  re-fold every already-loaded chat immediately — otherwise a chat hydrated
+ *  before the flip keeps stale ordinals (mis-indexing `changes_list_turn_change_sets`
+ *  once the flag is on) or a stale grouped shape (once the flag is off).
+ *
+ * Deliberately NOT `hydrateAgentChatHistory`: that function early-returns
+ * once a session is live (`sessionId` set), which is exactly the common case
+ * here (a chat already mid-conversation when the flag flips). This reuses
+ * the same underlying fetch-and-fold primitives (`agentChatHistory` +
+ * `stateFromHistory`) `hydrateAgentChatHistory`/`ensureAgentChat` are built
+ * from, guarded the same way (bump `ensureGenerations`, drop any pending
+ * `hydratePromises` entry) so a stale in-flight ensure/hydrate/retry for this
+ * chat recognizes it's superseded and a rapid double-flip only ever commits
+ * its LAST re-fold. */
+async function reflowChangesReceiptFold(chatId: string): Promise<void> {
+  const chat = chats[chatId];
+  if (!chat || !chat.historyLoaded) return;
+
+  const generation = (ensureGenerations.get(chatId) ?? 0) + 1;
+  ensureGenerations.set(chatId, generation);
+  hydratePromises.delete(chatId);
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
+
+  let history: AgentTimelineEntry[];
+  try {
+    history = await agentChatHistory(chatId);
+  } catch {
+    return; // best-effort — a failed re-fold just leaves the previous fold in place
+  }
+  if (stale()) return;
+
+  const current = chats[chatId];
+  const loaded = stateFromHistory(chatId, current.provider, current.model, current.engine, history);
+  setChats(chatId, {
+    timeline: loaded.timeline,
+    openChangesReceiptItemId: loaded.openChangesReceiptItemId,
+    nextChangesReceiptOrdinal: loaded.nextChangesReceiptOrdinal,
+  });
+}
+
+// Re-fold every already-hydrated chat whenever `changesReview` actually
+// CHANGES value (either edge) — `subscribeToFlagChanges` fires on any flag
+// flip, so this snapshot-compares just the one flag it cares about rather
+// than reflowing on unrelated Settings changes.
+let lastChangesReviewFlagValue = flagEnabled("changesReview");
+subscribeToFlagChanges(() => {
+  const next = flagEnabled("changesReview");
+  if (next === lastChangesReviewFlagValue) return;
+  lastChangesReviewFlagValue = next;
+  for (const chatId of Object.keys(chats)) {
+    void reflowChangesReceiptFold(chatId);
+  }
+});
 
 /**
  * A chatId with no live entry in `chats` yet may still be a chat that

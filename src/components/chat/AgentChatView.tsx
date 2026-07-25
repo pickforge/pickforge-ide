@@ -3,6 +3,7 @@ import {
   Show,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   onCleanup,
   onMount,
@@ -39,7 +40,9 @@ import { loadAgentModes, setAgentMode } from "../../lib/agentModes";
 import { startSwarm, swarmRuns } from "../../stores/swarm";
 import { loadAgentEngine } from "../../lib/chatDefaults";
 import { parseSwarmCommand } from "../../lib/swarmCommand";
-import { ChatTimeline } from "./ChatTimeline";
+import { ChatTimeline, type ChangesReceiptSource } from "./ChatTimeline";
+import { changesListTurnChangeSets, type ChangeSet } from "../../lib/changes";
+import { flagEnabled } from "../../stores/flags";
 import { SwarmRunCard } from "./SwarmRunCard";
 import { Composer } from "./Composer";
 import { ImageLightbox } from "./ImageLightbox";
@@ -218,6 +221,40 @@ export function AgentChatView(props: {
     if (!supported.includes(current)) setAgentChatEffort(props.chatId, "");
   });
 
+  // #231 PR3: the chat receipt's data source. `changes_list_turn_change_sets`
+  // re-decodes the chat's whole persisted timeline, so it's fetched ONCE per
+  // chat here (not once per receipt) and resolved by turn ordinal — see
+  // `AgentTimelineItem`'s `fileChange.ordinal` doc comment for why that
+  // ordinal lines up 1:1 with this array's order. Refetches when a turn with
+  // file changes closes (the completed-receipt count changing is the
+  // signal); `chatId`/`state()?.historyLoaded` guard against firing before
+  // there's a real target and against redundant identical fetches from
+  // unrelated reactive churn.
+  const completedChangesReceiptCount = createMemo(
+    () =>
+      (state()?.timeline ?? []).filter((item) => item.type === "fileChange" && item.turnComplete)
+        .length,
+  );
+  // Flag off (#231 `changesReview`, default off): the source stays null
+  // forever, so this resource never fetches -- no `changes_list_turn_change_sets`
+  // call happens at all, matching the "no receipt, no fetch" gating contract.
+  const [changesReceiptSets] = createResource(
+    () =>
+      flagEnabled("changesReview") && state()?.historyLoaded
+        ? `${props.chatId}::${props.projectRoot}::${completedChangesReceiptCount()}`
+        : null,
+    () => changesListTurnChangeSets(props.chatId, props.projectRoot),
+  );
+  const changesReceipts: ChangesReceiptSource = {
+    // A resource's call accessor RE-THROWS a stored fetch error (Solid's
+    // Suspense/ErrorBoundary contract) — this reads it via `.latest` instead,
+    // which never throws, so a failed fetch degrades the receipt to its
+    // "error" status instead of taking down the whole chat view.
+    changeSetAt: (ordinal: number): ChangeSet | undefined => changesReceiptSets.latest?.[ordinal],
+    loading: () => changesReceiptSets.loading,
+    error: () => changesReceiptSets.error !== undefined,
+  };
+
   // The turn is running but nothing is streaming yet (or between tool calls):
   // show the working row instantly instead of a silent, frozen timeline.
   const awaitingOutput = () => {
@@ -235,6 +272,8 @@ export function AgentChatView(props: {
         items={state()?.timeline ?? []}
         working={awaitingOutput()}
         chatId={props.chatId}
+        projectRoot={props.projectRoot}
+        changesReceipts={changesReceipts}
       />
       <Show when={visibleSwarms().length > 0}>
         <div class="pf-chat-swarm-dock">

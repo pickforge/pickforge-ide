@@ -71,6 +71,10 @@ export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
     case "command":
       return item.outputTail ? 116 : 96;
     case "fileChange":
+      // A completed turn renders the compact, collapsed-by-default receipt
+      // (#231 PR3) instead of the raw per-file card, so its estimate is a
+      // small fixed header height rather than growing with file count.
+      if (item.turnComplete) return 56;
       // No cap: like estimateTextHeight, this feeds visibility culling for
       // unmeasured rows, so undercounting a many-file batch could drop its lower
       // files from the visible set until it mounts.

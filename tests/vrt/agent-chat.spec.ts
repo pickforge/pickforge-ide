@@ -3,6 +3,8 @@ import { test, expect } from "@playwright/test";
 test("agent chat fixture", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    // #231 PR3 renders behind the default-off `changesReview` flag.
+    localStorage.setItem("pickforge.flags", JSON.stringify({ changesReview: true }));
   });
 
   await page.goto("/#/workbench");
@@ -24,6 +26,34 @@ test("agent chat fixture", async ({ page }) => {
   await expect(pinButton).toHaveAttribute("aria-pressed", "true");
   await pinButton.click();
   await expect(pinButton).toHaveAttribute("aria-pressed", "false");
+
+  // #231 PR3: the completed turn's file changes render as one compact,
+  // collapsed-by-default receipt instead of a raw inline diff card. The
+  // fixture's two files both carry no diff body, so their line counts are
+  // honestly unknown — never a fabricated "+0 −0" per file.
+  const receipt = page.locator(".pf-chat-receipt");
+  await expect(receipt.locator(".pf-chat-meta").first()).toHaveText("2 files changed");
+  await expect(receipt.locator(".pf-chat-receipt-stat--add")).toHaveText("+0");
+  await expect(receipt.locator(".pf-chat-receipt-stat--del")).toHaveText("−0");
+  await expect(receipt.locator(".pf-chat-receipt-unknown-flag")).toBeVisible();
+  await expect(receipt.locator(".pf-chat-receipt-counts")).toHaveText("1 added · 1 modified");
+  await expect(receipt.locator(".pf-chat-receipt-review")).toHaveText("Review changes");
+
+  const receiptToggle = receipt.locator(".pf-chat-receipt-toggle");
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "false");
+  await receiptToggle.click();
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "true");
+  const receiptRows = receipt.locator(".pf-chat-receipt-row");
+  await expect(receiptRows).toHaveCount(2);
+  await expect(receiptRows.nth(0).locator(".pf-chat-receipt-path")).toHaveText("src/lib/tauriMock.ts");
+  await expect(receiptRows.nth(0).locator(".pf-chat-receipt-status")).toHaveText("M");
+  await expect(receiptRows.nth(1).locator(".pf-chat-receipt-path")).toHaveText("tests/vrt/agent-chat.spec.ts");
+  await expect(receiptRows.nth(1).locator(".pf-chat-receipt-status")).toHaveText("A");
+  await expect(receiptRows.first().locator(".pf-chat-receipt-unknown")).toHaveText("unknown");
+  // Collapse back to the default state before pinning the screenshot.
+  await receiptToggle.click();
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "false");
+
   const timeline = page.locator(".pf-chat-timeline");
   const settledTimeline = await timeline.evaluate(async (element) => {
     const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -65,6 +95,30 @@ test("agent chat fixture", async ({ page }) => {
     maxDiffPixelRatio: 0.025,
     animations: "disabled",
   });
+});
+
+// #231 PR3 is gated behind `changesReview` (default off). With the flag off,
+// the fixture's turn keeps rendering the pre-existing raw per-event
+// FileChangeCard exactly as on main, and the chat view never fetches
+// `changes_list_turn_change_sets` at all.
+test("agent chat fixture with changesReview off renders the legacy file-change card", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+  });
+
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  await expect(page.locator(".pf-chat-receipt")).toHaveCount(0);
+  const filesCard = page.locator(".pf-chat-files");
+  await expect(filesCard).toBeVisible();
+  await expect(filesCard.locator(".pf-chat-file")).toHaveCount(2);
+  await expect(filesCard.locator(".pf-chat-file-path").first()).toHaveText("src/lib/tauriMock.ts");
+
+  const fetchCount = await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__PICKFORGE_VRT_CHANGES_LIST_CALLS__ ?? 0,
+  );
+  expect(fetchCount).toBe(0);
 });
 
 // #307: contextUsed > contextWindow must not render an unclamped >100%

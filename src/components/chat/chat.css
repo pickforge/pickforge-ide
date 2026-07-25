@@ -761,6 +761,184 @@
   padding: 0 var(--pf-space-sm) var(--pf-space-sm);
 }
 
+/* ---- Changes receipt (#231 PR3): one compact card per completed turn.
+ * Status letters and diff totals reuse the same semantic colors as the
+ * unified-diff lines above (add/del) — no new colors, no ember (the
+ * composer's send affordance keeps this composition's single ember; "Review
+ * changes" is a neutral action, not a second focal point). ---- */
+.pf-chat-receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+}
+.pf-chat-receipt-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  min-height: 28px;
+}
+.pf-chat-receipt-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  flex: none;
+}
+.pf-chat-receipt-toggle:not([disabled]) {
+  cursor: pointer;
+}
+.pf-chat-receipt-toggle[disabled] {
+  cursor: default;
+}
+.pf-chat-receipt-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
+.pf-chat-receipt-counts,
+.pf-chat-receipt-degraded {
+  color: var(--pf-text-low);
+}
+.pf-chat-receipt-stat {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-chat-receipt-stat--add {
+  color: var(--pf-connected);
+}
+.pf-chat-receipt-stat--del {
+  color: var(--pf-error);
+}
+.pf-chat-receipt-unknown-flag {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  cursor: help;
+}
+.pf-chat-receipt-badge {
+  padding: 2px var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-chat-receipt-review {
+  margin-left: auto;
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-receipt-review:hover,
+.pf-chat-receipt-review:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-text-low);
+}
+.pf-chat-receipt-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--pf-space-sm) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-receipt-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
+.pf-chat-receipt-status {
+  flex: none;
+  width: 1.4em;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  text-align: center;
+  color: var(--pf-text-low);
+}
+.pf-chat-receipt-status--add {
+  color: var(--pf-connected);
+}
+.pf-chat-receipt-status--delete,
+.pf-chat-receipt-status--conflict {
+  color: var(--pf-error);
+}
+.pf-chat-receipt-status--rename {
+  color: var(--pf-info);
+}
+.pf-chat-receipt-path {
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+  overflow-wrap: anywhere;
+}
+.pf-chat-receipt-path-old,
+.pf-chat-receipt-path-arrow {
+  color: var(--pf-text-low);
+}
+.pf-chat-receipt-flags {
+  flex: none;
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-receipt-flag {
+  padding: 0 var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  text-transform: uppercase;
+  letter-spacing: var(--pf-tracking-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-chat-receipt-file-stats {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-chat-receipt-unknown {
+  color: var(--pf-text-low);
+}
+/* Visible file rows already convey status via the letter + title; this
+ * duplicate spells it out in words for assistive tech without adding visible
+ * clutter (screen-reader labels must not rely on color, #231's UX contract). */
+.pf-chat-receipt-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ---- Plan ---- */
 .pf-chat-plan {
   display: flex;

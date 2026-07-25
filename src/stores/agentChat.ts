@@ -36,6 +36,8 @@ import { loadAgentEngine } from "../lib/chatDefaults";
 import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
+import { notifyChangesReviewTurnCompleted } from "./changes";
+import { flagEnabled, subscribeToFlagChanges } from "./flags";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 import { remotePtyFor } from "../lib/remoteContext";
@@ -65,6 +67,20 @@ export type AgentTimelineItem =
       seq: number;
       itemId: string;
       changes: { path: string; kind: string; diff: string | null }[];
+      /** 0-based count of prior turns-with-file-changes closed earlier in
+       *  this chat (#231 PR3). Every `FileChange` event within one turn folds
+       *  into the SAME item (itemId stays the turn-opening event's id, seq
+       *  stays fixed too — virtualization keys off it), so this ordinal lines
+       *  up 1:1, in the same chronological order, with the entries
+       *  `changes_list_turn_change_sets` (#231 PR2) returns for this chat —
+       *  that RPC only emits one `ChangeSet` per turn that had a file change,
+       *  in turn-completion order, exactly mirroring this grouping rule. */
+      ordinal: number;
+      /** True once the enclosing turn's `turnDone`/`turnFailed` has closed
+       *  this group. The chat receipt (#231 PR3) renders only for
+       *  turnComplete items; an in-progress turn's raw events keep rendering
+       *  through the existing `FileChangeCard` until it closes. */
+      turnComplete: boolean;
     }
   | { type: "toolUse"; seq: number; itemId: string; name: string; detail: string | null }
   | { type: "mcpToolCall"; seq: number; itemId: string; server: string; tool: string }
@@ -131,6 +147,23 @@ export interface AgentChatState {
   totals: AgentChatTotals;
   cumulativeUsage: CumulativeUsageSnapshot | null;
   historyLoaded: boolean;
+  /** itemId of the currently-open turn's grouped `fileChange` timeline item
+   *  (#231 PR3), or null when no turn with file changes is open right now.
+   *  Closed (set back to null, ordinal bumped) on `turnDone`/`turnFailed`. */
+  openChangesReceiptItemId: string | null;
+  /** Next ordinal a newly-opened change-receipt group will receive. Seeded to
+   *  0 and only ever incremented when a turn WITH file changes closes — a
+   *  turn with none never opens a group, so it never consumes an ordinal
+   *  either, keeping this in lockstep with `changes_list_turn_change_sets`.
+   *  This alignment is only valid while the fold that produced these ordinals
+   *  matches the CURRENT `changesReview` flag value — `reflowChangesReceiptFold`
+   *  re-derives it (and every ordinal) from scratch on every flag flip, so
+   *  fold-vs-flag agreement holds by construction, not by luck. Caveat: this
+   *  also assumes `TurnStarted` is never persisted server-side (see
+   *  `crates/.../changes/turn.rs`'s `decode_timeline_events` doc comment,
+   *  ~lines 12-13) — if that ever changes, the backend fold could emit an
+   *  empty turn slot this ordinal scheme doesn't currently account for. */
+  nextChangesReceiptOrdinal: number;
 }
 
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
@@ -249,6 +282,8 @@ function emptyState(
     totals: emptyTotals(),
     cumulativeUsage: null,
     historyLoaded: false,
+    openChangesReceiptItemId: null,
+    nextChangesReceiptOrdinal: 0,
   };
 }
 
@@ -294,6 +329,24 @@ function takeSeq(chatId: string): number {
 
 function withTimeline(chat: AgentChatState, timeline: AgentTimelineItem[]): AgentChatState {
   return { ...chat, timeline };
+}
+
+/** Closes the currently-open change-receipt group (#231 PR3), if any — the
+ *  `turnDone`/`turnFailed` half of the fold `case "fileChange"` opens.
+ *  A no-op when the turn had no file changes (nothing was ever opened),
+ *  mirroring `group_turn_change_sets`'s rule that only a turn with at least
+ *  one `FileChange` event produces a `ChangeSet` at all. */
+function closeOpenChangesReceipt(chat: AgentChatState): AgentChatState {
+  const openId = chat.openChangesReceiptItemId;
+  if (!openId) return chat;
+  const timeline = chat.timeline.map((item) =>
+    item.type === "fileChange" && item.itemId === openId ? { ...item, turnComplete: true } : item,
+  );
+  return {
+    ...withTimeline(chat, timeline),
+    openChangesReceiptItemId: null,
+    nextChangesReceiptOrdinal: chat.nextChangesReceiptOrdinal + 1,
+  };
 }
 
 function isBlankText(text: string): boolean {
@@ -762,16 +815,54 @@ function reduceAgentEvent(
         },
       ]);
     }
-    case "fileChange":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "fileChange",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          changes: event.changes.map((change) => ({ ...change })),
-        },
-      ]);
+    case "fileChange": {
+      // Flag off (#231 `changesReview`, default off): keep pushing one raw
+      // item per event, exactly the pre-#231-PR3 behavior — no folding, no
+      // ordinal/turnComplete tracking, so `ChatTimeline` keeps rendering the
+      // legacy per-event `FileChangeCard` unchanged.
+      if (!flagEnabled("changesReview")) {
+        return withTimeline(chat, [
+          ...chat.timeline,
+          {
+            type: "fileChange",
+            seq: nextSeq(),
+            itemId: event.itemId,
+            changes: event.changes.map((change) => ({ ...change })),
+            ordinal: chat.nextChangesReceiptOrdinal,
+            turnComplete: false,
+          },
+        ]);
+      }
+      // Fold every FileChange event within one open turn into a SINGLE
+      // timeline item (#231 PR3) — the chat receipt is one card per completed
+      // turn, not one per event. Matches `group_turn_change_sets`'s implicit
+      // turn-open rule (opens on the first FileChange since the last close);
+      // `seq`/`itemId` stay pinned to the opening event so the virtualized
+      // row key never drifts while the group keeps accumulating.
+      const openId = chat.openChangesReceiptItemId;
+      if (openId) {
+        const timeline = chat.timeline.map((item) =>
+          item.type === "fileChange" && item.itemId === openId
+            ? { ...item, changes: [...item.changes, ...event.changes.map((change) => ({ ...change }))] }
+            : item,
+        );
+        return withTimeline(chat, timeline);
+      }
+      return {
+        ...withTimeline(chat, [
+          ...chat.timeline,
+          {
+            type: "fileChange",
+            seq: nextSeq(),
+            itemId: event.itemId,
+            changes: event.changes.map((change) => ({ ...change })),
+            ordinal: chat.nextChangesReceiptOrdinal,
+            turnComplete: false,
+          },
+        ]),
+        openChangesReceiptItemId: event.itemId,
+      };
+    }
     case "toolUse": {
       let matched = false;
       const timeline = chat.timeline.map((item) => {
@@ -845,9 +936,14 @@ function reduceAgentEvent(
     case "rateLimits":
       return { ...chat, rateLimits: event.payload };
     case "turnDone":
-      return { ...finalizeStreaming(chat), turnActive: false, approvals: [] };
+      return { ...finalizeStreaming(closeOpenChangesReceipt(chat)), turnActive: false, approvals: [] };
     case "turnFailed":
-      return { ...finalizeStreaming(chat), turnActive: false, error: event.error, approvals: [] };
+      return {
+        ...finalizeStreaming(closeOpenChangesReceipt(chat)),
+        turnActive: false,
+        error: event.error,
+        approvals: [],
+      };
     case "approvalRequest":
       if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
         return chat;
@@ -893,6 +989,18 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
     activeTitleTurnByChat.delete(chatId);
+    // #231 review fix: a `changesReview` flip while this turn was active
+    // deferred its reflow (replacing the whole timeline from persisted
+    // history mid-stream would wipe live-only rows/buffered deltas). The
+    // terminal event above already closed the receipt group and set
+    // `turnActive: false`, so it's now safe to run the deferred re-fold.
+    if (pendingChangesReceiptReflow.delete(chatId)) void reflowChangesReceiptFold(chatId);
+    // #231 PR3: a live turn just closed — if this chat's changes-review store
+    // target is already pointed at it, refresh it. Live-only (not called from
+    // `stateFromHistory`'s replay), same as the activity-glow calls below.
+    // Gated: with `changesReview` off nothing ever sets a review target, so
+    // this would be a guaranteed no-op — skip it rather than call it anyway.
+    if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
     const titleEligible = event.kind === "turnDone" && event.status === "completed";
     if (titleEligible) {
       if (activeTitleTurn && !activeTitleTurn.hidden) {
@@ -1073,6 +1181,86 @@ function stateFromHistory(
   nextSeqByChat.set(chatId, maxSeq + 1);
   return chat;
 }
+
+/** Re-derives `timeline` (and the change-receipt fold state riding on it —
+ *  `openChangesReceiptItemId`/`nextChangesReceiptOrdinal`) from persisted
+ *  history for an already-hydrated chat, WITHOUT touching live session
+ *  identity (`sessionId`/`turnActive`/`approvals`/...). Used when the
+ *  `changesReview` flag flips (#231 PR3 review fix): the fold's shape
+ *  (grouped-by-turn vs raw-per-event) depends on that flag, so a flip must
+ *  re-fold every already-loaded chat immediately — otherwise a chat hydrated
+ *  before the flip keeps stale ordinals (mis-indexing `changes_list_turn_change_sets`
+ *  once the flag is on) or a stale grouped shape (once the flag is off).
+ *
+ * Deliberately NOT `hydrateAgentChatHistory`: that function early-returns
+ * once a session is live (`sessionId` set), which is exactly the common case
+ * here (a chat already mid-conversation when the flag flips). This reuses
+ * the same underlying fetch-and-fold primitives (`agentChatHistory` +
+ * `stateFromHistory`) `hydrateAgentChatHistory`/`ensureAgentChat` are built
+ * from, guarded the same way (bump `ensureGenerations`, drop any pending
+ * `hydratePromises` entry) so a stale in-flight ensure/hydrate/retry for this
+ * chat recognizes it's superseded and a rapid double-flip only ever commits
+ * its LAST re-fold. */
+async function reflowChangesReceiptFold(chatId: string): Promise<void> {
+  const chat = chats[chatId];
+  if (!chat || !chat.historyLoaded) return;
+
+  const generation = (ensureGenerations.get(chatId) ?? 0) + 1;
+  ensureGenerations.set(chatId, generation);
+  hydratePromises.delete(chatId);
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
+
+  let history: AgentTimelineEntry[];
+  try {
+    history = await agentChatHistory(chatId);
+  } catch {
+    return; // best-effort — a failed re-fold just leaves the previous fold in place
+  }
+  if (stale()) return;
+
+  const current = chats[chatId];
+  const loaded = stateFromHistory(chatId, current.provider, current.model, current.engine, history);
+  setChats(chatId, {
+    timeline: loaded.timeline,
+    openChangesReceiptItemId: loaded.openChangesReceiptItemId,
+    nextChangesReceiptOrdinal: loaded.nextChangesReceiptOrdinal,
+  });
+}
+
+// Chats whose reflow was deferred because a turn was active when
+// `changesReview` flipped (below) — `reduceOnTurnClose` (the turnDone/
+// turnFailed live-event branch) drains this once the turn's terminal event
+// has been applied. `disposeAgentChat` also drops entries here so a disposed
+// chat's stale chatId never triggers a reflow for a gone/reused slot.
+const pendingChangesReceiptReflow = new Set<string>();
+
+/** Re-derives one chat's fold immediately if idle, or defers it to the next
+ *  `turnDone`/`turnFailed` if a turn is active. `reflowChangesReceiptFold`
+ *  replaces the WHOLE timeline from persisted history — mid-stream rows
+ *  (`textDelta`/`thinkingDelta`/`commandOutput`/buffered deltas) are
+ *  live-only and never persisted, so running it against an active turn would
+ *  wipe that turn's in-progress chrome out from under the user. */
+function reflowOrDeferChangesReceiptFold(chatId: string): void {
+  if (chats[chatId]?.turnActive) {
+    pendingChangesReceiptReflow.add(chatId);
+    return;
+  }
+  void reflowChangesReceiptFold(chatId);
+}
+
+// Re-fold every already-hydrated chat whenever `changesReview` actually
+// CHANGES value (either edge) — `subscribeToFlagChanges` fires on any flag
+// flip, so this snapshot-compares just the one flag it cares about rather
+// than reflowing on unrelated Settings changes.
+let lastChangesReviewFlagValue = flagEnabled("changesReview");
+subscribeToFlagChanges(() => {
+  const next = flagEnabled("changesReview");
+  if (next === lastChangesReviewFlagValue) return;
+  lastChangesReviewFlagValue = next;
+  for (const chatId of Object.keys(chats)) {
+    reflowOrDeferChangesReceiptFold(chatId);
+  }
+});
 
 /**
  * A chatId with no live entry in `chats` yet may still be a chat that
@@ -1664,6 +1852,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
   modelTouchByChat.delete(chatId);
+  pendingChangesReceiptReflow.delete(chatId);
   dropPendingDeltas(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
   await dispose;

@@ -49,8 +49,12 @@ const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
-// #231 PR2 fixtures: one completed turn's ChangeSet, the live working-tree
-// ChangeSet, and a shared unified-diff body for the lazy per-file fetch.
+// #231 PR2/PR3 fixtures: one completed turn's ChangeSet (the same two files
+// the AGENT_CHAT_HISTORY fixture's `fileChange` item reports — its `diff` is
+// null, so per the "unknown stats stay unknown, never 0" rule these carry no
+// known line counts, exercising the chat receipt's unknown-stat rendering),
+// the live working-tree ChangeSet, and a shared unified-diff body for the
+// lazy per-file fetch.
 const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   id: `turn:${AGENT_CHAT_FIXTURE.chatId}:1`,
   scope: "turn",
@@ -63,20 +67,32 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   truncated: false,
   files: [
     {
-      path: "lib/login.dart",
+      path: "src/lib/tauriMock.ts",
       oldPath: null,
       status: "modify",
       // Provider/turn source: staged/unstaged doesn't apply.
       staged: null,
       unstaged: null,
-      additions: 4,
-      deletions: 1,
+      additions: null,
+      deletions: null,
       binary: false,
       truncated: false,
-      diffAvailable: true,
+      diffAvailable: false,
+    },
+    {
+      path: "tests/vrt/agent-chat.spec.ts",
+      oldPath: null,
+      status: "add",
+      staged: null,
+      unstaged: null,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: false,
     },
   ],
-  totals: { files: 1, additions: 4, deletions: 1 },
+  totals: { files: 2, additions: 0, deletions: 0 },
 });
 
 const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => ({
@@ -626,8 +642,15 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   git_diff: () =>
     "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
   git_discover_repos: (a) => [a.projectRoot],
-  changes_list_turn_change_sets: (a) =>
-    a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [],
+  // #231 PR3's `changesReview` flag-off VRT scenario asserts this never
+  // fires — a simple call counter is the cheapest way to prove "no fetch"
+  // from Playwright without a real network/IPC layer to inspect.
+  changes_list_turn_change_sets: (a) => {
+    const globals = window as unknown as Record<string, unknown>;
+    globals.__PICKFORGE_VRT_CHANGES_LIST_CALLS__ =
+      ((globals.__PICKFORGE_VRT_CHANGES_LIST_CALLS__ as number) ?? 0) + 1;
+    return a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [];
+  },
   changes_turn_file_diff: () => CHANGES_DIFF_FIXTURE,
   changes_working_tree: (a) => CHANGES_WORKING_TREE_FIXTURE(a.projectRoot as string),
   changes_working_tree_file_diff: () => CHANGES_DIFF_FIXTURE,

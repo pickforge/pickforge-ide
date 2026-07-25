@@ -35,10 +35,28 @@ const activity = vi.hoisted(() => ({
   agentTurnDone: vi.fn(),
   agentTurnCleared: vi.fn(),
 }));
-const flags = vi.hoisted(() => ({
-  remoteProjects: false,
-  ompAgents: false,
+const changesReview = vi.hoisted(() => ({
+  notifyChangesReviewTurnCompleted: vi.fn(),
 }));
+const flags = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    remoteProjects: false,
+    ompAgents: false,
+    changesReview: false,
+    listeners,
+    // Mutates + notifies subscribers, mirroring the real flags module's
+    // `subscribeToFlagChanges` contract — needed so agentChat.ts's own
+    // flag-change subscription (the #231 reflow-on-flip fix) actually fires
+    // in tests. `beforeEach`'s plain `flags.changesReview = false` resets
+    // stay silent on purpose (cheap, no side effects) for every OTHER test;
+    // only tests that exercise the reflow itself use this.
+    setChangesReview(value: boolean) {
+      this.changesReview = value;
+      for (const listener of this.listeners) listener();
+    },
+  };
+});
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
     chatId: string;
@@ -91,6 +109,7 @@ const workspace = vi.hoisted(() => ({
 }));
 
 vi.mock("../../src/stores/chatActivity", () => activity);
+vi.mock("../../src/stores/changes", () => changesReview);
 vi.mock("../../src/stores/workspace", () => ({
   findChat: workspace.findChat,
   setChatTitle: workspace.setChatTitle,
@@ -105,8 +124,12 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "ompAgents" && flags.ompAgents),
-  subscribeToFlagChanges: vi.fn(() => () => undefined),
+    (key === "ompAgents" && flags.ompAgents) ||
+    (key === "changesReview" && flags.changesReview),
+  subscribeToFlagChanges: (listener: () => void) => {
+    flags.listeners.add(listener);
+    return () => flags.listeners.delete(listener);
+  },
 }));
 
 import {
@@ -141,10 +164,18 @@ import { markChatTitleManual } from "../../src/lib/chatAutoName";
 import { setAgentEngine } from "../../src/lib/chatDefaults";
 
 let counter = 0;
+// Every chatId `startChat` has ever created in this file — the `chats` store
+// is a module singleton never cleared between tests, so anything that
+// iterates ALL open chats (the #231 changesReview flag-flip reflow) needs a
+// way to reset back to a clean slate. See the "changesReview flag flip
+// re-hydration" describe block below.
+const allCreatedChatIds: string[] = [];
 
 function nextChatId() {
   counter += 1;
-  return `agent-chat-test-${counter}`;
+  const id = `agent-chat-test-${counter}`;
+  allCreatedChatIds.push(id);
+  return id;
 }
 
 function mockInvoke(history: AgentTimelineEntry[] = []) {
@@ -252,6 +283,7 @@ beforeEach(() => {
   activity.agentTurnStarted.mockClear();
   activity.agentTurnDone.mockClear();
   activity.agentTurnCleared.mockClear();
+  changesReview.notifyChangesReviewTurnCompleted.mockClear();
   workspace.chats.clear();
   workspace.setChatTitle.mockClear();
   workspace.setChatAgent.mockClear();
@@ -262,6 +294,7 @@ beforeEach(() => {
   workspace.projects = [];
   flags.remoteProjects = false;
   flags.ompAgents = false;
+  flags.changesReview = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -654,6 +687,372 @@ describe("agentChat store reducer", () => {
     failedChat.emit({ kind: "turnFailed", error: "boom" });
 
     expect(timeline(failedChat.chatId)).toEqual([]);
+  });
+
+  describe("changesReview flag off (default) — legacy per-event behavior (#231 PR3)", () => {
+    it("keeps pushing one raw item per fileChange event, exactly as before PR3", async () => {
+      const { chatId, emit } = await startChat();
+
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2);
+      expect(items.map((item) => item.itemId)).toEqual(["files-1", "files-2"]);
+      expect(items.every((item) => item.turnComplete === false)).toBe(true);
+    });
+
+    it("does not notify the changes-review store when a turn closes", async () => {
+      const { chatId, emit } = await startChat();
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      expect(changesReview.notifyChangesReviewTurnCompleted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("changesReview flag on — per-turn receipt grouping (#231 PR3)", () => {
+    beforeEach(() => {
+      flags.changesReview = true;
+    });
+
+    it("folds repeated fileChange events within one turn into a single closed receipt item", async () => {
+      const { chatId, emit } = await startChat();
+
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        itemId: "files-1",
+        ordinal: 0,
+        turnComplete: true,
+        changes: [
+          { path: "a.rs", kind: "add", diff: null },
+          { path: "b.rs", kind: "modify", diff: "+x\n" },
+        ],
+      });
+    });
+
+    it("keeps the change-receipt item open while its turn is still running", async () => {
+      const { chatId, emit } = await startChat();
+
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+
+      const item = timeline(chatId).find((i) => i.type === "fileChange");
+      expect(item).toMatchObject({ ordinal: 0, turnComplete: false });
+    });
+
+    it("closes the open change receipt on turnFailed the same as turnDone", async () => {
+      const { chatId, emit } = await startChat();
+
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnFailed", error: "boom" });
+
+      const item = timeline(chatId).find((i) => i.type === "fileChange");
+      expect(item).toMatchObject({ turnComplete: true });
+    });
+
+    it("only assigns a new receipt ordinal to a turn that actually changed files", async () => {
+      const { chatId, emit } = await startChat();
+
+      // First turn: no file changes at all — must not consume an ordinal, since
+      // `changes_list_turn_change_sets` never emits a ChangeSet for it either.
+      emit({ kind: "turnStarted" });
+      emit({ kind: "turnDone", status: "completed" });
+
+      emit({ kind: "turnStarted" });
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      emit({ kind: "turnStarted" });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
+    });
+
+    it("notifies the changes-review store when a live turn completes", async () => {
+      const { chatId, emit } = await startChat();
+      emit({ kind: "turnDone", status: "completed" });
+      expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
+    });
+
+    it("notifies the changes-review store when a live turn fails", async () => {
+      const { chatId, emit } = await startChat();
+      emit({ kind: "turnFailed", error: "boom" });
+      expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
+    });
+  });
+
+  describe("changesReview flag flip re-hydration (#231 review fix)", () => {
+    // The reflow-on-flip fix iterates EVERY open chat in the store, and
+    // `chats` is a module singleton that otherwise accumulates one entry per
+    // test across this whole 100+ test file. Start each test in this block
+    // from a clean slate so a flag flip here only ever touches the chat(s)
+    // that test itself creates.
+    beforeEach(async () => {
+      // The outer `beforeEach` already ran `tauri.invoke.mockReset()`, which
+      // leaves `invoke` with no implementation (a bare mock returning
+      // `undefined`, not a Promise) — `agentChatDispose` calling `.catch()`
+      // directly on that return value throws synchronously, before
+      // `disposeAgentChat` ever reaches its actual store cleanup. Give
+      // `invoke` a working implementation first so disposal completes.
+      mockInvoke([]);
+      for (const id of allCreatedChatIds.splice(0)) {
+        await disposeAgentChat(id).catch(() => undefined);
+      }
+    });
+
+    it("re-folds and re-indexes an already-hydrated chat when the flag flips ON with prior turns-with-files", async () => {
+      // Prime the module's flag-change ledger to a known false baseline —
+      // a prior test in this file may have left it at true.
+      flags.setChangesReview(false);
+      const history = historyFromEvents([
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-2", changes: [{ path: "b.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ]);
+      const { chatId } = await startChat(history);
+
+      // Hydrated with the flag off: two prior turns-with-files, each its own
+      // legacy per-event item — no grouping, no meaningful ordinal yet.
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(2);
+
+      flags.setChangesReview(true);
+      await flushPromises();
+
+      // Without the reflow fix, `nextChangesReceiptOrdinal` would still be at
+      // its flag-off value (0) — the first live grouped receipt after this
+      // flip would then index CS[0] (the OLDEST turn's ChangeSet) instead of
+      // reflecting that two turns-with-changes already happened. Re-deriving
+      // the whole timeline from history fixes both turns' ordinals at once.
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2);
+      expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
+      expect(items.every((item) => item.turnComplete)).toBe(true);
+    });
+
+    it("re-folds back to legacy per-event items when the flag flips OFF after grouping", async () => {
+      flags.setChangesReview(false);
+      const history = historyFromEvents([
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "fileChange", itemId: "files-2", changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }] },
+        { kind: "turnDone", status: "completed" },
+      ]);
+      flags.setChangesReview(true);
+      const { chatId } = await startChat(history);
+
+      // Hydrated with the flag on: both events fold into one closed receipt.
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(1);
+
+      flags.setChangesReview(false);
+      await flushPromises();
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2);
+      expect(items.map((item) => item.itemId)).toEqual(["files-1", "files-2"]);
+      expect(items.every((item) => item.turnComplete === false)).toBe(true);
+    });
+
+    it("only commits the LAST flip's re-fold when the flag flips rapidly twice, dropping a stale earlier fetch", async () => {
+      flags.setChangesReview(false);
+      const finalHistory = historyFromEvents([
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ]);
+      const { chatId } = await startChat(finalHistory);
+
+      const staleHistory = historyFromEvents([
+        { kind: "turnStarted" },
+        {
+          kind: "fileChange",
+          itemId: "stale-files",
+          changes: [{ path: "STALE-MARKER.rs", kind: "add", diff: null }],
+        },
+        { kind: "turnDone", status: "completed" },
+      ]);
+
+      // The flag flip reflows EVERY open chat, including ones left behind by
+      // earlier tests in this file (the store is a module singleton never
+      // cleared between tests) — so this mock must only hand out the
+      // controlled deferreds to THIS test's own chatId; anything else gets a
+      // harmless empty history.
+      const staleFetch = deferred<AgentTimelineEntry[]>();
+      const freshFetch = deferred<AgentTimelineEntry[]>();
+      let historyCallForThisChat = 0;
+      tauri.invoke.mockImplementation((cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === "agent_chat_history" && args.chatId === chatId) {
+          historyCallForThisChat += 1;
+          return historyCallForThisChat === 1 ? staleFetch.promise : freshFetch.promise;
+        }
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        return Promise.resolve(null);
+      });
+
+      flags.setChangesReview(true); // reflow #1 starts fetching (held open)
+      flags.setChangesReview(false); // reflow #2 supersedes it, starts its own fetch
+
+      // The superseded fetch resolving after the fact must be dropped.
+      staleFetch.resolve(staleHistory);
+      await flushPromises();
+      expect(
+        timeline(chatId).some(
+          (item) => item.type === "fileChange" && item.changes.some((c) => c.path === "STALE-MARKER.rs"),
+        ),
+      ).toBe(false);
+
+      freshFetch.resolve(finalHistory);
+      await flushPromises();
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(1);
+      expect(items[0].changes[0].path).toBe("a.rs");
+    });
+
+    it("defers the reflow while a turn is active — preserving live-only rows — and runs it once the turn closes", async () => {
+      flags.setChangesReview(false);
+      const priorTurnEvents: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "fileChange", itemId: "files-1b", changes: [{ path: "a2.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const liveTurnEvents: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-2", changes: [{ path: "b.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const { chatId, emit } = await startChat(historyFromEvents(priorTurnEvents));
+
+      // Hydrated with the flag off: the prior turn's two FileChange events
+      // stayed separate (legacy shape), not folded into one receipt.
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(2);
+
+      const historyCallsBeforeFlip = tauri.invoke.mock.calls.filter(
+        (call) => call[0] === "agent_chat_history",
+      ).length;
+
+      emit({ kind: "turnStarted" });
+      emit({ kind: "commandStarted", itemId: "cmd-1", command: "bun test", cwd: "/project" });
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+
+      flags.setChangesReview(true);
+      await flushPromises();
+
+      // Deferred: an active turn must not trigger an immediate re-fold —
+      // replacing the whole timeline from persisted history would wipe this
+      // turn's live-only, never-persisted-mid-stream command row.
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBeforeFlip);
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "command", itemId: "cmd-1", status: "running" }),
+      );
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(2);
+
+      // The backend has now persisted this turn's events too — closing it is
+      // when the deferred reflow actually fires.
+      mockInvoke(historyFromEvents([...priorTurnEvents, ...liveTurnEvents]));
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+      await flushPromises();
+
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBeforeFlip + 1);
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2); // prior turn (grouped) + this turn (grouped)
+      expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
+      expect(items.every((item) => item.turnComplete)).toBe(true);
+    });
+
+    it("clears a chat's pending reflow on disposal, so a reused chatId never inherits a stale pending flag", async () => {
+      flags.setChangesReview(false);
+      mockInvoke([]);
+      const chatId = nextChatId();
+      await ensureAgentChat(chatId, "/project", "codex", null);
+      const firstStart = tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_start" && call[1]?.chatId === chatId)
+        .at(-1);
+      firstStart?.[1].onEvent.onmessage({ kind: "turnStarted" } satisfies AgentEvent);
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+
+      flags.setChangesReview(true); // active turn ⇒ deferred, chatId added to the pending set
+      await flushPromises();
+
+      await disposeAgentChat(chatId);
+
+      // Re-create a chat under the SAME chatId string (a realistic "reopen"),
+      // with no flag flip of its own during its lifetime.
+      mockInvoke([]);
+      await ensureAgentChat(chatId, "/project", "codex", null);
+      const secondStart = tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_start" && call[1]?.chatId === chatId)
+        .at(-1);
+
+      const historyCallsBefore = tauri.invoke.mock.calls.filter(
+        (call) => call[0] === "agent_chat_history",
+      ).length;
+      secondStart?.[1].onEvent.onmessage({ kind: "turnStarted" } satisfies AgentEvent);
+      secondStart?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" } satisfies AgentEvent);
+      await flushPromises();
+
+      // No stale pending entry from the disposed chat ⇒ this turn closing
+      // must not trigger an unrequested reflow fetch.
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBefore);
+    });
   });
 
   it("replaces accumulated Pi tool updates instead of appending them", async () => {
@@ -1251,6 +1650,35 @@ describe("agentChat history", () => {
     emit({ kind: "webSearch", itemId: "search-1", query: "pickforge" });
 
     expect(timeline(chatId).map((item) => item.seq)).toEqual([4, 9, 10]);
+  });
+
+  it("seeds the next change-receipt ordinal from a turn-with-changes already in history (#231 PR3)", async () => {
+    flags.changesReview = true;
+    const history = historyFromEvents([
+      { kind: "turnStarted" },
+      {
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      },
+      { kind: "turnDone", status: "completed" },
+    ]);
+    const { chatId, emit } = await startChat(history);
+
+    expect(timeline(chatId).find((i) => i.type === "fileChange")).toMatchObject({
+      ordinal: 0,
+      turnComplete: true,
+    });
+
+    emit({
+      kind: "fileChange",
+      itemId: "files-2",
+      changes: [{ path: "b.rs", kind: "add", diff: null }],
+    });
+    emit({ kind: "turnDone", status: "completed" });
+
+    const liveItem = timeline(chatId).filter((i) => i.type === "fileChange")[1];
+    expect(liveItem).toMatchObject({ ordinal: 1, turnComplete: true });
   });
 
   it("seeds usage totals from history items", async () => {

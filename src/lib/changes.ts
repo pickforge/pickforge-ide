@@ -16,6 +16,17 @@ export type ChangeSource = "providerSnapshot" | "gitSnapshot" | "gitLive";
 /** Locked five-way status vocabulary from the change-set contract (#231). */
 export type ChangeFileStatus = "add" | "modify" | "delete" | "rename" | "conflict";
 
+/** What KIND of entry a path is, beyond the status vocabulary (#231 PR5).
+ *  `numstat`/`name-status` alone can't tell a submodule pointer bump, a
+ *  symlink change or a permissions-only change apart from an ordinary
+ *  content change — the Rust side classifies this from a third, bounded
+ *  `git diff --raw` call (`crate::git::working_tree::working_tree_change_set`)
+ *  and, for an untracked path, a plain filesystem stat. Always `"regular"`
+ *  for a provider/turn snapshot, which carries no file-mode information to
+ *  classify from — not a claim the row IS a regular file, only that this
+ *  source can't tell otherwise. */
+export type ChangeFileKind = "regular" | "submodule" | "symlink" | "modeOnly";
+
 /** One file's status/stat row inside a `ChangeSet`. `additions`/`deletions`
  *  are `null` — never `0` — whenever the true count isn't known (binary,
  *  truncated, or no diff at all); render "unknown", never a silently wrong
@@ -38,6 +49,7 @@ export interface ChangedFile {
   binary: boolean;
   truncated: boolean;
   diffAvailable: boolean;
+  kind: ChangeFileKind;
 }
 
 export interface ChangeTotals {
@@ -85,6 +97,19 @@ export interface ChangeDiff {
    *  never captured one for this path, or a failed git command) — distinct
    *  from `binary`, which means a diff exists but has no text form. */
   available: boolean;
+  /** Binary content's size in bytes, when cheaply known (#231 PR5): only
+   *  ever populated for a LIVE working-tree binary file that still exists on
+   *  disk — a plain stat, never a content read. `null` for a turn-snapshot
+   *  source (showing a file's CURRENT size next to a HISTORICAL diff would
+   *  misattribute it across time) or when the working-tree file no longer
+   *  exists. */
+  sizeBytes: number | null;
+  /** `true` when the underlying bytes this diff was built from were not
+   *  valid UTF-8 and were lossily decoded (invalid sequences become the
+   *  replacement character) before ever reaching this type (#231 PR5) —
+   *  content still renders, never a blank or a crash, but the caller should
+   *  say so. Always `false` for a turn-snapshot source. */
+  invalidUtf8: boolean;
 }
 
 /** The explicit working-tree states the issue calls out, alongside the
@@ -102,19 +127,28 @@ export type WorkingTreeChanges =
 export const changesListTurnChangeSets = (chatId: string, projectRoot: string) =>
   invoke<ChangeSet[]>("changes_list_turn_change_sets", { chatId, projectRoot });
 
-/** Lazily-fetched turn-snapshot diff text for one file within one turn. */
+/** Lazily-fetched turn-snapshot diff text for one file within one turn.
+ *  `skipLines` is the "load more" affordance for a `truncated: true` result
+ *  (#231 PR5): `0` for the initial fetch, otherwise the number of diff lines
+ *  already held, to fetch the next bounded chunk. */
 export const changesTurnFileDiff = (
   chatId: string,
   projectRoot: string,
   turnSeq: number,
   path: string,
-) => invoke<ChangeDiff>("changes_turn_file_diff", { chatId, projectRoot, turnSeq, path });
+  skipLines = 0,
+) => invoke<ChangeDiff>("changes_turn_file_diff", { chatId, projectRoot, turnSeq, path, skipLines });
 
 /** The live working-tree ChangeSet for a project root. */
 export const changesWorkingTree = (projectRoot: string) =>
   invoke<WorkingTreeChanges>("changes_working_tree", { projectRoot });
 
 /** The live unified diff for one repo-relative file in the working tree,
- *  staged or unstaged. */
-export const changesWorkingTreeFileDiff = (projectRoot: string, path: string, staged: boolean) =>
-  invoke<ChangeDiff>("changes_working_tree_file_diff", { projectRoot, path, staged });
+ *  staged or unstaged. `skipLines` — see `changesTurnFileDiff`'s doc
+ *  comment; same "load more" affordance, git-live source. */
+export const changesWorkingTreeFileDiff = (
+  projectRoot: string,
+  path: string,
+  staged: boolean,
+  skipLines = 0,
+) => invoke<ChangeDiff>("changes_working_tree_file_diff", { projectRoot, path, staged, skipLines });

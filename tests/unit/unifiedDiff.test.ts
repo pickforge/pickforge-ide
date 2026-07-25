@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseUnifiedDiff } from "../../src/lib/unifiedDiff";
+import { countDiffLines, parseUnifiedDiff, toSplitRows } from "../../src/lib/unifiedDiff";
 
 describe("parseUnifiedDiff", () => {
   it("parses a standard single-hunk diff into meta + gutter-numbered lines", () => {
@@ -162,5 +162,77 @@ describe("parseUnifiedDiff", () => {
     // The second hunk's own header re-establishes trustworthy tracking,
     // independent of the first hunk's corruption.
     expect(parsed.hunks[1].lines).toEqual([{ kind: "context", text: "context", oldLine: 10, newLine: 10 }]);
+  });
+});
+
+describe("toSplitRows (#231 PR5 split view)", () => {
+  it("pairs a context line with itself on both sides, reading old/new gutters independently", () => {
+    const parsed = parseUnifiedDiff("@@ -1,2 +1,3 @@\n context\n-removed\n+added\n");
+    const rows = toSplitRows(parsed.hunks[0].lines);
+    expect(rows[0]).toEqual({
+      kind: "pair",
+      left: { kind: "context", text: "context", oldLine: 1, newLine: 1 },
+      right: { kind: "context", text: "context", oldLine: 1, newLine: 1 },
+    });
+  });
+
+  it("pairs an equal-length del/add run index-wise", () => {
+    const parsed = parseUnifiedDiff("@@ -1,2 +1,2 @@\n-old one\n-old two\n+new one\n+new two\n");
+    const rows = toSplitRows(parsed.hunks[0].lines);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ kind: "pair", left: { text: "old one" }, right: { text: "new one" } });
+    expect(rows[1]).toMatchObject({ kind: "pair", left: { text: "old two" }, right: { text: "new two" } });
+  });
+
+  it("pads the shorter side with null for an unbalanced del/add run", () => {
+    const parsed = parseUnifiedDiff("@@ -1,3 +1,1 @@\n-a\n-b\n-c\n+x\n");
+    const rows = toSplitRows(parsed.hunks[0].lines);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ left: { text: "a" }, right: { text: "x" } });
+    expect(rows[1]).toMatchObject({ left: { text: "b" }, right: null });
+    expect(rows[2]).toMatchObject({ left: { text: "c" }, right: null });
+  });
+
+  it("puts a pure addition's left side as null, never fabricating an old-side line", () => {
+    const parsed = parseUnifiedDiff("@@ -0,0 +1,1 @@\n+new\n");
+    const rows = toSplitRows(parsed.hunks[0].lines);
+    expect(rows).toEqual([{ kind: "pair", left: null, right: { kind: "add", text: "new", oldLine: null, newLine: 1 } }]);
+  });
+
+  it("renders a no-newline marker as a spanning note, not a left/right pair", () => {
+    const parsed = parseUnifiedDiff("@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n");
+    const rows = toSplitRows(parsed.hunks[0].lines);
+    expect(rows[1]).toEqual({
+      kind: "note",
+      line: { kind: "noNewline", text: "\\ No newline at end of file", oldLine: null, newLine: null },
+    });
+  });
+
+  it("returns no rows for an empty hunk", () => {
+    expect(toSplitRows([])).toEqual([]);
+  });
+});
+
+describe("countDiffLines (#231 PR5 load-more line accounting)", () => {
+  it("counts zero for empty text", () => {
+    expect(countDiffLines("")).toBe(0);
+  });
+
+  it("counts each newline-terminated line", () => {
+    expect(countDiffLines("+a\n+b\n+c\n")).toBe(3);
+  });
+
+  it("counts a trailing line with no terminating newline as one more line", () => {
+    expect(countDiffLines("+a\n+b")).toBe(2);
+  });
+
+  it("matches the number of lines split_inclusive('\\n') would yield, mirroring the Rust side", () => {
+    // Cross-check against a real accumulation: skipping N lines then
+    // re-counting the remainder must round-trip to the original count.
+    const text = "line1\nline2\nline3\nline4\n";
+    const total = countDiffLines(text);
+    const remainder = text.split("\n").slice(2).join("\n");
+    expect(total).toBe(4);
+    expect(countDiffLines(remainder)).toBe(countDiffLines("line3\nline4\n"));
   });
 });

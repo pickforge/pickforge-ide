@@ -164,3 +164,75 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
 
   return { meta, hunks };
 }
+
+// ---- split (side-by-side) view (#231 PR5) ----
+
+/** One split-view row: the OLD-side line paired with the NEW-side line it
+ *  renders next to. A context line pairs with ITSELF on both sides (same
+ *  `DiffLine`, identical text — a renderer reads `oldLine` for the left
+ *  gutter and `newLine` for the right one, matching GitHub's own split-view
+ *  convention). A pure addition/deletion leaves the OTHER side `null`.
+ *  `note` carries a line that spans BOTH columns instead — only a
+ *  `noNewline` marker, which annotates whichever line preceded it rather
+ *  than being a left/right pair of its own. */
+export type SplitDiffRow =
+  | { kind: "pair"; left: DiffLine | null; right: DiffLine | null }
+  | { kind: "note"; line: DiffLine };
+
+/** Lays one hunk's already-parsed unified `lines` out as side-by-side rows.
+ *  Consecutive `del` lines are paired index-wise against the consecutive
+ *  `add` lines that immediately follow them (the same adjacent-run heuristic
+ *  most lightweight split-diff renderers use) — not a true LCS re-alignment
+ *  of the two file versions, which would mean re-deriving the diff from
+ *  scratch rather than re-laying-out the one Git already computed. A run
+ *  imbalance (3 deletions, 1 addition) pads the shorter side with `null` so
+ *  every row still has SOME content on at least one side. Never throws — a
+ *  `noNewline` marker breaking a del/add run just ends that run where it
+ *  stands (the next del/add line starts a fresh run), degrading to slightly
+ *  less compact pairing rather than mis-attributing a line to the wrong
+ *  side. */
+export function toSplitRows(lines: DiffLine[]): SplitDiffRow[] {
+  const rows: SplitDiffRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.kind === "context") {
+      rows.push({ kind: "pair", left: line, right: line });
+      i += 1;
+      continue;
+    }
+    if (line.kind === "noNewline") {
+      rows.push({ kind: "note", line });
+      i += 1;
+      continue;
+    }
+    const delRun: DiffLine[] = [];
+    while (i < lines.length && lines[i].kind === "del") {
+      delRun.push(lines[i]);
+      i += 1;
+    }
+    const addRun: DiffLine[] = [];
+    while (i < lines.length && lines[i].kind === "add") {
+      addRun.push(lines[i]);
+      i += 1;
+    }
+    const max = Math.max(delRun.length, addRun.length);
+    for (let k = 0; k < max; k += 1) {
+      rows.push({ kind: "pair", left: delRun[k] ?? null, right: addRun[k] ?? null });
+    }
+  }
+  return rows;
+}
+
+/** Counts the LINES a diff-text string of length > 0 splits into under
+ *  Rust's `split_inclusive('\n')` — the same accounting
+ *  `crate::git::diff_stat::skip_diff_lines` uses server-side — so the
+ *  frontend's "load more" accumulation asks for exactly the next chunk
+ *  rather than off-by-one duplicating or dropping a line. A trailing
+ *  partial line with no `\n` (only possible at the true end of a diff, per
+ *  `bound_diff_display`'s bounding) still counts as one line. */
+export function countDiffLines(text: string): number {
+  if (text.length === 0) return 0;
+  const newlineCount = (text.match(/\n/g) ?? []).length;
+  return text.endsWith("\n") ? newlineCount : newlineCount + 1;
+}

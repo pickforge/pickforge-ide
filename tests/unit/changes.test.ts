@@ -189,6 +189,7 @@ describe("changes store — lazy per-file diff fetch", () => {
       projectRoot: "/repo",
       turnSeq: 1,
       path: "src/lib.rs",
+      skipLines: 0,
     });
   });
 
@@ -211,11 +212,13 @@ describe("changes store — lazy per-file diff fetch", () => {
       projectRoot: "/repo",
       path: "a.txt",
       staged: false,
+      skipLines: 0,
     });
     expect(testEnv.invoke).toHaveBeenNthCalledWith(3, "changes_working_tree_file_diff", {
       projectRoot: "/repo",
       path: "a.txt",
       staged: true,
+      skipLines: 0,
     });
   });
 

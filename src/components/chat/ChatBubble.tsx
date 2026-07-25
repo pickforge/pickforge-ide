@@ -5,27 +5,113 @@ import {
   referencedImageIndexes,
   renderMarkdown,
 } from "../../lib/markdown";
+import { classifyChatLink, type ChatLinkTarget } from "../../lib/chatLinkTarget";
+import { resolveWorkspaceCitation } from "../../lib/chatLinkResolve";
+import { openExternalUrl } from "../../lib/opener";
+import { openFileInChat } from "../../stores/terminalHosts";
+import { remotePtyFor } from "../../lib/remoteContext";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
 const STREAM_MARKDOWN_INTERVAL_MS = 80;
+const LINK_NOTICE_MS = 4000;
 
-// A plain <a href> click would navigate the whole webview away from the app.
-// No URL-safe opener exists (open_path canonicalizes against approved roots and
-// rejects URLs; no opener/shell plugin is wired), so anchor clicks are cancelled
-// rather than routed externally. Clicks on an inline `[Image #N]` thumbnail open
-// the lightbox for the corresponding attachment.
-function onMarkdownClick(e: MouseEvent, images?: string[]): void {
+interface ChatLinkContext {
+  chatId?: string;
+  projectRoot?: string;
+  streaming?: boolean;
+  notify: (message: string) => void;
+}
+
+/** The raw href a Markdown anchor was rendered from (`markdown.ts`'s link
+ *  renderer carries it as `data-pf-chat-link` for every non-https target,
+ *  falling back to the real `href` for an approved https link). Re-read at
+ *  click time (never cached from render) so classification always reflects
+ *  the DOM as it exists right now. */
+function chatLinkHrefFrom(anchor: HTMLAnchorElement): string {
+  return anchor.dataset.pfChatLink ?? anchor.getAttribute("href") ?? "";
+}
+
+/** Route a classified chat-link target to its one safe application intent
+ *  (#234): approved `https://` opens in the system browser, a workspace
+ *  citation resolves at the Rust trust boundary — scoped to the chat's own
+ *  project root, never falling back to a local path for a remote chat —
+ *  before opening, and everything else stays inert with concise feedback
+ *  that never leaks the rejected path. */
+async function routeChatLink(target: ChatLinkTarget, ctx: ChatLinkContext): Promise<void> {
+  if (target.kind === "externalHttps") {
+    try {
+      await openExternalUrl(target.url);
+    } catch (e) {
+      console.error("[pickforge] open_external_url failed", e);
+    }
+    return;
+  }
+  if (target.kind === "blocked") {
+    ctx.notify("This link can't be opened.");
+    return;
+  }
+  // workspaceCitation
+  if (!ctx.projectRoot) {
+    ctx.notify("This link can't be opened.");
+    return;
+  }
+  if (remotePtyFor(ctx.projectRoot)) {
+    ctx.notify("Citations aren't supported in remote chats yet.");
+    return;
+  }
+  try {
+    const resolved = await resolveWorkspaceCitation(ctx.projectRoot, target.path);
+    openFileInChat(ctx.chatId, resolved, ctx.projectRoot, {
+      line: target.line,
+      column: target.column,
+      endLine: target.endLine,
+    });
+  } catch {
+    ctx.notify("This link can't be opened.");
+  }
+}
+
+function activateChatLink(anchor: HTMLAnchorElement, ctx: ChatLinkContext): void {
+  // Inert while the message is still streaming — the target text (and thus
+  // its classification) can change out from under a click mid-update.
+  if (ctx.streaming) return;
+  const target = classifyChatLink(chatLinkHrefFrom(anchor));
+  void routeChatLink(target, ctx);
+}
+
+// A plain <a href> click would navigate the whole webview away from the app,
+// so every anchor click is ALWAYS cancelled first — including a modifier
+// (Ctrl/Cmd) click, which still fires as a normal `click` event — before the
+// classified target is routed to its one safe intent. Clicks on an inline
+// `[Image #N]` thumbnail open the lightbox for the corresponding attachment.
+function onMarkdownClick(e: MouseEvent, images: string[] | undefined, ctx: ChatLinkContext): void {
   const target = e.target as HTMLElement | null;
-  if (target?.closest("a")) {
+  const anchor = target?.closest("a");
+  if (anchor) {
     e.preventDefault();
+    activateChatLink(anchor, ctx);
     return;
   }
   openThumbTarget(target, images);
 }
 
+// A middle click on an anchor fires `auxclick`, not `click` — the browser's
+// default "open in a new tab" action must be cancelled here too, or the
+// webview would navigate before any `click` handler ever ran.
+function onMarkdownAuxClick(e: MouseEvent, ctx: ChatLinkContext): void {
+  if (e.button !== 1) return;
+  const target = e.target as HTMLElement | null;
+  const anchor = target?.closest("a");
+  if (!anchor) return;
+  e.preventDefault();
+  activateChatLink(anchor, ctx);
+}
+
 // Inline thumbnails hydrate as focusable button-role images — Enter/Space must
-// open the lightbox just like a click.
+// open the lightbox just like a click. A normal `<a href>` is already
+// keyboard-activatable (Tab + Enter fires a native `click`), so anchors need
+// no handling here.
 function onMarkdownKeyDown(e: KeyboardEvent, images?: string[]): void {
   if (e.key !== "Enter" && e.key !== " ") return;
   const target = e.target as HTMLElement | null;
@@ -109,40 +195,53 @@ function createThrottledText(
   return renderText;
 }
 
-export function ChatBubble(props: {
-  role: "user" | "assistant";
-  text: string;
-  streaming?: boolean;
-  images?: string[];
-}): JSX.Element {
-  let mdEl: HTMLDivElement | undefined;
-  const renderText = createThrottledText(
-    () => props.text,
-    () => props.streaming,
-    STREAM_MARKDOWN_INTERVAL_MS,
-  );
-
-  const body = createMemo(() => {
-    return renderChatMarkdown(props.role, renderText(), props.images, props.streaming);
+/** Concise, accessible feedback for a blocked/unsupported chat-link click —
+ *  never the rejected path itself. Auto-clears after `ms` so a stale notice
+ *  doesn't linger. A composable (same pattern as `createThrottledText`),
+ *  called synchronously from the caller's setup so its `onCleanup` runs
+ *  under the same reactive owner as if written inline. */
+function createLinkNotice(ms: number): {
+  notice: () => string | null;
+  notify: (message: string) => void;
+} {
+  const [notice, setNotice] = createSignal<string | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const notify = (message: string) => {
+    setNotice(message);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => setNotice(null), ms);
+  };
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
   });
+  return { notice, notify };
+}
 
-  // The sanitized markdown never carries an asset path — only a zero-based
-  // index. Hydrate the real src (and button semantics for keyboard users) onto
-  // each inline thumbnail after the DOM updates, keeping DOMPurify's default
-  // URI policy untouched.
+/** Hydrates each inline `[Image #N]` thumbnail's real `src` (and keyboard/
+ *  button semantics) onto the sanitized markdown after it renders — the
+ *  sanitized HTML never carries an asset path, only a zero-based index, so
+ *  DOMPurify's default URI policy stays untouched. A composable (same
+ *  pattern as `createThrottledText`), called synchronously from the
+ *  caller's setup so its `createEffect` runs under the same reactive owner
+ *  as if written inline. */
+function hydrateInlineImageThumbnails(
+  el: () => HTMLDivElement | undefined,
+  images: () => string[] | undefined,
+  body: () => string,
+): void {
   createEffect(() => {
-    const images = props.images;
-    if (!images || images.length === 0) return;
+    const list = images();
+    if (!list || list.length === 0) return;
     body();
     queueMicrotask(() => {
-      const el = mdEl;
-      if (!el || !images) return;
-      el
+      const node = el();
+      if (!node || !list) return;
+      node
         .querySelectorAll<HTMLImageElement>("img[data-pf-image-index]")
         .forEach((img) => {
           const idx = Number(img.dataset.pfImageIndex);
-          if (Number.isInteger(idx) && idx >= 0 && idx < images.length) {
-            img.src = convertFileSrc(images[idx]);
+          if (Number.isInteger(idx) && idx >= 0 && idx < list.length) {
+            img.src = convertFileSrc(list[idx]);
             img.loading = "lazy";
             img.decoding = "async";
             img.tabIndex = 0;
@@ -152,6 +251,36 @@ export function ChatBubble(props: {
         });
     });
   });
+}
+
+export function ChatBubble(props: {
+  role: "user" | "assistant";
+  text: string;
+  streaming?: boolean;
+  images?: string[];
+  chatId?: string;
+  projectRoot?: string;
+}): JSX.Element {
+  let mdEl: HTMLDivElement | undefined;
+  const renderText = createThrottledText(
+    () => props.text,
+    () => props.streaming,
+    STREAM_MARKDOWN_INTERVAL_MS,
+  );
+
+  const { notice: linkNotice, notify: notifyLink } = createLinkNotice(LINK_NOTICE_MS);
+  const linkCtx = (): ChatLinkContext => ({
+    chatId: props.chatId,
+    projectRoot: props.projectRoot,
+    streaming: props.streaming,
+    notify: notifyLink,
+  });
+
+  const body = createMemo(() => {
+    return renderChatMarkdown(props.role, renderText(), props.images, props.streaming);
+  });
+
+  hydrateInlineImageThumbnails(() => mdEl, () => props.images, body);
 
   // Marker-referenced attachments render inline within the text — repeating
   // them in the strip above would show the same image twice.
@@ -206,13 +335,19 @@ export function ChatBubble(props: {
           <div
             ref={mdEl}
             class="pf-chat-md"
-            onClick={(e) => onMarkdownClick(e, props.images)}
+            onClick={(e) => onMarkdownClick(e, props.images, linkCtx())}
+            onAuxClick={(e) => onMarkdownAuxClick(e, linkCtx())}
             onKeyDown={(e) => onMarkdownKeyDown(e, props.images)}
             innerHTML={body()}
           />
         </Show>
         <Show when={props.streaming}>
           <span class="pf-chat-caret" aria-hidden="true" />
+        </Show>
+        <Show when={linkNotice()}>
+          <div class="pf-chat-link-notice" role="status" aria-live="polite">
+            {linkNotice()}
+          </div>
         </Show>
       </div>
     </div>

@@ -126,6 +126,19 @@ describe("editor/non-agent actions use a split", () => {
     expect(hasAgentPane(chatId)).toBe(false);
   });
 
+  it("openFileInChat forwards an explicit location through to editorCommand", () => {
+    const chatId = freshChatId();
+    const host = fakeHost();
+    setTerminalHost(chatId, host);
+
+    openFileInChat(chatId, "/local/proj/src/main.ts", "/local/proj", { line: 12, column: 4 });
+
+    expect(fileOpen.editorCommand).toHaveBeenCalledExactlyOnceWith("/local/proj/src/main.ts", {
+      line: 12,
+      column: 4,
+    });
+  });
+
   it("openFileInChat routes through the chat's remote binding when the file is inside it", () => {
     const chatId = freshChatId();
     const remote = { host: "mac-mini", remoteRoot: "/remote/proj" };
@@ -134,7 +147,10 @@ describe("editor/non-agent actions use a split", () => {
 
     openFileInChat(chatId, "/local/proj/src/main.ts", "/local/proj");
 
-    expect(fileOpen.editorCommand).toHaveBeenCalledExactlyOnceWith("/remote/proj/src/main.ts");
+    expect(fileOpen.editorCommand).toHaveBeenCalledExactlyOnceWith(
+      "/remote/proj/src/main.ts",
+      undefined,
+    );
     expect(host.openInNewPane).toHaveBeenCalledExactlyOnceWith(
       "nvim '/remote/proj/src/main.ts'",
       { remote },

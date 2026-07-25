@@ -13,9 +13,11 @@ export interface AgentCliProbe {
   errors: string[];
 }
 
-/** Runs a fixed, read-only diagnostic for an allowlisted terminal agent.
- * The native command accepts only `omp` or `pi`; callers cannot supply argv. */
-export function probeAgentCli(agentId: "omp" | "pi"): Promise<AgentCliProbe> {
+/** Runs a fixed, read-only diagnostic for an allowlisted CLI. The native
+ * command accepts only `omp`, `pi`, or `codex`; callers cannot supply argv.
+ * Claude Code has no stable model-listing command and is deliberately not
+ * part of this allowlist — its models always come from the static table. */
+export function probeAgentCli(agentId: "omp" | "pi" | "codex"): Promise<AgentCliProbe> {
   return invoke<AgentCliProbe>("probe_agent_cli", { agentId });
 }
 

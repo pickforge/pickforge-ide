@@ -134,9 +134,25 @@ function renderItem(
   switch (item.type) {
     case "userMessage":
       if (item.hidden) return <></>;
-      return <ChatBubble role="user" text={item.text} images={item.images} />;
+      return (
+        <ChatBubble
+          role="user"
+          text={item.text}
+          images={item.images}
+          chatId={chatId}
+          projectRoot={projectRoot}
+        />
+      );
     case "assistantText":
-      return <ChatBubble role="assistant" text={item.text} streaming={item.streaming} />;
+      return (
+        <ChatBubble
+          role="assistant"
+          text={item.text}
+          streaming={item.streaming}
+          chatId={chatId}
+          projectRoot={projectRoot}
+        />
+      );
     case "thinking":
       return (
         <ThinkingBubble

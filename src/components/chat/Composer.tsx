@@ -1253,9 +1253,6 @@ export function Composer(props: {
             options={modeDropdownOptions()}
           />
         </Show>
-        <Show when={props.meter}>
-          <div class="pf-chat-composer-meter">{props.meter}</div>
-        </Show>
       </div>
       <Show when={pasteError()}>
         {(message) => (
@@ -1390,32 +1387,38 @@ export function Composer(props: {
             </For>
           </div>
         </Show>
-        <div
-          ref={field}
-          class="pf-chat-textarea pf-chat-editor"
-          role="textbox"
-          aria-multiline="true"
-          aria-label={placeholder()}
-          data-placeholder={placeholder()}
-          title={
-            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
-          }
-          aria-description={
-            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
-          }
-          contentEditable={!preparing()}
-          spellcheck={true}
-          onInput={onInput}
-          onPaste={onPaste}
-          onKeyDown={onKeyDown}
-          onCompositionStart={() => {
-            composing = true;
-          }}
-          onCompositionEnd={() => {
-            composing = false;
-            onInput();
-          }}
-        />
+        {/* The frame (border, radius, fill) lives on this wrapper, not on the
+          * editor, so the context/cost readout can sit inside it as a bottom
+          * gutter without overlapping the editor's own scrolling content. */}
+        <div class="pf-chat-field">
+          <div
+            ref={field}
+            class="pf-chat-textarea pf-chat-editor"
+            role="textbox"
+            aria-multiline="true"
+            aria-label={placeholder()}
+            data-placeholder={placeholder()}
+            title={
+              props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+            }
+            aria-description={
+              props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+            }
+            contentEditable={!preparing()}
+            spellcheck={true}
+            onInput={onInput}
+            onPaste={onPaste}
+            onKeyDown={onKeyDown}
+            onCompositionStart={() => {
+              composing = true;
+            }}
+            onCompositionEnd={() => {
+              composing = false;
+              onInput();
+            }}
+          />
+          {props.meter}
+        </div>
         <Show
           when={props.turnActive}
           fallback={

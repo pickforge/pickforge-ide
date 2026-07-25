@@ -44,6 +44,11 @@ export function ContextMeter(props: {
   const hasCost = () => props.totals.costUsd > 0;
   const visible = () => hasContext() || hasCost();
 
+  // Layout note: this renders as the composer field's bottom gutter — tokens at
+  // the left inset, cost at the right, and the track as a rule on the field's
+  // own bottom edge (#342). The track is a child of this row rather than a
+  // free-standing 72px bar, so the gauge is as wide as the input and a low
+  // reading (a few % of a 1M window) is still legible.
   return (
     <Show when={visible()}>
       <div class="pf-chat-context" classList={{ "pf-chat-context--warn": overflow() }}>
@@ -56,13 +61,15 @@ export function ContextMeter(props: {
           >
             {compact(displayedUsed())} / {compact(window())}
           </span>
-          <span class="pf-chat-context-track" aria-hidden="true">
-            <span class="pf-chat-context-fill" style={{ width: `${fraction() * 100}%` }} />
-          </span>
         </Show>
         <Show when={hasCost()}>
           <span class="pf-chat-context-cost">
             {formatCost(props.totals.costUsd, props.totals.estimated)}
+          </span>
+        </Show>
+        <Show when={hasContext()}>
+          <span class="pf-chat-context-track" aria-hidden="true">
+            <span class="pf-chat-context-fill" style={{ width: `${fraction() * 100}%` }} />
           </span>
         </Show>
       </div>

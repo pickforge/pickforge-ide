@@ -5,6 +5,8 @@ import { render } from "solid-js/web";
 
 const testEnv = vi.hoisted(() => ({
   addChat: vi.fn(async () => "chat-id"),
+  invoke: vi.fn(),
+  chats: [] as unknown[],
   workspace: {
     projects: [{
       projectRoot: "/project",
@@ -19,6 +21,11 @@ const testEnv = vi.hoisted(() => ({
     activeRoot: null as string | null,
     activeChatId: null as string | null,
   },
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: testEnv.invoke,
+  Channel: class {},
 }));
 
 vi.hoisted(() => {
@@ -40,7 +47,7 @@ vi.mock("../../src/stores/workspace", () => ({
   addChat: testEnv.addChat,
   addProject: vi.fn(),
   archiveProject: vi.fn(),
-  chatsFor: () => [],
+  chatsFor: () => testEnv.chats,
   deleteChat: vi.fn(),
   deleteProject: vi.fn(),
   ensureChatsLoaded: vi.fn(async () => undefined),
@@ -74,6 +81,10 @@ vi.mock("../../src/stores/remoteHealth", () => ({
 
 import type { Chat } from "../../src/lib/db";
 import { chatMarkKind, ProjectsPane } from "../../src/screens/workbench/ProjectsPane";
+import {
+  registerTerminalSession,
+  unregisterTerminalSession,
+} from "../../src/stores/terminalHarnesses";
 
 let dispose: (() => void) | undefined;
 
@@ -82,6 +93,10 @@ afterEach(() => {
   dispose = undefined;
   document.body.replaceChildren();
   testEnv.addChat.mockClear();
+  testEnv.invoke.mockReset();
+  testEnv.chats = [];
+  unregisterTerminalSession("terminal-terminal", 7);
+  vi.useRealTimers();
 });
 
 function chat(kind: string, agentId: string): Chat {
@@ -122,6 +137,30 @@ describe("ProjectsPane chat identity", () => {
 
   it("uses the terminal mark for terminal chats", () => {
     expect(chatMarkKind(chat("terminal", "claudeCode"))).toBe("terminal");
+  });
+
+  it("renders a live harness beside the terminal mark and removes it after two empty polls", async () => {
+    vi.useFakeTimers();
+    testEnv.chats = [chat("terminal", "terminal")];
+    testEnv.invoke.mockResolvedValue({ "7": "claudeCode" });
+    registerTerminalSession("terminal-terminal", 7);
+
+    const root = document.createElement("div");
+    document.body.append(root);
+    dispose = render(() => ProjectsPane(), root);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const mark = root.querySelector<HTMLElement>(".pf-chat-agent-mark");
+    expect(mark?.getAttribute("aria-label")).toBe("Terminal · Claude Code");
+    expect(mark?.querySelectorAll("svg")).toHaveLength(2);
+
+    testEnv.invoke.mockResolvedValue({});
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(mark?.querySelectorAll("svg")).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(mark?.getAttribute("aria-label")).toBe("Terminal");
+    expect(mark?.querySelectorAll("svg")).toHaveLength(1);
   });
 
   it.each(["claudeCode", "codex", "omp", "pi"])(

@@ -50,8 +50,12 @@ migrated away. See `plans/rust-migration/`.)
   Keep platform/process/PTY/db logic here, not in the Tauri binary or the UI.
 - `src-tauri/` — the Tauri v2 binary. `src/*_commands.rs` adapt the core to IPC
   (`pty_commands`, `process_commands`, `db_commands`, `device_commands`,
-  `fs_commands`, `vm_commands`). `capabilities/default.json` scopes IPC
-  (default-deny — add new commands there). `tauri.conf.json` is the app manifest.
+  `fs_commands`, `vm_commands`). A new app-defined command is registered in
+  `generate_handler!` only — do **not** add it to `capabilities/default.json`.
+  That file grants Tauri core/plugin permissions; app-defined commands are
+  reachable without ACL entries, and adding one would switch the app to
+  default-deny and break every command not migrated at the same time.
+  `tauri.conf.json` is the app manifest.
 - `src/` — SolidJS frontend.
   - `screens/` — `Onboarding`, `Settings`, `History`, `RunHistory`, and
     `workbench/` (Workbench, InspectorPanel, ProjectsChatsPanel, FileExplorer).
@@ -109,6 +113,11 @@ keep new UI consistent with it.
   alone — neither type-checks. Always include `bunx tsc --noEmit` (or
   `bun run build`) in the validation pass (#329 review: a wrong-arity call
   passed tests and lint, failed only at build).
+- A Rust change is not validated by `cargo test` alone — CI runs
+  `cargo clippy --workspace --all-targets -- -D warnings`, where any lint is a
+  hard build failure. Always run that exact command locally before pushing
+  (#339 review: a `.iter().any(|x| *x == s)` collapse passed every local test
+  and failed CI on `clippy::manual_contains`).
 - When renaming or retiring an agent model id, grep for the version digits in
   free text too (`"opus 4.8"`, alias term arrays, swarm command parsing) — the
   exact-id grep misses natural-language sites — and migrate persisted

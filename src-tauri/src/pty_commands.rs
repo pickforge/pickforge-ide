@@ -275,6 +275,15 @@ pub fn pty_detach(manager: State<'_, PtyManager>, id: u32) -> Result<(), String>
     manager.detach(id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn pty_foreground_harnesses(manager: State<'_, PtyManager>) -> HashMap<String, String> {
+    manager
+        .foreground_harnesses()
+        .into_iter()
+        .map(|(id, harness)| (id.to_string(), harness.to_string()))
+        .collect()
+}
+
 /// Linux graphical `sudo` (askpass) pre-flight status — pickforge#215. The
 /// renderer calls this before/alongside spawning an agent chat to decide
 /// whether to show the "no graphical sudo helper" notice per the locked v1

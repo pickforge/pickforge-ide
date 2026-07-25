@@ -110,6 +110,13 @@ export function ptyDetach(id: number): Promise<void> {
   return invoke("pty_detach", { id });
 }
 
+export type TerminalHarnessId = "claudeCode" | "codex" | "pi" | "omp";
+
+/** Recognized harnesses in every live local PTY's foreground process group. */
+export function ptyForegroundHarnesses(): Promise<Record<string, TerminalHarnessId>> {
+  return invoke<Record<string, TerminalHarnessId>>("pty_foreground_harnesses");
+}
+
 /** Destroy a chat's recovery session on chat delete (kills the tmux session /
  *  removes the dtach socket). `sessionId` is the stored "<backend>:<name>". */
 export function ptyDestroyChatSession(sessionId: string): Promise<void> {

@@ -134,6 +134,7 @@ struct Session {
     /// detach (reap the client, leave the process group alone) so the recoverable
     /// session survives. A raw interactive shell is false → full group teardown.
     detach_on_drop: bool,
+    remote: bool,
     remote_lease: Option<RemoteLeaseHandle>,
 }
 
@@ -178,6 +179,7 @@ impl PtyManager {
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
         let (program, args, remote_lease, detach_on_drop) = resolve_spawn_command(&opts)?;
+        let remote = opts.remote.is_some();
         if let Some(lease) = remote_lease.as_ref() {
             lease.prepare()?;
         }
@@ -239,6 +241,7 @@ impl PtyManager {
             #[cfg(unix)]
             shell_pid,
             detach_on_drop,
+            remote,
             remote_lease,
         };
 
@@ -437,6 +440,16 @@ impl PtyManager {
         teardown_sessions(drained, PTY_SHUTDOWN_TIMEOUT)
     }
 
+    /// Recognized harnesses running in each local session's foreground group.
+    pub fn foreground_harnesses(&self) -> HashMap<u32, &'static str> {
+        self.sessions
+            .lock()
+            .expect("pty registry poisoned")
+            .iter()
+            .filter_map(|(&id, session)| foreground_harness(session).map(|harness| (id, harness)))
+            .collect()
+    }
+
     /// Number of live sessions (handy for tests / diagnostics).
     pub fn len(&self) -> usize {
         self.sessions.lock().expect("pty registry poisoned").len()
@@ -444,6 +457,87 @@ impl PtyManager {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+#[cfg(unix)]
+/// Detects harnesses only for raw PTYs. Under dtach or tmux, the local
+/// foreground process group belongs to the attach client rather than the shell
+/// or harness; backend-aware dtach/tmux resolution is tracked separately.
+fn foreground_harness(session: &Session) -> Option<&'static str> {
+    if session.remote {
+        return None;
+    }
+    let foreground_pid = session.master.process_group_leader()?;
+    if foreground_pid <= 0 || session.shell_pid == Some(foreground_pid as u32) {
+        return None;
+    }
+    let argv = crate::process::process_argv(foreground_pid as u32)?;
+    harness_from_argv(&argv)
+}
+
+#[cfg(not(unix))]
+fn foreground_harness(_session: &Session) -> Option<&'static str> {
+    None
+}
+
+fn harness_from_argv(argv: &[String]) -> Option<&'static str> {
+    let first = argv.first()?;
+    let first_name = normalized_arg_name(first);
+    if !is_interpreter(first_name.as_str()) {
+        return harness_for_arg(first);
+    }
+
+    for arg in &argv[1..] {
+        if arg.starts_with('-') || (first_name == "env" && arg.contains('=')) {
+            continue;
+        }
+        let name = normalized_arg_name(arg);
+        if is_interpreter(name.as_str()) {
+            continue;
+        }
+        return harness_for_arg(arg);
+    }
+    None
+}
+
+fn normalized_arg_name(arg: &str) -> String {
+    let basename = arg.rsplit(['/', '\\']).next().unwrap_or(arg);
+    basename
+        .strip_suffix(".js")
+        .or_else(|| basename.strip_suffix(".mjs"))
+        .or_else(|| basename.strip_suffix(".ts"))
+        .unwrap_or(basename)
+        .to_ascii_lowercase()
+}
+
+fn is_interpreter(name: &str) -> bool {
+    matches!(
+        name,
+        "node" | "bun" | "deno" | "python" | "python3" | "sh" | "env"
+    )
+}
+
+fn harness_for_arg(arg: &str) -> Option<&'static str> {
+    match normalized_arg_name(arg).as_str() {
+        "claude" => Some("claudeCode"),
+        "codex" => Some("codex"),
+        "pi" => Some("pi"),
+        "omp" => Some("omp"),
+        _ => {
+            let lower = arg.to_ascii_lowercase();
+            let components = lower.split(['/', '\\']).collect::<Vec<_>>();
+            if components
+                .iter()
+                .any(|part| *part == "oh-my-pi" || *part == "@oh-my-pi")
+            {
+                Some("omp")
+            } else if components.contains(&"pi-coding-agent") {
+                Some("pi")
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1254,6 +1348,89 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[test]
+    fn argv_matching_recognizes_native_and_interpreted_harnesses() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["claude"], Some("claudeCode")),
+            (&["/usr/local/bin/codex"], Some("codex")),
+            (
+                &[
+                    "bun",
+                    "/Users/me/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
+                ],
+                Some("omp"),
+            ),
+            (
+                &[
+                    "node",
+                    "/Users/me/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+                ],
+                Some("pi"),
+            ),
+            (&["node", "/Users/me/Projects/pi/server.js"], None),
+            (&["python3", "/Users/me/src/omp/train.py"], None),
+            (
+                &["node", "/Users/me/notes/oh-my-pi-guide/build.mjs"],
+                None,
+            ),
+            (&["zsh"], None),
+            (&["unknown-binary"], None),
+            (&[], None),
+        ];
+
+        for (argv, expected) in cases {
+            let argv = argv.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+            assert_eq!(harness_from_argv(&argv), *expected, "argv: {argv:?}");
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn foreground_harness_detects_a_real_known_named_process_in_a_pty() {
+        let scratch = std::env::temp_dir().join(format!(
+            "pf-harness-detection-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let codex = scratch.join("codex");
+        std::os::unix::fs::symlink("/bin/sleep", &codex).unwrap();
+
+        let manager = PtyManager::new();
+        let id = manager
+            .spawn(SpawnOptions::default(), |_| {})
+            .expect("interactive shell should spawn");
+        manager
+            .write(id, format!("'{}' 30\n", codex.display()).as_bytes())
+            .expect("known process command should reach the pty");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if manager.foreground_harnesses().get(&id) == Some(&"codex") {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("timed out waiting for the real codex-named foreground process");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        manager.kill(id).unwrap();
+        std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn foreground_harness_ignores_a_bare_shell() {
+        let manager = PtyManager::new();
+        let id = manager
+            .spawn(SpawnOptions::default(), |_| {})
+            .expect("interactive shell should spawn");
+
+        assert_eq!(manager.foreground_harnesses().get(&id), None);
+        manager.kill(id).unwrap();
     }
 
     #[cfg(unix)]

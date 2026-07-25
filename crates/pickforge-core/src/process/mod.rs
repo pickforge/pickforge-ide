@@ -2,6 +2,7 @@
 //! detect binaries on PATH, and run commands. Ports
 //! `lib/core/process/user_shell_environment.dart` + `binary_detector.dart`.
 
+mod argv;
 mod askpass;
 mod binary_detector;
 mod containment;
@@ -20,3 +21,4 @@ pub use runner::{
 };
 pub use shell_env::{mark_linux_dmabuf_env_synthesized, user_shell_environment};
 pub use start_gate::{StartGate, StartPermit};
+pub(crate) use argv::process_argv;

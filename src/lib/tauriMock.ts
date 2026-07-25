@@ -49,8 +49,12 @@ const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
-// #231 PR2 fixtures: one completed turn's ChangeSet, the live working-tree
-// ChangeSet, and a shared unified-diff body for the lazy per-file fetch.
+// #231 PR2/PR3 fixtures: one completed turn's ChangeSet (the same two files
+// the AGENT_CHAT_HISTORY fixture's `fileChange` item reports — its `diff` is
+// null, so per the "unknown stats stay unknown, never 0" rule these carry no
+// known line counts, exercising the chat receipt's unknown-stat rendering),
+// the live working-tree ChangeSet, and a shared unified-diff body for the
+// lazy per-file fetch.
 const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   id: `turn:${AGENT_CHAT_FIXTURE.chatId}:1`,
   scope: "turn",
@@ -63,20 +67,32 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   truncated: false,
   files: [
     {
-      path: "lib/login.dart",
+      path: "src/lib/tauriMock.ts",
       oldPath: null,
       status: "modify",
       // Provider/turn source: staged/unstaged doesn't apply.
       staged: null,
       unstaged: null,
-      additions: 4,
-      deletions: 1,
+      additions: null,
+      deletions: null,
       binary: false,
       truncated: false,
-      diffAvailable: true,
+      diffAvailable: false,
+    },
+    {
+      path: "tests/vrt/agent-chat.spec.ts",
+      oldPath: null,
+      status: "add",
+      staged: null,
+      unstaged: null,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: false,
     },
   ],
-  totals: { files: 1, additions: 4, deletions: 1 },
+  totals: { files: 2, additions: 0, deletions: 0 },
 });
 
 const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => ({

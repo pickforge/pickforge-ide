@@ -36,6 +36,7 @@ import { loadAgentEngine } from "../lib/chatDefaults";
 import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
+import { notifyChangesReviewTurnCompleted } from "./changes";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 import { remotePtyFor } from "../lib/remoteContext";
@@ -65,6 +66,20 @@ export type AgentTimelineItem =
       seq: number;
       itemId: string;
       changes: { path: string; kind: string; diff: string | null }[];
+      /** 0-based count of prior turns-with-file-changes closed earlier in
+       *  this chat (#231 PR3). Every `FileChange` event within one turn folds
+       *  into the SAME item (itemId stays the turn-opening event's id, seq
+       *  stays fixed too — virtualization keys off it), so this ordinal lines
+       *  up 1:1, in the same chronological order, with the entries
+       *  `changes_list_turn_change_sets` (#231 PR2) returns for this chat —
+       *  that RPC only emits one `ChangeSet` per turn that had a file change,
+       *  in turn-completion order, exactly mirroring this grouping rule. */
+      ordinal: number;
+      /** True once the enclosing turn's `turnDone`/`turnFailed` has closed
+       *  this group. The chat receipt (#231 PR3) renders only for
+       *  turnComplete items; an in-progress turn's raw events keep rendering
+       *  through the existing `FileChangeCard` until it closes. */
+      turnComplete: boolean;
     }
   | { type: "toolUse"; seq: number; itemId: string; name: string; detail: string | null }
   | { type: "mcpToolCall"; seq: number; itemId: string; server: string; tool: string }
@@ -131,6 +146,15 @@ export interface AgentChatState {
   totals: AgentChatTotals;
   cumulativeUsage: CumulativeUsageSnapshot | null;
   historyLoaded: boolean;
+  /** itemId of the currently-open turn's grouped `fileChange` timeline item
+   *  (#231 PR3), or null when no turn with file changes is open right now.
+   *  Closed (set back to null, ordinal bumped) on `turnDone`/`turnFailed`. */
+  openChangesReceiptItemId: string | null;
+  /** Next ordinal a newly-opened change-receipt group will receive. Seeded to
+   *  0 and only ever incremented when a turn WITH file changes closes — a
+   *  turn with none never opens a group, so it never consumes an ordinal
+   *  either, keeping this in lockstep with `changes_list_turn_change_sets`. */
+  nextChangesReceiptOrdinal: number;
 }
 
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
@@ -249,6 +273,8 @@ function emptyState(
     totals: emptyTotals(),
     cumulativeUsage: null,
     historyLoaded: false,
+    openChangesReceiptItemId: null,
+    nextChangesReceiptOrdinal: 0,
   };
 }
 
@@ -294,6 +320,24 @@ function takeSeq(chatId: string): number {
 
 function withTimeline(chat: AgentChatState, timeline: AgentTimelineItem[]): AgentChatState {
   return { ...chat, timeline };
+}
+
+/** Closes the currently-open change-receipt group (#231 PR3), if any — the
+ *  `turnDone`/`turnFailed` half of the fold `case "fileChange"` opens.
+ *  A no-op when the turn had no file changes (nothing was ever opened),
+ *  mirroring `group_turn_change_sets`'s rule that only a turn with at least
+ *  one `FileChange` event produces a `ChangeSet` at all. */
+function closeOpenChangesReceipt(chat: AgentChatState): AgentChatState {
+  const openId = chat.openChangesReceiptItemId;
+  if (!openId) return chat;
+  const timeline = chat.timeline.map((item) =>
+    item.type === "fileChange" && item.itemId === openId ? { ...item, turnComplete: true } : item,
+  );
+  return {
+    ...withTimeline(chat, timeline),
+    openChangesReceiptItemId: null,
+    nextChangesReceiptOrdinal: chat.nextChangesReceiptOrdinal + 1,
+  };
 }
 
 function isBlankText(text: string): boolean {
@@ -762,16 +806,37 @@ function reduceAgentEvent(
         },
       ]);
     }
-    case "fileChange":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "fileChange",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          changes: event.changes.map((change) => ({ ...change })),
-        },
-      ]);
+    case "fileChange": {
+      // Fold every FileChange event within one open turn into a SINGLE
+      // timeline item (#231 PR3) — the chat receipt is one card per completed
+      // turn, not one per event. Matches `group_turn_change_sets`'s implicit
+      // turn-open rule (opens on the first FileChange since the last close);
+      // `seq`/`itemId` stay pinned to the opening event so the virtualized
+      // row key never drifts while the group keeps accumulating.
+      const openId = chat.openChangesReceiptItemId;
+      if (openId) {
+        const timeline = chat.timeline.map((item) =>
+          item.type === "fileChange" && item.itemId === openId
+            ? { ...item, changes: [...item.changes, ...event.changes.map((change) => ({ ...change }))] }
+            : item,
+        );
+        return withTimeline(chat, timeline);
+      }
+      return {
+        ...withTimeline(chat, [
+          ...chat.timeline,
+          {
+            type: "fileChange",
+            seq: nextSeq(),
+            itemId: event.itemId,
+            changes: event.changes.map((change) => ({ ...change })),
+            ordinal: chat.nextChangesReceiptOrdinal,
+            turnComplete: false,
+          },
+        ]),
+        openChangesReceiptItemId: event.itemId,
+      };
+    }
     case "toolUse": {
       let matched = false;
       const timeline = chat.timeline.map((item) => {
@@ -845,9 +910,14 @@ function reduceAgentEvent(
     case "rateLimits":
       return { ...chat, rateLimits: event.payload };
     case "turnDone":
-      return { ...finalizeStreaming(chat), turnActive: false, approvals: [] };
+      return { ...finalizeStreaming(closeOpenChangesReceipt(chat)), turnActive: false, approvals: [] };
     case "turnFailed":
-      return { ...finalizeStreaming(chat), turnActive: false, error: event.error, approvals: [] };
+      return {
+        ...finalizeStreaming(closeOpenChangesReceipt(chat)),
+        turnActive: false,
+        error: event.error,
+        approvals: [],
+      };
     case "approvalRequest":
       if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
         return chat;
@@ -893,6 +963,10 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
     activeTitleTurnByChat.delete(chatId);
+    // #231 PR3: a live turn just closed — if this chat's changes-review store
+    // target is already pointed at it, refresh it. Live-only (not called from
+    // `stateFromHistory`'s replay), same as the activity-glow calls below.
+    notifyChangesReviewTurnCompleted(chatId);
     const titleEligible = event.kind === "turnDone" && event.status === "completed";
     if (titleEligible) {
       if (activeTitleTurn && !activeTitleTurn.hidden) {

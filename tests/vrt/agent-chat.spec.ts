@@ -24,6 +24,34 @@ test("agent chat fixture", async ({ page }) => {
   await expect(pinButton).toHaveAttribute("aria-pressed", "true");
   await pinButton.click();
   await expect(pinButton).toHaveAttribute("aria-pressed", "false");
+
+  // #231 PR3: the completed turn's file changes render as one compact,
+  // collapsed-by-default receipt instead of a raw inline diff card. The
+  // fixture's two files both carry no diff body, so their line counts are
+  // honestly unknown — never a fabricated "+0 −0" per file.
+  const receipt = page.locator(".pf-chat-receipt");
+  await expect(receipt.locator(".pf-chat-meta").first()).toHaveText("2 files changed");
+  await expect(receipt.locator(".pf-chat-receipt-stat--add")).toHaveText("+0");
+  await expect(receipt.locator(".pf-chat-receipt-stat--del")).toHaveText("−0");
+  await expect(receipt.locator(".pf-chat-receipt-unknown-flag")).toBeVisible();
+  await expect(receipt.locator(".pf-chat-receipt-counts")).toHaveText("1 added · 1 modified");
+  await expect(receipt.locator(".pf-chat-receipt-review")).toHaveText("Review changes");
+
+  const receiptToggle = receipt.locator(".pf-chat-receipt-toggle");
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "false");
+  await receiptToggle.click();
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "true");
+  const receiptRows = receipt.locator(".pf-chat-receipt-row");
+  await expect(receiptRows).toHaveCount(2);
+  await expect(receiptRows.nth(0).locator(".pf-chat-receipt-path")).toHaveText("src/lib/tauriMock.ts");
+  await expect(receiptRows.nth(0).locator(".pf-chat-receipt-status")).toHaveText("M");
+  await expect(receiptRows.nth(1).locator(".pf-chat-receipt-path")).toHaveText("tests/vrt/agent-chat.spec.ts");
+  await expect(receiptRows.nth(1).locator(".pf-chat-receipt-status")).toHaveText("A");
+  await expect(receiptRows.first().locator(".pf-chat-receipt-unknown")).toHaveText("unknown");
+  // Collapse back to the default state before pinning the screenshot.
+  await receiptToggle.click();
+  await expect(receiptToggle).toHaveAttribute("aria-expanded", "false");
+
   const timeline = page.locator(".pf-chat-timeline");
   const settledTimeline = await timeline.evaluate(async (element) => {
     const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));

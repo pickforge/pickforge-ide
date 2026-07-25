@@ -25,13 +25,27 @@ import { ChatBubble } from "./ChatBubble";
 import { ThinkingBubble } from "./ThinkingBubble";
 import { CommandCard } from "./CommandCard";
 import { FileChangeCard } from "./FileChangeCard";
+import { ChangesReceiptCard, type ChangesReceiptStatus } from "./ChangesReceiptCard";
 import { ToolUseCard } from "./ToolUseCard";
 import { McpCard } from "./McpCard";
 import { WebSearchCard } from "./WebSearchCard";
 import { PlanCard } from "./PlanCard";
 import { TokenBadge } from "./TokenBadge";
 import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
+import { reviewTurnChanges } from "../../lib/changesReceiptActions";
+import type { ChangeSet } from "../../lib/changes";
 import "./chat.css";
+
+/** Resolves a chat receipt's turn ordinal to its backend `ChangeSet` (#231
+ *  PR2's `changes_list_turn_change_sets`) plus that fetch's loading/error
+ *  state. The data fetch itself lives one level up (`AgentChatView`, which
+ *  owns `chatId`/`projectRoot` and knows when a new turn closed); this is
+ *  just the read seam threaded down through the virtualized timeline. */
+export interface ChangesReceiptSource {
+  changeSetAt: (ordinal: number) => ChangeSet | undefined;
+  loading: () => boolean;
+  error: () => boolean;
+}
 
 function EmptyGlyph(): JSX.Element {
   return (
@@ -54,12 +68,25 @@ export interface RowExpansion {
   toggle: (key: string) => void;
 }
 
+function resolveChangesReceiptStatus(
+  ordinal: number,
+  receipts?: ChangesReceiptSource,
+): ChangesReceiptStatus {
+  if (!receipts) return "unavailable";
+  if (receipts.changeSetAt(ordinal)) return "ready";
+  if (receipts.loading()) return "loading";
+  if (receipts.error()) return "error";
+  return "unavailable";
+}
+
 // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function renderItem(
   item: AgentTimelineItem,
   rowKey: string,
   chatId?: string,
   expansion?: RowExpansion,
+  projectRoot?: string,
+  changesReceipts?: ChangesReceiptSource,
 ): JSX.Element {
   // Inline `open={...}` / `onToggle={...}` (not a spread) so SolidJS keeps `open`
   // reactive — the child re-reads it when `expansion.get` bumps the version.
@@ -90,7 +117,23 @@ function renderItem(
         />
       );
     case "fileChange":
-      return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
+      // An in-progress turn keeps the existing raw per-event card; only a
+      // COMPLETED turn collapses to the compact receipt (#231 PR3).
+      if (!item.turnComplete) {
+        return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
+      }
+      return (
+        <ChangesReceiptCard
+          status={resolveChangesReceiptStatus(item.ordinal, changesReceipts)}
+          changeSet={changesReceipts?.changeSetAt(item.ordinal) ?? null}
+          open={expansion ? expansion.get(rowKey) : undefined}
+          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
+          onReviewChanges={() => {
+            const changeSet = changesReceipts?.changeSetAt(item.ordinal);
+            if (changeSet && chatId && projectRoot) reviewTurnChanges(chatId, projectRoot, changeSet);
+          }}
+        />
+      );
     case "toolUse":
       return <ToolUseCard name={item.name} detail={item.detail} />;
     case "mcpToolCall":
@@ -144,6 +187,8 @@ export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
   chatId?: string;
+  projectRoot?: string;
+  changesReceipts?: ChangesReceiptSource;
 }): JSX.Element {
   let scroller!: HTMLDivElement;
   // Follow the streaming tail, but detach the instant the user scrolls up (any
@@ -519,6 +564,8 @@ export function ChatTimeline(props: {
                     style={rowStyle(key)}
                     onHeight={queueRowHeight}
                     chatId={props.chatId}
+                    projectRoot={props.projectRoot}
+                    changesReceipts={props.changesReceipts}
                     expansion={expansion}
                   />
                 )}
@@ -537,6 +584,8 @@ function MeasuredTimelineRow(props: {
   style: JSX.CSSProperties;
   onHeight: (key: string, height: number) => void;
   chatId?: string;
+  projectRoot?: string;
+  changesReceipts?: ChangesReceiptSource;
   expansion?: RowExpansion;
 }): JSX.Element {
   let rowEl!: HTMLDivElement;
@@ -570,7 +619,14 @@ function MeasuredTimelineRow(props: {
   return (
     <div class="pf-chat-virtual-row" ref={rowEl} style={props.style}>
       {props.row.kind === "item"
-        ? renderItem(props.row.item, props.rowKey, props.chatId, props.expansion)
+        ? renderItem(
+            props.row.item,
+            props.rowKey,
+            props.chatId,
+            props.expansion,
+            props.projectRoot,
+            props.changesReceipts,
+          )
         : <WorkingRow />}
     </div>
   );

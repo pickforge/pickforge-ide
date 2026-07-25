@@ -149,6 +149,8 @@ describe("chat timeline virtualization helpers", () => {
           seq: 2,
           itemId: "files",
           changes: [{ path: "src/app.ts", kind: "modified", diff: null }],
+          ordinal: 0,
+          turnComplete: false,
         },
       }),
       estimateTimelineRowHeight({
@@ -204,6 +206,8 @@ describe("chat timeline virtualization helpers", () => {
           kind: "modified",
           diff: null,
         })),
+        ordinal: 0,
+        turnComplete: false,
       },
     });
 

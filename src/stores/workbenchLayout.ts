@@ -120,6 +120,25 @@ export function togglePaneCollapsed(pane: PaneId) {
   const s = state();
   persist({ ...s, collapsed: { ...s.collapsed, [pane]: !s.collapsed[pane] } });
 }
+
+/** Un-hides `pane`'s dock and un-collapses the pane itself, without touching
+ *  anything else about the layout — an idempotent "make this visible" rather
+ *  than a toggle. */
+export function revealPane(pane: PaneId) {
+  const s = state();
+  const dock: DockId = s.docks.left.includes(pane) ? "left" : "right";
+  const visible = dock === "left" ? s.leftVisible : s.rightVisible;
+  if (!visible) setDockVisible(dock, true);
+  if (state().collapsed[pane]) togglePaneCollapsed(pane);
+}
+
+/** #231 PR3 "Review changes" seam: focuses today's Source Control pane, the
+ *  closest existing surface to a turn's changes. PR4 retarget seam — once the
+ *  reusable Changes reviewer surface exists, callers should open/focus THAT
+ *  surface at the selected review scope instead of this pane. */
+export function focusChangesReviewSurface() {
+  revealPane("sourceControl");
+}
 export function isCollapsed(pane: PaneId): boolean {
   return !!state().collapsed[pane];
 }

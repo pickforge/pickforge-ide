@@ -54,6 +54,7 @@ const definitions = {
   pikitLanes: { description: "Pi-kit lanes visibility in Settings (#274 slice 3, #288)" },
   pikitContext: { description: "PickForge context surfaced in Pi sessions (#299 slice 4)" },
   changesReview: { description: "In-chat changes receipt and Review-changes action (#231)" },
+  flatChatList: { description: "Flat chat-first sidebar sorted by state (#306 PR1)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

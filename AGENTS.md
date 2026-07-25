@@ -84,6 +84,10 @@ keep new UI consistent with it.
 
 ## Testing
 
+- A TypeScript change is not validated by `bun run test:unit` + `bun run lint`
+  alone — neither type-checks. Always include `bunx tsc --noEmit` (or
+  `bun run build`) in the validation pass (#329 review: a wrong-arity call
+  passed tests and lint, failed only at build).
 - When renaming or retiring an agent model id, grep for the version digits in
   free text too (`"opus 4.8"`, alias term arrays, swarm command parsing) — the
   exact-id grep misses natural-language sites — and migrate persisted

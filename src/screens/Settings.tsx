@@ -113,6 +113,7 @@ import { voiceStatus, type VoiceStatus } from "../lib/voice";
 import {
   setVoiceMicEnabled,
   setVoiceModelPath,
+  setVoiceOutput,
   setVoicePushToCommand,
   voiceDictationSettings,
   voiceModelOverride,
@@ -1772,6 +1773,28 @@ const DictationContent = (props: { voice: VoiceSettingsState }) => {
           <button
             classList={{ active: !voiceDictationSettings().pushToCommand }}
             onClick={() => setVoicePushToCommand(false)}
+          >
+            Off
+          </button>
+        </div>
+      </div>
+      <div class="pf-settings-row">
+        <span class="pf-settings-label">
+          Ember talk-back
+          <span class="pf-settings-hint-inline">
+            speak safe (no-confirmation) command replies back via local OS TTS — only for commands said aloud, never typed ones
+          </span>
+        </span>
+        <div class="pf-seg">
+          <button
+            classList={{ active: voiceDictationSettings().voiceOutput === "local" }}
+            onClick={() => setVoiceOutput("local")}
+          >
+            On
+          </button>
+          <button
+            classList={{ active: voiceDictationSettings().voiceOutput === "off" }}
+            onClick={() => setVoiceOutput("off")}
           >
             Off
           </button>

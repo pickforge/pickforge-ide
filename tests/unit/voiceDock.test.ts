@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { VoiceEvent, VoiceStatus } from "../../src/lib/voice";
+import type { SpeakEvent, VoiceEvent, VoiceStatus } from "../../src/lib/voice";
 
 const deps = vi.hoisted(() => ({
   startVoice: vi.fn(),
   stopVoice: vi.fn(),
   cancelVoice: vi.fn(),
   voiceStatus: vi.fn(),
-  setOperatorInput: vi.fn(),
+  speakVoice: vi.fn(),
+  cancelSpeak: vi.fn(),
+  setOperatorInputFromVoice: vi.fn(),
   submitOperatorCommand: vi.fn(),
   settings: { micEnabled: true, pushToCommand: false, modelPath: "" },
 }));
@@ -16,9 +18,11 @@ vi.mock("../../src/lib/voice", () => ({
   stopVoice: deps.stopVoice,
   cancelVoice: deps.cancelVoice,
   voiceStatus: deps.voiceStatus,
+  speakVoice: deps.speakVoice,
+  cancelSpeak: deps.cancelSpeak,
 }));
 vi.mock("../../src/stores/operatorDock", () => ({
-  setOperatorInput: deps.setOperatorInput,
+  setOperatorInputFromVoice: deps.setOperatorInputFromVoice,
   submitOperatorCommand: deps.submitOperatorCommand,
 }));
 vi.mock("../../src/stores/voiceSettings", () => ({
@@ -55,6 +59,25 @@ function captureSink(sessionId = "sess-1") {
   });
 }
 
+let emitSpeak: (event: SpeakEvent) => void = () => {};
+
+function captureSpeakSink(sessionId = "speak-1") {
+  deps.speakVoice.mockImplementation((_text: string, onEvent: (event: SpeakEvent) => void) => {
+    emitSpeak = onEvent;
+    return Promise.resolve(sessionId);
+  });
+}
+
+function speakStarted(sessionId = "speak-1"): SpeakEvent {
+  return { kind: "started", sessionId, message: null };
+}
+function speakFinished(sessionId = "speak-1"): SpeakEvent {
+  return { kind: "finished", sessionId, message: null };
+}
+function speakError(message: string, sessionId = "speak-1"): SpeakEvent {
+  return { kind: "error", sessionId, message };
+}
+
 async function loadStore() {
   vi.resetModules();
   return import("../../src/stores/voiceDock");
@@ -71,7 +94,9 @@ beforeEach(() => {
   deps.stopVoice.mockReset();
   deps.cancelVoice.mockReset().mockResolvedValue(undefined);
   deps.voiceStatus.mockReset().mockResolvedValue(AVAILABLE);
-  deps.setOperatorInput.mockReset();
+  deps.speakVoice.mockReset();
+  deps.cancelSpeak.mockReset().mockResolvedValue(undefined);
+  deps.setOperatorInputFromVoice.mockReset();
   deps.submitOperatorCommand.mockReset();
   deps.settings = { micEnabled: true, pushToCommand: false, modelPath: "" };
   emit = () => {};
@@ -177,7 +202,7 @@ describe("voiceDock store", () => {
 
     await s.stopDictation();
 
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("captured");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("captured");
     expect(s.micBusyLocked(true)).toBe(true);
   });
 
@@ -200,7 +225,7 @@ describe("voiceDock store", () => {
     await s.stopDictation();
 
     expect(deps.stopVoice).toHaveBeenCalledWith("sess-1");
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("hello world");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("hello world");
     expect(deps.submitOperatorCommand).not.toHaveBeenCalled();
     expect(s.voiceDockPhase()).toBe("idle");
     expect(s.voiceDockPreview()).toBe("");
@@ -217,7 +242,7 @@ describe("voiceDock store", () => {
     await s.startDictation();
     await s.stopDictation();
 
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("done text");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("done text");
   });
 
   it("passes the configured model override to status and start", async () => {
@@ -246,11 +271,11 @@ describe("voiceDock store", () => {
     expect(deps.cancelVoice).toHaveBeenCalledWith("sess-1");
     expect(s.voiceDockPhase()).toBe("idle");
     expect(s.voiceDockPreview()).toBe("");
-    expect(deps.setOperatorInput).not.toHaveBeenCalled();
+    expect(deps.setOperatorInputFromVoice).not.toHaveBeenCalled();
 
     // A late final event after cancel must be ignored.
     emit(final("stale transcript"));
-    expect(deps.setOperatorInput).not.toHaveBeenCalled();
+    expect(deps.setOperatorInputFromVoice).not.toHaveBeenCalled();
   });
 
   it("surfaces an error event quietly without touching the input", async () => {
@@ -263,7 +288,7 @@ describe("voiceDock store", () => {
     expect(s.voiceDockPhase()).toBe("error");
     expect(s.voiceDockError()).toBe("whisper-cli crashed");
     expect(s.voiceDockPreview()).toBe("");
-    expect(deps.setOperatorInput).not.toHaveBeenCalled();
+    expect(deps.setOperatorInputFromVoice).not.toHaveBeenCalled();
   });
 
   it("cancels the backend session on an unsolicited mid-recording error, then allows a fresh start", async () => {
@@ -289,7 +314,7 @@ describe("voiceDock store", () => {
     deps.stopVoice.mockResolvedValue("second take");
     await s.stopDictation();
     expect(deps.stopVoice).toHaveBeenCalledWith("sess-2");
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("second take");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("second take");
     expect(deps.cancelVoice).toHaveBeenCalledOnce();
   });
 
@@ -326,7 +351,7 @@ describe("voiceDock store", () => {
     expect(s.voiceDockPhase()).toBe("recording");
     await s.stopDictation();
     expect(deps.stopVoice).toHaveBeenCalledWith("sess-2");
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("second take");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("second take");
   });
 
   it("surfaces a rejected stop() as an error", async () => {
@@ -339,7 +364,7 @@ describe("voiceDock store", () => {
 
     expect(s.voiceDockPhase()).toBe("error");
     expect(s.voiceDockError()).toBe("pipeline failed");
-    expect(deps.setOperatorInput).not.toHaveBeenCalled();
+    expect(deps.setOperatorInputFromVoice).not.toHaveBeenCalled();
   });
 
   it("auto-submits the composer on final when push-to-command is enabled", async () => {
@@ -351,7 +376,7 @@ describe("voiceDock store", () => {
     await s.startDictation();
     await s.stopDictation();
 
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("open project app");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("open project app");
     expect(deps.submitOperatorCommand).toHaveBeenCalledOnce();
   });
 
@@ -364,7 +389,7 @@ describe("voiceDock store", () => {
     await s.startDictation();
     await s.stopDictation();
 
-    expect(deps.setOperatorInput).not.toHaveBeenCalled();
+    expect(deps.setOperatorInputFromVoice).not.toHaveBeenCalled();
     expect(deps.submitOperatorCommand).not.toHaveBeenCalled();
     expect(s.voiceDockPhase()).toBe("idle");
   });
@@ -411,7 +436,7 @@ describe("voiceDock store", () => {
 
     resolveStop("captured");
     await flushAsync();
-    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("captured");
+    expect(deps.setOperatorInputFromVoice).toHaveBeenCalledExactlyOnceWith("captured");
     expect(s.voiceDockPhase()).toBe("idle");
   });
 
@@ -428,5 +453,125 @@ describe("voiceDock store", () => {
       error: "ipc down",
     });
     expect(s.voiceAvailability()?.available).toBe(false);
+  });
+});
+
+describe("voiceDock store — Ember talk-back", () => {
+  it("speaks: phase goes to speaking, then back to idle on finished", async () => {
+    captureSpeakSink();
+    const s = await loadStore();
+
+    const speaking = s.speakReply("Opened project App");
+    await flushAsync();
+    expect(s.voiceDockPhase()).toBe("speaking");
+    expect(deps.speakVoice).toHaveBeenCalledWith("Opened project App", expect.any(Function));
+
+    emitSpeak(speakStarted());
+    emitSpeak(speakFinished());
+    await speaking;
+
+    expect(s.voiceDockPhase()).toBe("idle");
+  });
+
+  it("a speak error settles quietly to idle, never surfacing as a dock error", async () => {
+    captureSpeakSink();
+    const s = await loadStore();
+
+    const speaking = s.speakReply("Something failed");
+    await flushAsync();
+    emitSpeak(speakError("tts exited with 1"));
+    await speaking;
+
+    expect(s.voiceDockPhase()).toBe("idle");
+    expect(s.voiceDockError()).toBeNull();
+  });
+
+  it("a rejected speakVoice call settles quietly to idle", async () => {
+    deps.speakVoice.mockRejectedValue(new Error("ipc down"));
+    const s = await loadStore();
+
+    await s.speakReply("hello");
+
+    expect(s.voiceDockPhase()).toBe("idle");
+    expect(s.voiceDockError()).toBeNull();
+  });
+
+  it("never speaks over a live recording", async () => {
+    captureSink();
+    const s = await loadStore();
+
+    await s.startDictation();
+    expect(s.voiceDockPhase()).toBe("recording");
+
+    await s.speakReply("should not happen");
+
+    expect(deps.speakVoice).not.toHaveBeenCalled();
+    expect(s.voiceDockPhase()).toBe("recording");
+  });
+
+  it("barge-in: starting a new recording cancels an in-flight utterance", async () => {
+    captureSpeakSink("speak-old");
+    const s = await loadStore();
+
+    void s.speakReply("a long reply");
+    await flushAsync();
+    expect(s.voiceDockPhase()).toBe("speaking");
+
+    captureSink("sess-1");
+    await s.startDictation();
+
+    expect(deps.cancelSpeak).toHaveBeenCalledWith("speak-old");
+    expect(s.voiceDockPhase()).toBe("recording");
+
+    // A late finished event for the barged-in utterance must not clobber the
+    // now-recording phase.
+    emitSpeak(speakFinished("speak-old"));
+    expect(s.voiceDockPhase()).toBe("recording");
+  });
+
+  it("a fresh reply supersedes an older in-flight one", async () => {
+    captureSpeakSink("speak-1");
+    const s = await loadStore();
+
+    void s.speakReply("first reply");
+    await flushAsync();
+
+    captureSpeakSink("speak-2");
+    await s.speakReply("second reply");
+
+    expect(deps.cancelSpeak).toHaveBeenCalledWith("speak-1");
+    expect(s.voiceDockPhase()).toBe("speaking");
+
+    emitSpeak(speakFinished("speak-2"));
+    expect(s.voiceDockPhase()).toBe("idle");
+  });
+
+  it("cancelSpeaking is idempotent — a second cancel with nothing in flight is a no-op", async () => {
+    captureSpeakSink();
+    const s = await loadStore();
+
+    void s.speakReply("hello");
+    await flushAsync();
+
+    await s.cancelSpeaking();
+    expect(deps.cancelSpeak).toHaveBeenCalledExactlyOnceWith("speak-1");
+
+    await s.cancelSpeaking();
+    expect(deps.cancelSpeak).toHaveBeenCalledOnce();
+    expect(s.voiceDockPhase()).toBe("idle");
+  });
+
+  it("resetVoiceDock cancels an in-flight utterance along with any dictation session", async () => {
+    captureSpeakSink();
+    const s = await loadStore();
+
+    void s.speakReply("hello");
+    await flushAsync();
+    expect(s.voiceDockPhase()).toBe("speaking");
+
+    s.resetVoiceDock();
+
+    expect(deps.cancelSpeak).toHaveBeenCalledWith("speak-1");
+    expect(s.voiceDockPhase()).toBe("idle");
   });
 });

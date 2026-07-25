@@ -4,6 +4,7 @@ import "./styles/global.css";
 import { installTauriMock } from "./lib/tauriMock";
 import { installStudioUpdateFixture } from "./lib/studioUpdateFixture";
 import { installFlatChatListFixture } from "./lib/flatChatListFixture";
+import { installOrchestraBoardFixture } from "./lib/orchestraBoardFixture";
 import { App } from "./App";
 
 // VRT builds (VITE_PICKFORGE_VRT=1) stub the Tauri runtime so the app renders
@@ -12,6 +13,7 @@ if (import.meta.env.VITE_PICKFORGE_VRT) {
   installTauriMock();
   installStudioUpdateFixture();
   installFlatChatListFixture();
+  installOrchestraBoardFixture();
 }
 
 const root = document.getElementById("root");

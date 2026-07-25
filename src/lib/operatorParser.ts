@@ -2,6 +2,7 @@ import {
   parseOperatorIntent,
   type OperatorAction,
   type OperatorIntent,
+  type OperatorProvenance,
 } from "./operatorIntent";
 
 export type ParseResult =
@@ -44,11 +45,15 @@ function parseCount(raw: string | undefined): number | "invalid" {
   return count;
 }
 
-function compose(action: OperatorAction, projectRef: string | null): ParseResult {
+function compose(
+  action: OperatorAction,
+  projectRef: string | null,
+  provenance: OperatorProvenance,
+): ParseResult {
   const parsed = parseOperatorIntent(JSON.stringify({
     v: 2,
     id: crypto.randomUUID(),
-    provenance: "typed",
+    provenance,
     confidence: 1,
     projectRef,
     action,
@@ -239,7 +244,10 @@ const rules: CommandRule[] = [
   },
 ];
 
-export function parseCommand(input: string): ParseResult {
+export function parseCommand(
+  input: string,
+  provenance: OperatorProvenance = "typed",
+): ParseResult {
   const command = input.trim();
   if (!command) return { kind: "empty" };
 
@@ -252,7 +260,7 @@ export function parseCommand(input: string): ParseResult {
     if ("validationError" in result) {
       return { kind: "validationError", reason: result.validationError };
     }
-    return compose(result.action, result.projectRef);
+    return compose(result.action, result.projectRef, provenance);
   }
 
   return { kind: "needsRouter", reason: "no deterministic match" };

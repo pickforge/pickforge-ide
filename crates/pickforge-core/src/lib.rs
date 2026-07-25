@@ -90,6 +90,7 @@ pub use transcript::{
     TERMINAL_MODE_RESETS,
 };
 pub use voice::{
-    voice_availability, VoiceAvailability, VoiceDependency, VoiceEvent, VoiceEventKind,
-    VoiceSessionManager, VoiceStartRequest,
+    voice_availability, OsTtsBackend, RunningSpeech, SpeakEvent, SpeakEventKind, SpeakSink,
+    SpeechBackend, SpeechSessionManager, VoiceAvailability, VoiceDependency, VoiceEvent,
+    VoiceEventKind, VoiceSessionManager, VoiceStartRequest,
 };

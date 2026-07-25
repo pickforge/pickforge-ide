@@ -392,6 +392,136 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   color: var(--pf-text-hi);
 }
 
+/* ---- Board view (#319, #196 PR1, behind `orchestraBoard`) ----
+   A column-per-status pipeline lens over the same tasks the flat list shows —
+   dev-tool density, hairline column structure, mono eyebrows, one ember
+   accent for busy (reviewer/#306's own busy treatment), warning for
+   needs-you. No filled pills, no new motion beyond what the flat-sidebar row
+   idiom already uses. */
+.pf-orch-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pf-board {
+  display: flex;
+  gap: var(--pf-space-sm);
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.pf-board-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  flex: 1 1 0;
+  min-width: 132px;
+}
+.pf-board-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--pf-space-xs);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-board-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  min-height: 0;
+}
+.pf-board-col-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  padding: var(--pf-space-xs) 2px;
+}
+.pf-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-board-card:hover {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-board-card--busy {
+  background: color-mix(in srgb, var(--pf-ember) 8%, var(--pf-surface-2));
+  box-shadow: inset var(--pf-bracket-width) 0 0 color-mix(in srgb, var(--pf-ember) 58%, transparent);
+}
+.pf-board-card--attention {
+  background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-2));
+  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
+}
+/* A persisted builder/reviewer link whose lane isn't mounted this session
+   (P2-2) — the card stays readable but doesn't offer a click affordance it
+   can't honor. */
+.pf-board-card--unfocusable {
+  cursor: default;
+}
+.pf-board-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-xs);
+}
+.pf-board-card-marks {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
+.pf-board-card-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--pf-text-low);
+}
+.pf-board-card-mark--busy {
+  color: var(--pf-ember);
+}
+.pf-board-card-mark--attention {
+  color: var(--pf-warning);
+}
+.pf-board-card-title {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.pf-board-card-note {
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-med);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-board-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-board-card-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- Add task ---- */
 .pf-orch-add {
   display: flex;

@@ -1,4 +1,5 @@
 import { getProSupabaseClient } from "./proAuth";
+import type { OperatorProvenance } from "./operatorIntent";
 import {
   composeIntent,
   routerProposalSchema,
@@ -105,7 +106,12 @@ function errorMessage(error: unknown): string {
   return typeof error === "string" ? error : "hosted router request failed";
 }
 
-function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents: number): HostedRouteResult {
+function proposalToResult(
+  proposal: RouterProposal,
+  latencyMs: number,
+  costCents: number,
+  provenance: OperatorProvenance,
+): HostedRouteResult {
   if ("unclear" in proposal) {
     // The model still ran and billed, so an unclear answer carries its cost too.
     return { kind: "unclear", reason: proposal.reason ?? "hosted router could not map this command", costCents };
@@ -118,7 +124,7 @@ function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents
   }
   return {
     kind: "proposal",
-    intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef),
+    intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef, provenance),
     confidence: proposal.confidence,
     latencyMs,
     costCents,
@@ -179,7 +185,11 @@ async function callHostedRouter(body: HostedRouteRequestBody, key: string): Prom
   return { record, transportError: null };
 }
 
-function interpretRecord(record: Record<string, unknown> | null, latencyMs: number): HostedRouteResult {
+function interpretRecord(
+  record: Record<string, unknown> | null,
+  latencyMs: number,
+  provenance: OperatorProvenance,
+): HostedRouteResult {
   if (!record) return { kind: "error", message: "hosted router returned no data" };
 
   if (record.error === "insufficient_credits") {
@@ -216,10 +226,13 @@ function interpretRecord(record: Record<string, unknown> | null, latencyMs: numb
   }
   const parsed = routerProposalSchema.safeParse(value);
   if (!parsed.success) return { kind: "error", message: parsed.error.message, costCents };
-  return proposalToResult(parsed.data, latencyMs, costCents);
+  return proposalToResult(parsed.data, latencyMs, costCents, provenance);
 }
 
-export async function hostedRoute(commandText: string): Promise<HostedRouteResult> {
+export async function hostedRoute(
+  commandText: string,
+  provenance: OperatorProvenance = "typed",
+): Promise<HostedRouteResult> {
   if (!accountSession()) return { kind: "unconfigured" };
 
   const body: HostedRouteRequestBody = { commandText };
@@ -230,7 +243,7 @@ export async function hostedRoute(commandText: string): Promise<HostedRouteResul
   try {
     const call = await callHostedRouter(body, crypto.randomUUID());
     if (call.transportError) return { kind: "error", message: call.transportError };
-    return interpretRecord(call.record, Date.now() - start);
+    return interpretRecord(call.record, Date.now() - start, provenance);
   } catch (error) {
     if (error instanceof HostedTimeoutError) {
       return { kind: "error", message: "routing timed out — try again" };

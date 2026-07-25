@@ -54,3 +54,24 @@ export function voiceStatus(modelPathOverride?: string | null): Promise<VoiceSta
     modelPathOverride: modelPathOverride ?? null,
   });
 }
+
+// Ember talk-back: a sibling channel to VoiceEvent above, not a widened
+// variant of it — dictation's partial/final/error/level events and speech's
+// started/finished/error events are unrelated concerns that happen to share
+// the same Channel<T> + session-id plumbing idiom.
+export type SpeakEvent =
+  | { kind: "started" | "finished"; sessionId: string; message: null }
+  | { kind: "error"; sessionId: string; message: string };
+
+export function speakVoice(
+  text: string,
+  onEvent: (event: SpeakEvent) => void,
+): Promise<string> {
+  const channel = new Channel<SpeakEvent>();
+  channel.onmessage = onEvent;
+  return invoke<string>("voice_speak", { text, onEvent: channel });
+}
+
+export function cancelSpeak(sessionId: string): Promise<void> {
+  return invoke("voice_speak_cancel", { sessionId });
+}

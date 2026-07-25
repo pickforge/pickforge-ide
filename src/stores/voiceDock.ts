@@ -5,18 +5,21 @@
 // operator flag via the dock that mounts it.
 import { createSignal } from "solid-js";
 import {
+  cancelSpeak,
   cancelVoice,
+  speakVoice,
   startVoice,
   stopVoice,
   voiceStatus,
+  type SpeakEvent,
   type VoiceEvent,
   type VoiceStatus,
 } from "../lib/voice";
 import { errorText as genericErrorText } from "../lib/errors";
-import { setOperatorInput, submitOperatorCommand } from "./operatorDock";
+import { setOperatorInputFromVoice, submitOperatorCommand } from "./operatorDock";
 import { voiceDictationSettings, voiceModelOverride } from "./voiceSettings";
 
-export type VoiceDockPhase = "idle" | "recording" | "finalizing" | "error";
+export type VoiceDockPhase = "idle" | "recording" | "finalizing" | "speaking" | "error";
 
 const [phase, setPhase] = createSignal<VoiceDockPhase>("idle");
 export const voiceDockPhase = phase;
@@ -31,6 +34,7 @@ const [availability, setAvailability] = createSignal<VoiceStatus | null>(null);
 export const voiceAvailability = availability;
 
 export const voiceDockActive = () => phase() === "recording" || phase() === "finalizing";
+export const voiceDockSpeaking = () => phase() === "speaking";
 
 // A busy operator (submitting/confirming) blocks STARTING a recording, but
 // never locks out STOPPING one that is already live — otherwise the mic goes
@@ -42,9 +46,17 @@ export function micBusyLocked(operatorBusy: boolean): boolean {
 // A session in flight; the epoch supersedes stale channel events and pending
 // awaits when the user cancels/restarts, and `finalized` makes the final land
 // exactly once (stop() returns the transcript *and* emits a final event).
+// `epoch` is shared with the speak session below by design: a new recording
+// start or an explicit cancel must supersede an in-flight utterance the same
+// way it already supersedes a stale dictation result (barge-in).
 let sessionId: string | null = null;
 let epoch = 0;
 let finalized = false;
+// Ember talk-back's own session bookkeeping, kept separate from dictation's
+// sessionId/finalized above — the two never coexist in this single-phase
+// state machine, but they settle differently (dictation resolves via
+// stop()'s return value; speech only ever resolves via a SpeakEvent).
+let speakSessionId: string | null = null;
 // Synchronous start latch: the phase only flips to "recording" after the
 // status check resolves, so without it two quick toggles could both pass the
 // guard and spawn concurrent voice sessions. Set before any await, cleared
@@ -85,6 +97,8 @@ export async function refreshVoiceStatus(): Promise<VoiceStatus | null> {
 
 export async function startDictation(): Promise<void> {
   if (starting || voiceDockActive()) return;
+  // Barge-in: talking over Ember cancels whatever it was saying.
+  if (phase() === "speaking") await cancelSpeaking();
   starting = true;
   // Claim the epoch before the first await so a dock reset during the status
   // check (or the startVoice call) supersedes this start instead of letting a
@@ -160,11 +174,14 @@ export function toggleDictation(): void {
   void startDictation();
 }
 
-// Abandon any in-flight session and reset to idle. Called when the dock closes.
+// Abandon any in-flight dictation or speech session and reset to idle.
+// Called when the dock closes — a dock action is itself a barge-in trigger.
 export function resetVoiceDock(): void {
   const id = teardown();
+  const speakId = teardownSpeech();
   setError(null);
   if (id) void cancelVoice(id).catch(() => {});
+  if (speakId) void cancelSpeak(speakId).catch(() => {});
 }
 
 function teardown(): string | null {
@@ -175,6 +192,70 @@ function teardown(): string | null {
   setPreview("");
   setPhase("idle");
   return id;
+}
+
+function teardownSpeech(): string | null {
+  const id = speakSessionId;
+  epoch++;
+  speakSessionId = null;
+  if (phase() === "speaking") setPhase("idle");
+  return id;
+}
+
+/** Speak `text` via local TTS. A fresh reply always supersedes an older one,
+ *  and never talks over a live/finalizing recording. Failures are quiet —
+ *  talk-back is a nice-to-have layered on an already-settled command, never
+ *  worth surfacing as a dock error (which would read as the command itself
+ *  having failed). */
+export async function speakReply(text: string): Promise<void> {
+  if (phase() === "speaking") await cancelSpeaking();
+  if (voiceDockActive()) return;
+  const mine = ++epoch;
+  setPhase("speaking");
+  try {
+    const id = await speakVoice(text, onSpeakEvent(mine));
+    if (mine !== epoch) {
+      void cancelSpeak(id).catch(() => {});
+      return;
+    }
+    speakSessionId = id;
+  } catch (error) {
+    console.warn("[pickforge] ember speak failed", errorText(error));
+    if (mine === epoch) setPhase("idle");
+  }
+}
+
+/** Barge-in: hard-cancel an in-flight utterance. Idempotent — cancelling
+ *  when nothing is speaking is a no-op. */
+export async function cancelSpeaking(): Promise<void> {
+  const id = teardownSpeech();
+  if (id) {
+    try {
+      await cancelSpeak(id);
+    } catch {
+      // Best-effort, same as cancelDictation — the session is already
+      // abandoned locally either way.
+    }
+  }
+}
+
+function onSpeakEvent(mine: number) {
+  return (event: SpeakEvent) => {
+    if (mine !== epoch) return;
+    switch (event.kind) {
+      case "started":
+        break;
+      case "finished":
+        speakSessionId = null;
+        setPhase("idle");
+        break;
+      case "error":
+        speakSessionId = null;
+        setPhase("idle");
+        console.warn("[pickforge] ember speak error", event.message);
+        break;
+    }
+  };
 }
 
 function onVoiceEvent(mine: number) {
@@ -212,7 +293,7 @@ function applyFinal(text: string, mine: number): void {
   setPhase("idle");
   const trimmed = text.trim();
   if (!trimmed) return;
-  setOperatorInput(trimmed);
+  setOperatorInputFromVoice(trimmed);
   if (voiceDictationSettings().pushToCommand) void submitOperatorCommand();
 }
 

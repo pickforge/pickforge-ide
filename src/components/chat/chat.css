@@ -312,6 +312,11 @@
   align-items: center;
   gap: var(--pf-space-sm);
   align-self: flex-start;
+  /* Its label is short enough that the button would be ~17px tall, and at the
+   * timeline's 4px gap two consecutive thinking rows would sit 21px apart —
+   * inside WCAG 2.2 target-spacing (2.5.8). The `.pf-chat-line` rows clear it
+   * on their own at 24px+. */
+  min-height: var(--pf-space-xl);
   padding: 0;
   border: none;
   background: transparent;

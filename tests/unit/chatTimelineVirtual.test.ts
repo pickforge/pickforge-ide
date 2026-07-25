@@ -291,7 +291,26 @@ describe("chat timeline virtualization helpers", () => {
         item: { type: "webSearch", seq: 5, itemId: "search", query: "pickforge" },
       }),
     ];
-    expect(compact.every((height) => height <= 48)).toBe(true);
+    // Bound at the measured reality (<=32), not at the old 48px slot: `<= 48`
+    // would pass if every compact estimate regressed straight back to it.
+    expect(compact.every((height) => height <= 32)).toBe(true);
+  });
+
+  it("grows the plan estimate with its item count", () => {
+    const plan = (items: number): TimelineVirtualRow => ({
+      kind: "item",
+      item: {
+        type: "plan",
+        seq: 1,
+        items: Array.from({ length: items }, () => ({ text: "step", status: "pending" as const })),
+      },
+    });
+
+    expect(estimateTimelineRowHeight(plan(4))).toBeGreaterThan(estimateTimelineRowHeight(plan(1)));
+    // Per-item cost tracks the measured ~23px row, not an arbitrary constant.
+    expect(
+      estimateTimelineRowHeight(plan(4)) - estimateTimelineRowHeight(plan(3)),
+    ).toBeLessThanOrEqual(32);
   });
 
   it("uses taller estimates for image messages and scales file batches", () => {

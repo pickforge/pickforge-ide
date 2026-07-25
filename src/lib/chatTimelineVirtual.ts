@@ -71,7 +71,7 @@ export function timelineVirtualRowKey(row: TimelineVirtualRow): string {
 // the reader expanded remeasures on mount.
 const COMPACT_COMMAND_PX = 32; // measured 29 — taller for its status mark
 const COMPACT_LINE_PX = 28; // measured 24 — tool / mcp / web
-const COLLAPSED_THINKING_PX = 20; // measured 17
+const COLLAPSED_THINKING_PX = 28; // measured 17, floored at 24 for target spacing
 const WORKING_ROW_PX = 28; // measured 24
 const USAGE_ROW_PX = 20; // measured 16
 const PLAN_BASE_PX = 60; // measured 56 fixed …

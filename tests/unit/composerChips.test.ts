@@ -230,6 +230,19 @@ describe("line filler after a trailing newline (#352)", () => {
     expect(root.querySelectorAll("[data-pf-line-filler]").length).toBe(0);
   });
 
+  it("blocks a forward Delete that would only strip the line filler", () => {
+    // Deleting it would collapse the empty line the user just opened, and the
+    // fast input path cannot notice: the filler never appears in the string.
+    renderComposer(root, "abc\n", [], buildChip);
+    setCaretAtOffset(root, "abc\n".length, []);
+    expect(deleteTargetsFillerTail(root)).toBe(true);
+
+    // A Delete with real content still ahead of the caret must go through.
+    renderComposer(root, "abc\ndef", [], buildChip);
+    setCaretAtOffset(root, "abc\n".length, []);
+    expect(deleteTargetsFillerTail(root)).toBe(false);
+  });
+
   it("puts the end-of-text caret on the new empty line, before the filler", () => {
     renderComposer(root, "abc\n", [], buildChip);
     setCaretAtOffset(root, "abc\n".length, []);

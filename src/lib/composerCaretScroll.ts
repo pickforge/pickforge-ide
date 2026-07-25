@@ -51,11 +51,13 @@ function isUsableRect(rect: DOMRect | undefined): rect is DOMRect {
  *  (between the `<br>`s of a freshly opened empty line) has no rect of its own
  *  in some engines, so fall back to the node it was placed next to. */
 function caretRect(range: Range): DOMRect | null {
-  // Range geometry is a layout API: present in the webview, absent under jsdom.
+  // Range geometry is a layout API: present in the webview, absent or partial
+  // under jsdom. Every entry point is probed independently — a Range that has
+  // one of the two is not required to have the other.
+  const rects = typeof range.getClientRects === "function" ? range.getClientRects() : undefined;
   const direct =
-    typeof range.getClientRects === "function"
-      ? (range.getClientRects()[0] ?? range.getBoundingClientRect())
-      : undefined;
+    rects?.[0] ??
+    (typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : undefined);
   if (isUsableRect(direct)) return direct;
   const container = range.startContainer;
   const neighbour =

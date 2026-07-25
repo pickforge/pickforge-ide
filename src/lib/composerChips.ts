@@ -362,6 +362,15 @@ export function deleteTargetsFillerTail(root: HTMLElement): boolean {
   if (!sel || !sel.isCollapsed) return false;
   const range = sel.getRangeAt(0);
   const container = range.startContainer;
+  // An element-boundary caret sitting right before the trailing line filler:
+  // the same no-op Delete, one node over. Letting it through would strip the
+  // filler and silently collapse the empty final line the user just opened,
+  // and the fast `onInput` path (serialization unchanged — the filler is
+  // invisible to it) would never rebuild the editor to bring it back.
+  if (container.nodeType === 1) {
+    const next = container.childNodes[range.startOffset];
+    return !!next && next.nodeType === 1 && isLineFiller(next as Element) && !next.nextSibling;
+  }
   if (container.nodeType !== 3) return false;
   const text = container as Text;
   if (!isFillerOnly(text.data.slice(range.startOffset))) return false;

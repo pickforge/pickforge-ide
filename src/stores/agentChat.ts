@@ -1399,6 +1399,18 @@ async function reflowChangesReceiptFold(chatId: string): Promise<void> {
     return; // best-effort — a failed re-fold just leaves the previous fold in place
   }
   if (stale()) return;
+  // A turn that began DURING the fetch above owns live-only rows this history
+  // does not have — an optimistic user message is in `timeline` before the
+  // backend has persisted it, so committing `loaded.timeline` here deletes it
+  // and the send vanishes from the transcript (#368). The call-site deferral
+  // only covers a turn that was already active when the flag flipped; this
+  // covers one that starts inside the await, which a queue drain does in the
+  // same tick as the terminal event that released us. Re-defer to the next
+  // terminal event — `trackTurnLifecycle` drains this set.
+  if (chats[chatId]?.turnActive) {
+    pendingChangesReceiptReflow.add(chatId);
+    return;
+  }
 
   const current = chats[chatId];
   const loaded = stateFromHistory(chatId, current.provider, current.model, current.engine, history);
@@ -1410,7 +1422,7 @@ async function reflowChangesReceiptFold(chatId: string): Promise<void> {
 }
 
 // Chats whose reflow was deferred because a turn was active when
-// `changesReview` flipped (below) — `reduceOnTurnClose` (the turnDone/
+// `changesReview` flipped (below) — `trackTurnLifecycle` (the turnDone/
 // turnFailed live-event branch) drains this once the turn's terminal event
 // has been applied. `disposeAgentChat` also drops entries here so a disposed
 // chat's stale chatId never triggers a reflow for a gone/reused slot.

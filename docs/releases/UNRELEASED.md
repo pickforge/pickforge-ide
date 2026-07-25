@@ -66,6 +66,11 @@ reset this file.
   permissions are still bypassed only when the user explicitly selects bypass
   mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
+- Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
+  started while the re-fold was fetching history had its just-sent message
+  wiped from the timeline, because the commit replaced the timeline wholesale
+  with history that predated the optimistic row. The re-fold now re-defers to
+  the next terminal event instead of committing over a live turn.
 - Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
   section titles inside the content pane are now real headings (h2, with h3
   for sub-groups like Connector diagnostics and Danger zone) instead of

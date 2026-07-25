@@ -133,6 +133,13 @@ keep new UI consistent with it.
   hard build failure. Always run that exact command locally before pushing
   (#339 review: a `.iter().any(|x| *x == s)` collapse passed every local test
   and failed CI on `clippy::manual_contains`).
+- A test for an object-identity bug must return a FRESH object from its mock on
+  every call, the way a real `invoke` deserializes one. Handing back the same
+  fixture reference makes `<For>`/`reconcile` see stable identity, so the test
+  passes with and without the fix and pins nothing (#363 review: an abandon-path
+  test did exactly this and was caught only by re-running it against the
+  reverted fix). Verify every regression test fails without its production
+  change — that check is what catches this class.
 - When renaming or retiring an agent model id, grep for the version digits in
   free text too (`"opus 4.8"`, alias term arrays, swarm command parsing) — the
   exact-id grep misses natural-language sites — and migrate persisted

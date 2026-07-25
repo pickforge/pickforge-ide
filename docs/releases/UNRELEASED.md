@@ -71,6 +71,12 @@ reset this file.
   wiped from the timeline, because the commit replaced the timeline wholesale
   with history that predated the optimistic row. The re-fold now re-defers to
   the next terminal event instead of committing over a live turn.
+- Fixed expanded runs collapsing on their own in the default-off `pikitLanes`
+  panel (#363): the 4s poll replaced the run list with freshly deserialized
+  objects, so `For` disposed and recreated every card. The store now diffs by
+  run id, which also lets lane values update in place instead of remounting the
+  row. Swarm run cards in chat had the same defect from their own store's
+  per-update object rebuild and now key expansion by run id.
 - Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
   section titles inside the content pane are now real headings (h2, with h3
   for sub-groups like Connector diagnostics and Danger zone) instead of

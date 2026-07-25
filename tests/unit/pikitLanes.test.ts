@@ -119,6 +119,51 @@ describe("pikitLanes store", () => {
     expect(result).toEqual({ ok: true, consumed: false });
   });
 
+  it("keeps an unchanged run at its existing object reference across a poll (#363)", async () => {
+    // `For` reconciles by identity. Every poll deserializes fresh objects, so
+    // handing it a wholly new array disposed and recreated every row — which
+    // is what reset each card's expansion on a 4s cadence.
+    testEnv.invoke.mockResolvedValueOnce([ACTIVE_RUN]);
+    const store = await loadStore();
+    await store.loadPiKitRuns();
+    const first = store.pikitRuns()[0];
+
+    // A structurally equal but freshly deserialized payload, as the next poll
+    // would deliver it.
+    testEnv.invoke.mockResolvedValueOnce([JSON.parse(JSON.stringify(ACTIVE_RUN))]);
+    await store.loadPiKitRuns();
+
+    expect(store.pikitRuns()[0]).toBe(first);
+  });
+
+  it("updates a changed lane in place rather than replacing its run (#363)", async () => {
+    testEnv.invoke.mockResolvedValueOnce([ACTIVE_RUN]);
+    const store = await loadStore();
+    await store.loadPiKitRuns();
+    const first = store.pikitRuns()[0];
+
+    const advanced = JSON.parse(JSON.stringify(ACTIVE_RUN)) as PiKitRunEntry;
+    advanced.status!.lanes[0].tokensOut = 999;
+    testEnv.invoke.mockResolvedValueOnce([advanced]);
+    await store.loadPiKitRuns();
+
+    // Same run object, new value inside it: the row updates, it does not remount.
+    expect(store.pikitRuns()[0]).toBe(first);
+    expect(store.pikitRuns()[0].status!.lanes[0].tokensOut).toBe(999);
+  });
+
+  it("drops runs that disappear and adds new ones (#363 reconcile keeps list membership honest)", async () => {
+    testEnv.invoke.mockResolvedValueOnce([ACTIVE_RUN]);
+    const store = await loadStore();
+    await store.loadPiKitRuns();
+
+    const other: PiKitRunEntry = { ...JSON.parse(JSON.stringify(ACTIVE_RUN)), run: "run-2" };
+    testEnv.invoke.mockResolvedValueOnce([other]);
+    await store.loadPiKitRuns();
+
+    expect(store.pikitRuns().map((entry) => entry.run)).toEqual(["run-2"]);
+  });
+
   it("surfaces an abandon-write failure as an error result", async () => {
     testEnv.invoke.mockRejectedValueOnce(new Error("could not resolve the user's home directory"));
     const store = await loadStore();

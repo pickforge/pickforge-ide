@@ -804,6 +804,28 @@ describe("parseCodexModelCatalog (#268)", () => {
     const raw = JSON.stringify({ models: [{ slug: "gpt-5.9", visibility: "list" }] });
     expect(models.parseCodexModelCatalog(raw)).toEqual([{ id: "gpt-5.9", label: "gpt-5.9" }]);
   });
+
+  it("drops an entry with a missing visibility field (#P3)", async () => {
+    const { models } = await loadModules();
+    const raw = JSON.stringify({
+      models: [
+        { slug: "gpt-5.9", display_name: "GPT-5.9" },
+        { slug: "gpt-5.4", display_name: "GPT-5.4", visibility: "list" },
+      ],
+    });
+    expect(models.parseCodexModelCatalog(raw)).toEqual([{ id: "gpt-5.4", label: "GPT-5.4" }]);
+  });
+
+  it("drops an entry with an unrecognized visibility value (#P3)", async () => {
+    const { models } = await loadModules();
+    const raw = JSON.stringify({
+      models: [
+        { slug: "gpt-5.9", display_name: "GPT-5.9", visibility: "preview" },
+        { slug: "gpt-5.4", display_name: "GPT-5.4", visibility: "list" },
+      ],
+    });
+    expect(models.parseCodexModelCatalog(raw)).toEqual([{ id: "gpt-5.4", label: "GPT-5.4" }]);
+  });
 });
 
 describe("mergeModelCatalogs: curated/discovered precedence (#268)", () => {
@@ -1010,5 +1032,130 @@ describe("discoverCodexModels: probe-failure fallback and TTL cache (#268)", () 
 
     await models.discoverCodexModels(true);
     expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces stale discoveries with a later authoritative empty catalog (#P2-2)", async () => {
+    const { models } = await loadModules();
+    const process = await import("../../src/lib/process");
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixtureWithNovelModel(),
+      errors: [],
+    });
+    await models.discoverCodexModels();
+    expect(
+      models.agentProfiles().find((a) => a.id === "codex")!.models
+        .some((m) => m.id === "gpt-5.7-preview"),
+    ).toBe(true);
+
+    // A later probe genuinely reports nothing (empty stdout, no error) —
+    // that's authoritative, not a failure, and must replace the stale set.
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: "",
+      errors: [],
+    });
+    await models.discoverCodexModels(true);
+
+    const codex = models.agentProfiles().find((a) => a.id === "codex")!;
+    expect(codex.models.some((m) => m.id === "gpt-5.7-preview")).toBe(false);
+    // Never an empty picker: an empty *discovered* set still merges with the
+    // curated table.
+    expect(codex.models).toEqual(models.AGENTS.find((a) => a.id === "codex")!.models);
+  });
+
+  it("retains prior discoveries when a later refresh's probe fails (#P2-2)", async () => {
+    const { models } = await loadModules();
+    const process = await import("../../src/lib/process");
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixtureWithNovelModel(),
+      errors: [],
+    });
+    await models.discoverCodexModels();
+
+    vi.mocked(process.probeAgentCli).mockRejectedValueOnce(new Error("codex: timed out"));
+    await models.discoverCodexModels(true);
+
+    const codex = models.agentProfiles().find((a) => a.id === "codex")!;
+    expect(codex.models.some((m) => m.id === "gpt-5.7-preview")).toBe(true);
+  });
+
+  it("retains prior discoveries when the model-discovery probe step itself fails (#P2-2)", async () => {
+    const { models } = await loadModules();
+    const process = await import("../../src/lib/process");
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixtureWithNovelModel(),
+      errors: [],
+    });
+    await models.discoverCodexModels();
+
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: "",
+      errors: ["model discovery failed (1): codex exited unexpectedly"],
+    });
+    await models.discoverCodexModels(true);
+
+    const codex = models.agentProfiles().find((a) => a.id === "codex")!;
+    expect(codex.models.some((m) => m.id === "gpt-5.7-preview")).toBe(true);
+  });
+
+  it("migrates a persisted discovered-only selection absent from a later authoritative refresh (#P2-1)", async () => {
+    const { models } = await loadModules();
+    const process = await import("../../src/lib/process");
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixtureWithNovelModel(),
+      errors: [],
+    });
+    await models.discoverCodexModels();
+    models.setAgentModel("codex", "gpt-5.7-preview");
+    expect(models.loadAgentModels().codex).toBe("gpt-5.7-preview");
+    expect(models.launchCommand("codex")).toBe("codex --model gpt-5.7-preview ");
+
+    // A later authoritative refresh no longer reports the selected model.
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixture(),
+      errors: [],
+    });
+    await models.discoverCodexModels(true);
+
+    expect(models.loadAgentModels().codex).toBe("gpt-5.3-codex-spark");
+    expect(models.launchCommand("codex")).toBe("codex --model gpt-5.3-codex-spark ");
+  });
+
+  it("never migrates a curated selection away, even across refreshes (#P2-1)", async () => {
+    const { models } = await loadModules();
+    const process = await import("../../src/lib/process");
+    models.setAgentModel("codex", "gpt-5.4");
+    vi.mocked(process.probeAgentCli).mockResolvedValueOnce({
+      installed: true,
+      versionOutput: "codex-cli 0.144.6",
+      helpOutput: "",
+      modelsOutput: codexCatalogFixtureWithNovelModel(),
+      errors: [],
+    });
+
+    await models.discoverCodexModels();
+
+    expect(models.loadAgentModels().codex).toBe("gpt-5.4");
+    expect(models.launchCommand("codex")).toBe("codex --model gpt-5.4 ");
   });
 });

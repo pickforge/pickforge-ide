@@ -330,11 +330,15 @@ let codexModelsCacheAt = 0;
 let codexModelsProbe: Promise<AgentModelOption[]> | null = null;
 
 /** Refreshes the discovered Codex model catalog, session-cached for
- * `CODEX_MODEL_CATALOG_TTL_MS`. Never throws: a probe/parse failure is
+ * `CODEX_MODEL_CATALOG_TTL_MS`. Never throws: an IPC/probe/parse failure is
  * advisory-only and leaves the previously discovered set (or the initial
  * empty set) untouched — `agentProfiles()`'s merge with the curated table
  * means this never empties the picker, only forgoes newly discovered
- * entries. Pass `force` to bypass the TTL (e.g. an explicit user refresh). */
+ * entries. An *authoritative* result (the model-discovery step itself ran
+ * and produced parseable output) always replaces the prior discovered set,
+ * even when it's empty — a model that vanished from a real catalog must not
+ * linger forever just because the last successful probe once saw it. Pass
+ * `force` to bypass the TTL (e.g. an explicit user refresh). */
 export function discoverCodexModels(force = false): Promise<AgentModelOption[]> {
   const now = Date.now();
   if (!force && now - codexModelsCacheAt < CODEX_MODEL_CATALOG_TTL_MS) {
@@ -343,9 +347,13 @@ export function discoverCodexModels(force = false): Promise<AgentModelOption[]> 
   if (!force && codexModelsProbe) return codexModelsProbe;
   codexModelsProbe = probeAgentCli("codex")
     .then((probe) => {
-      if (probe.installed && probe.modelsOutput.trim()) {
-        setCodexDiscoveredModels(parseCodexModelCatalog(probe.modelsOutput));
-      }
+      if (!probe.installed) return; // Can't discover; leave prior set as-is.
+      if (probe.errors.some((error) => error.startsWith("model discovery failed"))) return;
+      // May throw on unparseable output — caught below, which (correctly)
+      // leaves the prior discovered set untouched.
+      const parsed = parseCodexModelCatalog(probe.modelsOutput);
+      setCodexDiscoveredModels(parsed);
+      migrateAbsentCodexSelection(parsed);
     })
     .catch(() => {
       // Advisory-only: leave the previously discovered set as-is.
@@ -358,6 +366,25 @@ export function discoverCodexModels(force = false): Promise<AgentModelOption[]> 
       codexModelsProbe = null;
     });
   return codexModelsProbe;
+}
+
+/** After an authoritative refresh finds `discovered`, migrate a persisted
+ * Codex selection that is neither a curated id (curated ids never vanish)
+ * nor present in `discovered` to the curated default — the same "rewrite a
+ * dead id to a live one" the `RETIRED_MODELS` table applies to permanently
+ * retired ids, just triggered by a fresh catalog instead of a static
+ * replacement map. Without this, a discovered-only model that drops out of
+ * a later catalog would stay silently selected: the Settings picker shows
+ * "Select" (its option is gone) while `launchCommand`/`modelOption` — which
+ * read the persisted id verbatim — keep using the stale id. */
+export function migrateAbsentCodexSelection(discovered: AgentModelOption[]): void {
+  const codexAgent = AGENTS.find((agent) => agent.id === "codex");
+  if (!codexAgent) return;
+  const current = loadAgentModels().codex ?? null;
+  if (!current) return;
+  if (codexAgent.models.some((model) => model.id === current)) return;
+  if (discovered.some((model) => model.id === current)) return;
+  setAgentModel("codex", codexAgent.defaultModel);
 }
 
 export type NativeAgentProfile = AgentProfile & {
@@ -467,10 +494,12 @@ function codexModelFromEntry(entry: unknown): AgentModelOption | null {
   const record = entry as Record<string, unknown>;
   const slug = record.slug;
   if (typeof slug !== "string" || !slug) return null;
-  // "hide" visibility entries (e.g. "codex-auto-review") aren't meant for
-  // interactive model selection; only "list" (or an unspecified visibility,
-  // for forward compatibility) surfaces in the picker.
-  if (record.visibility !== undefined && record.visibility !== "list") return null;
+  // Only explicit "list" visibility surfaces in the picker. "hide" entries
+  // (e.g. "codex-auto-review") aren't meant for interactive selection, and a
+  // missing/unrecognized visibility is treated the same way — silently
+  // defaulting an unknown value to "visible" risks surfacing a future
+  // internal-only model the catalog didn't intend to list.
+  if (record.visibility !== "list") return null;
   const label = typeof record.display_name === "string" && record.display_name
     ? record.display_name
     : slug;

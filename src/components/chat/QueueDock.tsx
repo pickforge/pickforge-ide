@@ -82,12 +82,54 @@ function QueueEntry(props: {
   );
 }
 
+/** Resting, the header is a plain mono count. Held, it re-voices as
+ *  bracket-cornered status and takes on the one decision the user owes. */
+function QueueHeader(props: {
+  count: number;
+  held: boolean;
+  onSendHeld: () => void;
+  onDiscard: () => void;
+}): JSX.Element {
+  return (
+    <div class="pf-chat-queue-head">
+      <Show when={props.held} fallback={<span>QUEUED · {props.count}</span>}>
+        {/* The bracket is the indicator — never a filled chip, never a dot —
+            and it alone carries the warning colour; the words stay neutral. */}
+        <span class="pf-chat-queue-status">
+          <span class="pf-chat-queue-bracket" />
+          HELD · {props.count}
+        </span>
+        <span class="pf-chat-queue-actions">
+          <button
+            type="button"
+            class="pf-approval-btn pf-approval-btn--primary"
+            onClick={() => props.onSendHeld()}
+          >
+            Send {props.count}
+          </button>
+          <button
+            type="button"
+            class="pf-approval-btn pf-approval-btn--quiet"
+            onClick={() => props.onDiscard()}
+          >
+            Discard
+          </button>
+        </span>
+      </Show>
+    </div>
+  );
+}
+
 interface QueueDockProps {
   messages: readonly QueuedMessage[];
   onRemove: (id: string) => void;
   onFallbackFocus?: () => void;
   /** The entry currently being dispatched — past the point of cancellation. */
   drainingId?: string | null;
+  /** Held after an interrupt or a reconnect: nothing sends without a choice. */
+  held?: boolean;
+  onSendHeld?: () => void;
+  onDiscard?: () => void;
 }
 
 export function QueueDock(props: QueueDockProps): JSX.Element {
@@ -95,6 +137,7 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
   const removeButtons = new Map<string, HTMLButtonElement>();
   let previousIds: string[] = [];
   let manuallyRemovedId: string | null = null;
+  let discardedAll = false;
 
   createEffect(() => {
     const ids = props.messages.map((message) => message.id);
@@ -105,17 +148,21 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       previousIds = ids;
       return;
     }
-    if (ids.length > previousIds.length) {
+    if (props.held && ids.length > 0) {
+      setAnnouncement(`Queue held, ${ids.length} waiting. Choose send or discard.`);
+    } else if (ids.length > previousIds.length) {
       setAnnouncement(`${ids.length} ${ids.length === 1 ? "message" : "messages"} queued`);
     } else if (ids.length < previousIds.length) {
       const byHand = manuallyRemovedId !== null && !ids.includes(manuallyRemovedId);
-      setAnnouncement(
-        byHand
-          ? `Queued message removed, ${remaining(ids.length)}`
-          : `Message sent, ${remaining(ids.length)}`,
-      );
-      manuallyRemovedId = null;
+      if (discardedAll) setAnnouncement(`Queue discarded, ${remaining(ids.length)}`);
+      else if (byHand) setAnnouncement(`Queued message removed, ${remaining(ids.length)}`);
+      else setAnnouncement(`Message sent, ${remaining(ids.length)}`);
     }
+    // Consumed unconditionally: a run that took the held branch used to leave
+    // these set, so the next shrink was attributed to whatever happened before
+    // the hold rather than to what actually just changed.
+    manuallyRemovedId = null;
+    discardedAll = false;
     previousIds = ids;
   });
 
@@ -153,7 +200,19 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       </span>
       <Show when={props.messages.length > 0}>
         <section class="pf-chat-queue" role="region" aria-label="Message queue">
-          <div class="pf-chat-queue-head">QUEUED · {props.messages.length}</div>
+          <QueueHeader
+            count={props.messages.length}
+            held={props.held === true}
+            onSendHeld={() => {
+              props.onFallbackFocus?.();
+              props.onSendHeld?.();
+            }}
+            onDiscard={() => {
+              discardedAll = true;
+              props.onFallbackFocus?.();
+              props.onDiscard?.();
+            }}
+          />
           <ol class="pf-chat-queue-list">
             <For each={props.messages}>
               {(message, index) => (

@@ -64,6 +64,53 @@ describe("QueueDock", () => {
     expect(onRemove).toHaveBeenCalledWith("queued-1");
   });
 
+  it("re-voices the header as held and offers the one decision owed", () => {
+    const onSendHeld = vi.fn();
+    const onDiscard = vi.fn();
+    const onFallbackFocus = vi.fn();
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={[queued("queued-1", "first"), queued("queued-2", "second")]}
+          held
+          onSendHeld={onSendHeld}
+          onDiscard={onDiscard}
+          onFallbackFocus={onFallbackFocus}
+          onRemove={() => {}}
+        />
+      ),
+      root,
+    );
+
+    const head = root.querySelector(".pf-chat-queue-head");
+    expect(head?.textContent).toContain("HELD · 2");
+    expect(head?.textContent).not.toContain("QUEUED");
+    // The bracket is the indicator, drawn like every other bracket in the
+    // system rather than typed as a glyph — so it carries no text.
+    const bracket = root.querySelector(".pf-chat-queue-bracket");
+    expect(bracket).not.toBeNull();
+    expect(bracket?.textContent).toBe("");
+
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".pf-approval-btn")];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Send 2", "Discard"]);
+    // The demanded decision borrows the composition's one ember.
+    expect(buttons[0].className).toContain("pf-approval-btn--primary");
+
+    buttons[0].click();
+    buttons[1].click();
+    expect(onSendHeld).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+    // Both actions unmount the button that was clicked, so focus has to be
+    // handed somewhere before the mutation or it falls to <body>.
+    expect(onFallbackFocus).toHaveBeenCalledTimes(2);
+
+    // Entries stay individually removable while held.
+    expect(root.querySelector('[aria-label="Remove queued message 1"]')).not.toBeNull();
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Queue held, 2 waiting. Choose send or discard.",
+    );
+  });
+
   it("drops the remove control on the entry being dispatched", () => {
     // Removing it would be a silent no-op: the send is already in flight, so
     // the message lands in the timeline regardless (#369).
@@ -100,6 +147,62 @@ describe("QueueDock", () => {
 
     expect(root.querySelector(".pf-chat-queue")).toBeNull();
     expect(live()).toBe("Queued message removed, none remaining");
+  });
+
+  it("announces a discard as a discard, not as a send", () => {
+    // Discard batches queue:[] with held:false, so the effect sees only a
+    // shrinking list and used to report the opposite of what the user chose.
+    const [messages, setMessages] = createSignal([
+      queued("queued-1", "first"),
+      queued("queued-2", "second"),
+    ]);
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={messages()}
+          held
+          onDiscard={() => setMessages([])}
+          onRemove={() => {}}
+        />
+      ),
+      root,
+    );
+
+    const discard = [...root.querySelectorAll<HTMLButtonElement>(".pf-approval-btn")][1];
+    discard.click();
+
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Queue discarded, none remaining",
+    );
+  });
+
+  it("does not attribute a later send to a removal that happened while held", () => {
+    // The held branch used to return before consuming the cause flags, so the
+    // removal below stayed "pending" and stole the attribution from the send.
+    const [messages, setMessages] = createSignal([
+      queued("queued-1", "first"),
+      queued("queued-2", "second"),
+    ]);
+    const [held, setHeld] = createSignal(true);
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={messages()}
+          held={held()}
+          onRemove={(id) => setMessages((c) => c.filter((m) => m.id !== id))}
+        />
+      ),
+      root,
+    );
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Remove queued message 1"]')?.click();
+    // The user then sends the rest, and the store drains the last entry.
+    setHeld(false);
+    setMessages([]);
+
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Message sent, none remaining",
+    );
   });
 
   it("announces a drained message distinctly from a manual removal", () => {

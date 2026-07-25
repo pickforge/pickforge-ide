@@ -14,10 +14,12 @@ import {
   clearProviderSwitched,
   ensureAgentChat,
   interruptAgentChat,
+  clearAgentQueue,
   queueAgentMessage,
   removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
+  sendHeldAgentQueue,
   setAgentChatEffort,
   setAgentChatMode,
   setAgentChatModel,
@@ -369,6 +371,9 @@ function ComposerFooter(props: {
       <QueueDock
         messages={props.state()?.queue ?? []}
         drainingId={props.state()?.drainingId ?? null}
+        held={props.state()?.queueHeld ?? false}
+        onSendHeld={() => sendHeldAgentQueue(props.chatId)}
+        onDiscard={() => clearAgentQueue(props.chatId)}
         onRemove={(id) => removeQueuedMessage(props.chatId, id)}
         onFallbackFocus={() => composerField?.focus()}
       />
@@ -410,7 +415,7 @@ function ComposerFooter(props: {
           backendCapabilityReason(props.provider(), "steerTurn", "nativeChat", props.engine()) ??
           undefined
         }
-        emberYielded={props.hasApprovals()}
+        emberYielded={props.hasApprovals() || (props.state()?.queueHeld ?? false)}
         editorRef={(element) => {
           composerField = element;
         }}

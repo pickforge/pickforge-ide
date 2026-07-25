@@ -413,3 +413,49 @@ describe("swarm dispatch", () => {
     );
   });
 });
+
+// providersFor/resolveModel are exported for the Operator preview (#195) so it can
+// mirror `dispatchSwarm`'s own lane assignment exactly. Covered here directly, with
+// the same mocked loadAgentModels/modelOption the dispatch tests above already use.
+describe("providersFor", () => {
+  it("assigns every lane a single native provider preference", async () => {
+    const { providersFor } = await loadSwarmStore();
+
+    expect(providersFor("claudeCode", 3, null)).toEqual([
+      "claudeCode",
+      "claudeCode",
+      "claudeCode",
+    ]);
+    expect(providersFor("codex", 2, null)).toEqual(["codex", "codex"]);
+  });
+
+  it("alternates claude/codex for a mixed preference with no requested model", async () => {
+    const { providersFor } = await loadSwarmStore();
+
+    expect(providersFor("mixed", 4, null)).toEqual([
+      "claudeCode",
+      "codex",
+      "claudeCode",
+      "codex",
+    ]);
+  });
+});
+
+describe("resolveModel", () => {
+  it("falls back to the persisted per-provider model when nothing is requested", async () => {
+    const { resolveModel } = await loadSwarmStore();
+
+    expect(resolveModel("claudeCode", null)).toEqual({ ok: true, model: "claude-opus-5" });
+    expect(resolveModel("codex", null)).toEqual({ ok: true, model: "gpt-5.5" });
+  });
+
+  it("nulls out a persisted terminal-only model instead of resolving it as native", async () => {
+    deps.loadAgentModels.mockReturnValue({ claudeCode: "glm-5.2:cloud", codex: "gpt-5.5" });
+    deps.modelOption.mockImplementation((provider: string, modelId: string | null) =>
+      modelId === "glm-5.2:cloud" ? { id: modelId, terminalOnly: true } : undefined,
+    );
+    const { resolveModel } = await loadSwarmStore();
+
+    expect(resolveModel("claudeCode", null)).toEqual({ ok: true, model: null });
+  });
+});

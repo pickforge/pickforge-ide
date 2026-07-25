@@ -28,6 +28,12 @@ reset this file.
 ## Internal/release changes (dark: no default-on behavior change)
 
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
+- Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
+  section titles inside the content pane are now real headings (h2, with h3
+  for sub-groups like Connector diagnostics and Danger zone) instead of
+  unlabeled text, so assistive tech can navigate by heading; added focused
+  keyboard-nav/persistence unit tests and a reduced-motion VRT check for the
+  category rail.
 
 ## Validation
 

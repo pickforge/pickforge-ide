@@ -137,3 +137,24 @@ export function firstSettingsSectionForCategory(
     )?.key ?? null
   );
 }
+
+const SETTINGS_CATEGORY_STORAGE_KEY = "pickforge.settings.category";
+
+/** The active category survives leaving and returning to Settings (#211
+ *  acceptance). Storage failures (private browsing, quota) degrade to "no
+ *  memory" rather than breaking navigation. */
+export function loadRememberedSettingsCategory(): string | null {
+  try {
+    return localStorage.getItem(SETTINGS_CATEGORY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function rememberSettingsCategory(category: SettingsCategoryKey): void {
+  try {
+    localStorage.setItem(SETTINGS_CATEGORY_STORAGE_KEY, category);
+  } catch {
+    // Settings navigation remains usable when storage is unavailable.
+  }
+}

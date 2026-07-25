@@ -7,6 +7,8 @@ import { Portal } from "solid-js/web";
 import { MonoEyebrow, EmberButton } from "../ui";
 import { IconMic } from "../icons";
 import { formatCostCents, formatCreditBalance } from "../../lib/agentPricing";
+import type { OperatorIntent } from "../../lib/operatorIntent";
+import { runTargetLabel, swarmFanoutEstimate } from "../../lib/operatorPreviewInfo";
 import {
   cancelOperatorPreview,
   candidateIndexForKey,
@@ -72,6 +74,23 @@ function routeMetaLabel(): string | null {
   const balance =
     meta.balanceCents !== null ? ` · ${formatCreditBalance(meta.balanceCents)} left` : "";
   return `routed · ${formatCostCents(meta.costCents)}${balance}`;
+}
+
+/** What left the device for the current hosted route, read straight off the router
+ * result (never hardcoded) — a local route never sets this, so nothing renders. */
+function egressLabel(): string | null {
+  const keys = operatorRouteMeta()?.egressKeys;
+  return keys && keys.length > 0 ? `sends: ${keys.join(" + ")}` : null;
+}
+
+/** A startSwarm proposal's fanout cost estimate — distinct from, and never merged
+ * with, the routing charge above. Honest-unknown (never a fabricated number) when any
+ * assigned lane's model isn't in the pricing table. */
+function fanoutLabel(intent: OperatorIntent): string | null {
+  const estimate = swarmFanoutEstimate(intent);
+  if (!estimate) return null;
+  const cost = estimate.costUsd === null ? "unknown" : `~$${estimate.costUsd.toFixed(2)}`;
+  return `${cost} for ${estimate.count} worker${estimate.count === 1 ? "" : "s"}`;
 }
 
 /** The command input + its dictation mic toggle. A presentational child
@@ -169,7 +188,10 @@ function OperatorVoiceStatus() {
 /** The widget-candidate picker (or plain payload preview) plus confirm/
  *  cancel actions for a `preview` dock view. A presentational child
  *  component. */
-function OperatorPreviewView(props: { view: () => Extract<DockView, { kind: "preview" }> }) {
+// Exported so the provider/model, fanout, and egress additions (#195) can be rendered
+// and asserted on directly, without mounting the whole dock's keyboard trap / voice
+// wiring (see tests/unit/OperatorPreviewView.test.tsx).
+export function OperatorPreviewView(props: { view: () => Extract<DockView, { kind: "preview" }> }) {
   const p = props.view;
   const candidates = () => p().candidates;
   return (
@@ -180,6 +202,12 @@ function OperatorPreviewView(props: { view: () => Extract<DockView, { kind: "pre
           {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
         </Show>
       </div>
+      <Show when={runTargetLabel(p().intent)}>
+        {(label) => <div class="pf-op-meta">runs on: {label()}</div>}
+      </Show>
+      <Show when={fanoutLabel(p().intent)}>
+        {(label) => <div class="pf-op-meta">fanout: {label()}</div>}
+      </Show>
       <Show
         when={candidates()}
         fallback={(() => {
@@ -221,6 +249,9 @@ function OperatorPreviewView(props: { view: () => Extract<DockView, { kind: "pre
         {(label) => (
           <div class="pf-op-meta">{label()} · charged for routing; confirm runs the action</div>
         )}
+      </Show>
+      <Show when={egressLabel()}>
+        {(label) => <div class="pf-op-meta">{label()}</div>}
       </Show>
       <div class="pf-op-actions">
         <Show

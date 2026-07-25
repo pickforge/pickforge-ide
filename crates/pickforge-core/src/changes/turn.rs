@@ -35,7 +35,8 @@ use std::collections::HashMap;
 
 use crate::agents::{AgentEvent, FileChangeEntry, FileChangeKind};
 use crate::changes::{
-    ChangeFileStatus, ChangeScope, ChangeSet, ChangeSource, ChangeTotals, ChangedFile,
+    ChangeFileKind, ChangeFileStatus, ChangeScope, ChangeSet, ChangeSource, ChangeTotals,
+    ChangedFile,
 };
 use crate::git::diff_stat::{count_unified_diff_stat, known_counts, DiffBodyStat};
 
@@ -182,6 +183,10 @@ impl TurnAccumulator {
                 binary: stat.binary,
                 truncated: stat.truncated,
                 diff_available: change.diff.is_some(),
+                // A provider event carries no file-mode information to
+                // classify from — the honest "can't tell" default (#231
+                // PR5's `ChangedFile::kind` doc comment).
+                kind: ChangeFileKind::Regular,
             },
         );
     }

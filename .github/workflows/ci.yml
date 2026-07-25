@@ -17,6 +17,12 @@ on:
   # rebased/synced by the same flow that dispatches this. (#349)
   workflow_dispatch:
 
+# Explicit read-only token: ci needs no write scopes, and pinning it here
+# keeps a future repo-default flip to "write" from silently widening a
+# workflow that is now also manually dispatchable (#349 review).
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

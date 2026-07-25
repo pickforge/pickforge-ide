@@ -64,6 +64,11 @@ jobs:
 
       - name: Commit regenerated baselines
         id: commit
+        # BRANCH goes through env, not ${{ }}-interpolation into the script,
+        # so a ref name only ever reaches the shell as data (review of #349:
+        # git accepts branch names containing $(…), ;, |, backticks).
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -74,14 +79,21 @@ jobs:
             exit 0
           fi
           git commit -m "test(vrt): regenerate CI-canonical baselines"
-          git push origin HEAD:${{ github.ref_name }}
+          git push origin "HEAD:$BRANCH"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       # The push above used GITHUB_TOKEN, so it created no pull_request/push
       # runs — the branch's PR would sit at "no checks reported" forever.
-      # Re-run the gate explicitly on the updated branch (#349).
+      # Re-run the gate explicitly on the updated branch (#349). Soft-fails
+      # with a warning instead of a red run: a branch whose ci.yml predates
+      # the workflow_dispatch trigger 422s here until it rebases onto main,
+      # and by then the baselines themselves were already pushed fine.
       - name: Dispatch ci on the updated branch
         if: steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref "${{ github.ref_name }}" --repo "${{ github.repository }}"
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh workflow run ci.yml --ref "$BRANCH" --repo "$REPO" \
+            || echo "::warning::could not dispatch ci on $BRANCH — its ci.yml likely predates the workflow_dispatch trigger; rebase onto main, then push any commit to get checks (#349)"

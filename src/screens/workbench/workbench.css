@@ -1209,6 +1209,7 @@ body.pf-resizing .pf-dock-panel {
 .pf-chat-agent-mark {
   display: inline-flex;
   align-items: center;
+  gap: calc(var(--pf-space-xs) / 2);
   flex: none;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
@@ -3165,6 +3166,7 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-flat-mark {
   display: inline-flex;
   align-items: center;
+  gap: calc(var(--pf-space-xs) / 2);
   flex: none;
   color: var(--pf-text-low);
   opacity: 0.65;
@@ -3347,6 +3349,7 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-work-card-mark {
   display: inline-flex;
   align-items: center;
+  gap: calc(var(--pf-space-xs) / 2);
   flex: none;
   color: var(--pf-text-med);
 }

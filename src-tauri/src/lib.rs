@@ -323,6 +323,7 @@ pub fn run() {
             pty_commands::pty_resize,
             pty_commands::pty_kill,
             pty_commands::pty_detach,
+            pty_commands::pty_foreground_harnesses,
             pty_commands::pty_spawn_chat,
             pty_commands::pty_destroy_chat_session,
             pty_commands::pty_askpass_status,

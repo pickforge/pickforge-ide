@@ -121,6 +121,10 @@ import { setProjectRemoteLocal } from "../../stores/workspace";
 import { createRemoteAttach } from "../../lib/remoteAttach";
 import type { ProbeState } from "../../lib/remoteHost";
 import {
+  harnessForChat,
+  useTerminalHarnessPolling,
+} from "../../stores/terminalHarnesses";
+import {
   healthOf,
   healthStatus,
   healthSummary,
@@ -149,8 +153,14 @@ const agentChatLabel = (agentId: string): string =>
   agentBackendDescriptor(agentChatProvider(agentId))?.label ?? "Agent";
 export const chatMarkKind = (chat: Chat): ChatMarkKind | null =>
   chat.kind === "terminal" ? "terminal" : chat.kind === "agent" ? "agent" : null;
-const chatMarkLabel = (chat: Chat): string =>
-  chatMarkKind(chat) === "terminal" ? "Terminal" : `Agent chat · ${agentChatLabel(chat.agentId)}`;
+const terminalHarnessFor = (chat: Chat) =>
+  chatMarkKind(chat) === "terminal" ? harnessForChat(chat.chatId) : null;
+const chatMarkLabel = (chat: Chat): string => {
+  const harness = terminalHarnessFor(chat);
+  return chatMarkKind(chat) === "terminal"
+    ? harness ? `Terminal · ${agentChatLabel(harness)}` : "Terminal"
+    : `Agent chat · ${agentChatLabel(chat.agentId)}`;
+};
 const ChatMarkIcon = (props: { chat: Chat }) => (
   <Show when={chatMarkKind(props.chat) === "terminal"} fallback={
     <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
@@ -158,6 +168,9 @@ const ChatMarkIcon = (props: { chat: Chat }) => (
     </Show>
   }>
     <IconTerminal size={11} />
+    <Show when={terminalHarnessFor(props.chat)}>
+      {(harness) => AGENT_CHAT_ICON[harness()]?.()}
+    </Show>
   </Show>
 );
 
@@ -1689,6 +1702,23 @@ export function ProjectsPane() {
   useRemoteHealth();
   const ctrl = createProjectsPaneController();
   const flat = () => flagEnabled("flatChatList");
+  const hasVisibleTerminalChats = () => {
+    if (flat()) {
+      return [...ctrl.flatLive(), ...ctrl.flatQuiet()].some((chat) => chat.kind === "terminal");
+    }
+    return ctrl.buckets().some((bucket) => {
+      if (bucket.group?.collapsed) return false;
+      return bucket.projects.some((project) =>
+        chatsExpanded(project.projectRoot)
+        && chatsFor(project.projectRoot).some((chat) =>
+          chat.kind === "terminal"
+          && isPrimaryChat(chat)
+          && (!isChatArchived(chat.chatId) || ctrl.showArchived().has(project.projectRoot)),
+        ),
+      );
+    });
+  };
+  useTerminalHarnessPolling(hasVisibleTerminalChats);
 
   // Flag on: the flat list needs every project's chats, not just the active
   // one's — load them all eagerly instead of the tree's per-project lazy

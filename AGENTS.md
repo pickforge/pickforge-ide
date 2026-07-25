@@ -50,8 +50,12 @@ migrated away. See `plans/rust-migration/`.)
   Keep platform/process/PTY/db logic here, not in the Tauri binary or the UI.
 - `src-tauri/` — the Tauri v2 binary. `src/*_commands.rs` adapt the core to IPC
   (`pty_commands`, `process_commands`, `db_commands`, `device_commands`,
-  `fs_commands`, `vm_commands`). `capabilities/default.json` scopes IPC
-  (default-deny — add new commands there). `tauri.conf.json` is the app manifest.
+  `fs_commands`, `vm_commands`). A new app-defined command is registered in
+  `generate_handler!` only — do **not** add it to `capabilities/default.json`.
+  That file grants Tauri core/plugin permissions; app-defined commands are
+  reachable without ACL entries, and adding one would switch the app to
+  default-deny and break every command not migrated at the same time.
+  `tauri.conf.json` is the app manifest.
 - `src/` — SolidJS frontend.
   - `screens/` — `Onboarding`, `Settings`, `History`, `RunHistory`, and
     `workbench/` (Workbench, InspectorPanel, ProjectsChatsPanel, FileExplorer).

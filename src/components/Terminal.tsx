@@ -32,6 +32,10 @@ import {
   TERMINAL_LINE_HEIGHT,
 } from "../lib/terminal-theme";
 import { appTheme } from "../stores/theme";
+import {
+  registerTerminalSession,
+  unregisterTerminalSession,
+} from "../stores/terminalHarnesses";
 import "./Terminal.css";
 
 const TERMINAL_FIT_INTERVAL_MS = 80;
@@ -438,6 +442,9 @@ function runPtySpawnFlow(deps: {
   const onExit = (code: number | null) => {
     if (state.disposed) return;
     state.ptyClosed = true;
+    if (props.chat && state.sessionId !== null) {
+      unregisterTerminalSession(props.chat.chatId, state.sessionId);
+    }
     state.sessionId = null;
     state.pendingInput = "";
     const exit = remotePtyExit(state.activeRemote, code);
@@ -469,6 +476,7 @@ function runPtySpawnFlow(deps: {
       state.activeRemote = effectiveRemote;
       props.onSpawn?.(effectiveRemote);
       state.sessionId = id;
+      if (props.chat) registerTerminalSession(props.chat.chatId, id);
       deps.queuePtyResize(term.rows, term.cols);
       // Flush anything typed (via typeText) before the spawn resolved.
       if (state.pendingInput) {
@@ -633,7 +641,10 @@ export function TerminalPane(props: TerminalPaneProps) {
       observer?.disconnect();
       fitScheduler.dispose();
       subs.forEach((s) => s.dispose());
-      if (state.sessionId !== null) teardownPtySession(props.chat, state.sessionId);
+      if (state.sessionId !== null) {
+        if (props.chat) unregisterTerminalSession(props.chat.chatId, state.sessionId);
+        teardownPtySession(props.chat, state.sessionId);
+      }
       term.dispose();
     });
 

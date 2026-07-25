@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use crate::changes::{ChangeFileStatus, ChangedFile};
+use crate::changes::{ChangeFileKind, ChangeFileStatus, ChangedFile};
 
 /// Hard cap on numstat/name-status records parsed from one git invocation. A
 /// pathological change (a rebase touching a vendored tree, a bad
@@ -371,7 +371,168 @@ fn build_changed_file(
         binary,
         truncated,
         diff_available: true,
+        // This pure join has no file-mode information to classify from —
+        // `crate::git::working_tree::working_tree_change_set` overlays the
+        // real kind afterward from a separate `--raw` parse (see
+        // `classify_change_file_kind`/`RawModeEntry` below); a caller that
+        // never overlays anything (there is none today, but this join is a
+        // shared primitive) gets the honest "can't tell" default.
+        kind: ChangeFileKind::Regular,
     }
+}
+
+/// One `git diff --raw -z` record: old/new file mode bits plus blob shas,
+/// joined by path onto the `--numstat`/`--name-status` rows
+/// [`merge_changed_files`] already built (#231 PR5). `--numstat`/
+/// `--name-status` alone can't tell a submodule pointer bump, a symlink
+/// change, or a permissions-only change apart from an ordinary content
+/// change — mode `160000` is Git's own gitlink (submodule) marker and
+/// `120000` is a symlink; both are read straight off `old_mode`/`new_mode`,
+/// which come from a real `lstat()` on the working tree (or the index) and
+/// so are always trustworthy. `old_sha`/`new_sha` are carried through too but
+/// are NOT used to detect a mode-only change: for an UNSTAGED diff git never
+/// hashes the working-tree blob (there's no reason to — it only diffs
+/// content, it doesn't store it), so `new_sha` is a constant
+/// all-zero placeholder for EVERY unstaged row regardless of whether content
+/// actually changed. [`classify_change_file_kind`] instead uses the
+/// numstat-derived `additions`/`deletions` PR1 already computed exactly
+/// (`0`/`0` for real content, byte-for-byte identical — see
+/// `numstat_parses_mode_only_change_as_zero_zero`) — reliable for both staged
+/// and unstaged alike.
+///
+/// Verified against git 2.50's actual `--raw -z` record shape: a
+/// `:<old_mode> <new_mode> <old_sha> <new_sha> <status>` header token (ASCII,
+/// space-separated, no leading/trailing NUL of its own), then a NUL, then the
+/// path (old path then new path for a rename/copy, matching
+/// `--name-status`'s own two-path shape); NOT the pre-`-z` tab/newline
+/// layout the classic `git diff --raw` porcelain output uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawModeEntry {
+    pub path: String,
+    /// See [`DiffStatEntry::path_bytes`] — same rationale, same join use.
+    pub path_bytes: Vec<u8>,
+    pub old_mode: String,
+    pub new_mode: String,
+    pub old_sha: String,
+    pub new_sha: String,
+}
+
+/// Result of a bounded `--raw -z` parse.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RawModeParse {
+    pub entries: Vec<RawModeEntry>,
+    pub truncated: bool,
+}
+
+/// Parses `git diff --raw -z --full-index [--find-renames]` output into
+/// [`RawModeEntry`] rows, bounded the same way [`parse_numstat_z`]/
+/// [`parse_name_status_z`] are (same entry-count/byte caps — one number
+/// governing every `-z` parser in this module, not three independently
+/// drifting ones).
+pub fn parse_raw_z(raw: &[u8]) -> RawModeParse {
+    let (bytes, mut truncated) = bound_bytes(raw);
+    let mut tokens = bytes.split(|&b| b == 0).filter(|t| !t.is_empty());
+    let mut entries = Vec::new();
+
+    while let Some(header) = tokens.next() {
+        if entries.len() >= MAX_DIFF_STAT_ENTRIES {
+            truncated = true;
+            break;
+        }
+        let Some(entry) = parse_raw_record(header, &mut tokens) else {
+            truncated = true;
+            break;
+        };
+        entries.push(entry);
+    }
+
+    RawModeParse { entries, truncated }
+}
+
+fn parse_raw_record<'a>(
+    header: &[u8],
+    tokens: &mut impl Iterator<Item = &'a [u8]>,
+) -> Option<RawModeEntry> {
+    // The header token is pure ASCII (mode digits, hex shas, a status
+    // letter) — never a path — so a plain UTF-8 parse is safe here, unlike
+    // the path tokens below.
+    let header_str = std::str::from_utf8(header).ok()?;
+    let header_str = header_str.strip_prefix(':')?;
+    let mut fields = header_str.split(' ');
+    let old_mode = fields.next()?.to_string();
+    let new_mode = fields.next()?.to_string();
+    let old_sha = fields.next()?.to_string();
+    let new_sha = fields.next()?.to_string();
+    let status = fields.next()?;
+    let renamed_or_copied = status.starts_with('R') || status.starts_with('C');
+
+    if renamed_or_copied {
+        let _old_tok = tokens.next()?;
+        let new_tok = tokens.next()?;
+        return Some(RawModeEntry {
+            path: lossy_path(new_tok),
+            path_bytes: new_tok.to_vec(),
+            old_mode,
+            new_mode,
+            old_sha,
+            new_sha,
+        });
+    }
+
+    let path_tok = tokens.next()?;
+    Some(RawModeEntry {
+        path: lossy_path(path_tok),
+        path_bytes: path_tok.to_vec(),
+        old_mode,
+        new_mode,
+        old_sha,
+        new_sha,
+    })
+}
+
+/// Git's gitlink (submodule) mode bit.
+const SUBMODULE_MODE: &str = "160000";
+/// Git's symlink mode bit.
+const SYMLINK_MODE: &str = "120000";
+/// Git's "this side doesn't exist" mode (a pure add has `old_mode ==
+/// MISSING_MODE`; a pure delete has `new_mode == MISSING_MODE`).
+const MISSING_MODE: &str = "000000";
+
+/// Classifies one [`RawModeEntry`] into the [`ChangeFileKind`] vocabulary
+/// (#231 PR5), given the SAME row's numstat-derived `additions`/`deletions`
+/// (already computed by [`merge_changed_files`] from the paired `--numstat`
+/// call — see [`RawModeEntry`]'s doc comment for why sha comparison isn't
+/// used here instead). Pure and total — every input shape maps to exactly
+/// one variant:
+///
+/// - either side's mode is the submodule gitlink mode -> [`ChangeFileKind::Submodule`];
+/// - else either side's mode is the symlink mode -> [`ChangeFileKind::Symlink`];
+/// - else both sides EXIST (neither mode is [`MISSING_MODE`] — a pure
+///   add/delete has nothing to call "mode-only", there being no prior/no
+///   surviving mode to compare against), the modes differ, and the numstat
+///   counts are the EXACT (not unknown/binary — a `None` never counts as
+///   "zero") `Some(0)`/`Some(0)` -> [`ChangeFileKind::ModeOnly`];
+/// - otherwise -> [`ChangeFileKind::Regular`].
+pub fn classify_change_file_kind(
+    entry: &RawModeEntry,
+    additions: Option<u64>,
+    deletions: Option<u64>,
+) -> ChangeFileKind {
+    if entry.old_mode == SUBMODULE_MODE || entry.new_mode == SUBMODULE_MODE {
+        return ChangeFileKind::Submodule;
+    }
+    if entry.old_mode == SYMLINK_MODE || entry.new_mode == SYMLINK_MODE {
+        return ChangeFileKind::Symlink;
+    }
+    if entry.old_mode != MISSING_MODE
+        && entry.new_mode != MISSING_MODE
+        && entry.old_mode != entry.new_mode
+        && additions == Some(0)
+        && deletions == Some(0)
+    {
+        return ChangeFileKind::ModeOnly;
+    }
+    ChangeFileKind::Regular
 }
 
 /// Additions/deletions hand-counted from a full unified-diff body (as
@@ -513,6 +674,27 @@ pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
         out.push_str(line);
     }
     (out, truncated)
+}
+
+/// Slices off the first `skip` LINES of `text` (#231 PR5's "load more"
+/// affordance — see `crate::changes::finish_change_diff_from`), each line
+/// delimited the same way [`bound_diff_display`] builds one
+/// (`split_inclusive('\n')`, so a final line with no trailing newline still
+/// counts as one line). `skip` at or beyond the true line count returns an
+/// empty slice, never panics. `skip: 0` returns `text` unchanged (no
+/// allocation, no scan).
+pub(crate) fn skip_diff_lines(text: &str, skip: usize) -> &str {
+    if skip == 0 {
+        return text;
+    }
+    let mut consumed = 0usize;
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        if i >= skip {
+            break;
+        }
+        consumed += line.len();
+    }
+    &text[consumed..]
 }
 
 /// Recognizes both binary shapes Git's diff output can contain: the plain
@@ -1091,5 +1273,172 @@ deadbeefdata\n";
         let (text, truncated) = bound_diff_display("");
         assert_eq!(text, "");
         assert!(!truncated);
+    }
+
+    // ---- skip_diff_lines (#231 PR5 load-more) ----
+
+    #[test]
+    fn skip_diff_lines_zero_returns_input_unchanged() {
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 0), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn skip_diff_lines_skips_whole_lines_including_trailing_newline() {
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 1), "b\nc\n");
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 2), "c\n");
+    }
+
+    #[test]
+    fn skip_diff_lines_beyond_the_end_returns_empty_not_a_panic() {
+        assert_eq!(skip_diff_lines("a\nb\n", 10), "");
+    }
+
+    #[test]
+    fn skip_diff_lines_handles_a_final_line_with_no_trailing_newline() {
+        assert_eq!(skip_diff_lines("a\nb", 1), "b");
+    }
+
+    // ---- parse_raw_z / classify_change_file_kind (#231 PR5) ----
+
+    fn raw_joined(records: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for record in records {
+            out.extend_from_slice(record);
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_raw_z_parses_a_plain_modify_record() {
+        let raw = raw_joined(&[b":100644 100644 abc123 def456 M", b"file.rs"]);
+        let parse = parse_raw_z(&raw);
+        assert!(!parse.truncated);
+        assert_eq!(parse.entries.len(), 1);
+        let e = &parse.entries[0];
+        assert_eq!(e.path, "file.rs");
+        assert_eq!(e.old_mode, "100644");
+        assert_eq!(e.new_mode, "100644");
+        assert_eq!(e.old_sha, "abc123");
+        assert_eq!(e.new_sha, "def456");
+    }
+
+    #[test]
+    fn parse_raw_z_parses_a_rename_old_then_new_path_order() {
+        let raw = raw_joined(&[b":100644 100644 abc abc R100", b"old.txt", b"new.txt"]);
+        let parse = parse_raw_z(&raw);
+        assert_eq!(parse.entries[0].path, "new.txt");
+    }
+
+    #[test]
+    fn parse_raw_z_empty_input_yields_no_entries() {
+        let parse = parse_raw_z(b"");
+        assert!(parse.entries.is_empty());
+        assert!(!parse.truncated);
+    }
+
+    fn mode_entry(old_mode: &str, new_mode: &str, old_sha: &str, new_sha: &str) -> RawModeEntry {
+        RawModeEntry {
+            path: "f".into(),
+            path_bytes: b"f".to_vec(),
+            old_mode: old_mode.into(),
+            new_mode: new_mode.into(),
+            old_sha: old_sha.into(),
+            new_sha: new_sha.into(),
+        }
+    }
+
+    #[test]
+    fn classify_detects_a_submodule_on_either_side() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "160000", "0", "abc"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule added"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("160000", "160000", "abc", "def"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule pointer bumped"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("160000", "000000", "abc", "0"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule removed"
+        );
+    }
+
+    #[test]
+    fn classify_detects_a_symlink_on_either_side() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "120000", "0", "abc"), None, None),
+            ChangeFileKind::Symlink,
+            "symlink added"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("120000", "120000", "abc", "def"), None, None),
+            ChangeFileKind::Symlink,
+            "symlink target changed"
+        );
+    }
+
+    #[test]
+    fn classify_detects_a_mode_only_change_via_zero_zero_numstat() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), Some(0), Some(0)),
+            ChangeFileKind::ModeOnly,
+            "the unstaged case: new_sha is a placeholder, so classification must not depend on it"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "abc"), Some(0), Some(0)),
+            ChangeFileKind::ModeOnly,
+            "the staged case, where sha happens to be reliable too"
+        );
+    }
+
+    #[test]
+    fn classify_a_mode_difference_with_unknown_or_nonzero_stats_is_not_mode_only() {
+        // Binary content (stats unknown, never a fabricated zero) must not be
+        // misreported as mode-only just because the mode also differs.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), None, None),
+            ChangeFileKind::Regular
+        );
+        // A real content change that ALSO happens to change mode is still a
+        // content change, not mode-only.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), Some(3), Some(1)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_a_pure_add_is_never_mode_only_even_with_zero_zero_stats() {
+        // old_mode == new_mode is false here (000000 vs 100644), but the
+        // MISSING_MODE guard must reject a pure add as "mode-only" on its
+        // own terms — there is no PRIOR mode to have changed from.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "100644", "0000000", "0000000"), Some(0), Some(0)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_an_ordinary_content_change_is_regular() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100644", "abc", "def"), Some(2), Some(1)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_unchanged_mode_with_zero_zero_stats_is_regular_not_mode_only() {
+        // Same mode: nothing about the mode changed, so even a zero/zero
+        // numstat result (a defensive shape; git wouldn't normally emit a
+        // diff record for a truly no-op change) must not be misreported as
+        // mode-only.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100644", "abc", "abc"), Some(0), Some(0)),
+            ChangeFileKind::Regular
+        );
     }
 }

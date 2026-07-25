@@ -58,6 +58,48 @@ pub struct ChangedFile {
     pub binary: bool,
     pub truncated: bool,
     pub diff_available: bool,
+    /// What KIND of entry this path is, beyond the add/modify/delete/rename/
+    /// conflict status vocabulary (#231 PR5's additive contract extension).
+    /// `git diff --numstat`/`--name-status` alone can't tell a submodule
+    /// pointer bump, a symlink change or a permissions-only change apart
+    /// from an ordinary content change — see
+    /// `crate::git::diff_stat::classify_change_file_kind`, fed from a third,
+    /// bounded `git diff --raw` call
+    /// (`crate::git::working_tree::working_tree_change_set`). Always
+    /// [`ChangeFileKind::Regular`] for a provider/turn snapshot, which
+    /// carries no file-mode information to classify from — not a claim that
+    /// every turn-scope row IS a regular file, only that this source can't
+    /// tell otherwise (matches the file's own general "unknown stays
+    /// unknown" spirit, applied to a bool-shaped default rather than an
+    /// `Option`). `#[serde(default)]` so an older persisted/cached payload
+    /// that predates this field still deserializes.
+    #[serde(default)]
+    pub kind: ChangeFileKind,
+}
+
+/// See [`ChangedFile::kind`]. A closed, additive vocabulary — a future kind
+/// this build doesn't know about would need its own variant, not a silent
+/// fold into `Regular`, so this is deliberately NOT `#[non_exhaustive]`
+/// mapped to a catch-all; every git-side classification site must name an
+/// exact variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeFileKind {
+    /// An ordinary tracked file (or one whose kind this source can't
+    /// classify at all — see [`ChangedFile::kind`]'s doc comment).
+    #[default]
+    Regular,
+    /// A Git submodule gitlink (mode `160000`) — the row's "content" is a
+    /// commit pointer into another repository, not text; never diffed as
+    /// text.
+    Submodule,
+    /// A symbolic link (mode `120000`) — its "content" is a target path,
+    /// not the linked file's own content; never diffed as text.
+    Symlink,
+    /// A regular file whose permission bits changed (e.g. `chmod +x`) with
+    /// its blob content byte-for-byte unchanged — a real change with no
+    /// text diff to show.
+    ModeOnly,
 }
 
 /// Locked five-way status vocabulary from the change-set contract.
@@ -157,6 +199,26 @@ pub struct ChangeDiff {
     /// `binary`, which means a diff conceptually exists but has no
     /// meaningful text form.
     pub available: bool,
+    /// Binary content's size in bytes, when cheaply known (#231 PR5): only
+    /// ever populated by `crate::git::working_tree::file_diff` for a LIVE
+    /// working-tree binary file that still exists on disk — a plain
+    /// `fs::metadata` stat call, never a content read. `None` for a
+    /// turn-snapshot source (no live path to check without breaking the
+    /// "turn snapshots are immutable" rule — showing a file's CURRENT size
+    /// next to a HISTORICAL diff would misattribute it across time) or when
+    /// the working-tree file no longer exists on disk.
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+    /// `true` when the raw bytes this diff was built from were not valid
+    /// UTF-8 and were lossily decoded (invalid sequences become U+FFFD)
+    /// before ever reaching this type (#231 PR5) — content still renders,
+    /// never a blank or a panic, but the caller should say so rather than
+    /// silently presenting replacement characters as if they were the
+    /// file's real bytes. Always `false` for a turn-snapshot source (already
+    /// a valid Rust `String`, decoded from persisted JSON, by the time it
+    /// reaches this type).
+    #[serde(default)]
+    pub invalid_utf8: bool,
 }
 
 /// Builds a [`ChangeDiff`] from raw diff text plus whether the byte capture
@@ -170,12 +232,29 @@ pub struct ChangeDiff {
 /// binary detection, [`crate::git::diff_stat::bound_diff_display`] for the
 /// byte/line display bound.
 pub fn finish_change_diff(text: &str, capture_truncated: bool) -> ChangeDiff {
+    finish_change_diff_from(text, capture_truncated, 0)
+}
+
+/// Same as [`finish_change_diff`], but the returned `diff` text starts
+/// `skip_lines` lines into `text` rather than at its beginning (#231 PR5's
+/// "load more" affordance for a truncated diff: the caller re-derives the
+/// full diff — cheap and already the crate's convention, see
+/// `crate::git::working_tree::file_diff`'s and the turn-snapshot command
+/// layer's doc comments — and asks for the NEXT bounded chunk past what the
+/// renderer already has, rather than this layer caching or paginating
+/// anything itself). `skip_lines: 0` is exactly [`finish_change_diff`]'s
+/// existing behavior. Binary detection scans the FULL `text` regardless of
+/// `skip_lines` — binary-ness is a whole-file property, not a
+/// property of one bounded chunk of it.
+pub fn finish_change_diff_from(text: &str, capture_truncated: bool, skip_lines: usize) -> ChangeDiff {
     if text.is_empty() {
         return ChangeDiff {
             diff: Some(String::new()),
             binary: false,
             truncated: capture_truncated,
             available: true,
+            size_bytes: None,
+            invalid_utf8: false,
         };
     }
     let stat = crate::git::diff_stat::count_unified_diff_stat(text);
@@ -185,13 +264,18 @@ pub fn finish_change_diff(text: &str, capture_truncated: bool) -> ChangeDiff {
             binary: true,
             truncated: capture_truncated,
             available: true,
+            size_bytes: None,
+            invalid_utf8: false,
         };
     }
-    let (bounded_text, text_truncated) = crate::git::diff_stat::bound_diff_display(text);
+    let remainder = crate::git::diff_stat::skip_diff_lines(text, skip_lines);
+    let (bounded_text, text_truncated) = crate::git::diff_stat::bound_diff_display(remainder);
     ChangeDiff {
         diff: Some(bounded_text),
         binary: false,
         truncated: capture_truncated || text_truncated,
         available: true,
+        size_bytes: None,
+        invalid_utf8: false,
     }
 }

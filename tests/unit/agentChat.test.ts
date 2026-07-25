@@ -954,6 +954,105 @@ describe("agentChat store reducer", () => {
       expect(items).toHaveLength(1);
       expect(items[0].changes[0].path).toBe("a.rs");
     });
+
+    it("defers the reflow while a turn is active — preserving live-only rows — and runs it once the turn closes", async () => {
+      flags.setChangesReview(false);
+      const priorTurnEvents: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-1", changes: [{ path: "a.rs", kind: "add", diff: null }] },
+        { kind: "fileChange", itemId: "files-1b", changes: [{ path: "a2.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const liveTurnEvents: AgentEvent[] = [
+        { kind: "turnStarted" },
+        { kind: "fileChange", itemId: "files-2", changes: [{ path: "b.rs", kind: "add", diff: null }] },
+        { kind: "turnDone", status: "completed" },
+      ];
+      const { chatId, emit } = await startChat(historyFromEvents(priorTurnEvents));
+
+      // Hydrated with the flag off: the prior turn's two FileChange events
+      // stayed separate (legacy shape), not folded into one receipt.
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(2);
+
+      const historyCallsBeforeFlip = tauri.invoke.mock.calls.filter(
+        (call) => call[0] === "agent_chat_history",
+      ).length;
+
+      emit({ kind: "turnStarted" });
+      emit({ kind: "commandStarted", itemId: "cmd-1", command: "bun test", cwd: "/project" });
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+
+      flags.setChangesReview(true);
+      await flushPromises();
+
+      // Deferred: an active turn must not trigger an immediate re-fold —
+      // replacing the whole timeline from persisted history would wipe this
+      // turn's live-only, never-persisted-mid-stream command row.
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBeforeFlip);
+      expect(timeline(chatId)).toContainEqual(
+        expect.objectContaining({ type: "command", itemId: "cmd-1", status: "running" }),
+      );
+      expect(timeline(chatId).filter((item) => item.type === "fileChange")).toHaveLength(2);
+
+      // The backend has now persisted this turn's events too — closing it is
+      // when the deferred reflow actually fires.
+      mockInvoke(historyFromEvents([...priorTurnEvents, ...liveTurnEvents]));
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+      await flushPromises();
+
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBeforeFlip + 1);
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2); // prior turn (grouped) + this turn (grouped)
+      expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
+      expect(items.every((item) => item.turnComplete)).toBe(true);
+    });
+
+    it("clears a chat's pending reflow on disposal, so a reused chatId never inherits a stale pending flag", async () => {
+      flags.setChangesReview(false);
+      mockInvoke([]);
+      const chatId = nextChatId();
+      await ensureAgentChat(chatId, "/project", "codex", null);
+      const firstStart = tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_start" && call[1]?.chatId === chatId)
+        .at(-1);
+      firstStart?.[1].onEvent.onmessage({ kind: "turnStarted" } satisfies AgentEvent);
+      expect(agentChat(chatId)?.turnActive).toBe(true);
+
+      flags.setChangesReview(true); // active turn ⇒ deferred, chatId added to the pending set
+      await flushPromises();
+
+      await disposeAgentChat(chatId);
+
+      // Re-create a chat under the SAME chatId string (a realistic "reopen"),
+      // with no flag flip of its own during its lifetime.
+      mockInvoke([]);
+      await ensureAgentChat(chatId, "/project", "codex", null);
+      const secondStart = tauri.invoke.mock.calls
+        .filter((call) => call[0] === "agent_chat_start" && call[1]?.chatId === chatId)
+        .at(-1);
+
+      const historyCallsBefore = tauri.invoke.mock.calls.filter(
+        (call) => call[0] === "agent_chat_history",
+      ).length;
+      secondStart?.[1].onEvent.onmessage({ kind: "turnStarted" } satisfies AgentEvent);
+      secondStart?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" } satisfies AgentEvent);
+      await flushPromises();
+
+      // No stale pending entry from the disposed chat ⇒ this turn closing
+      // must not trigger an unrequested reflow fetch.
+      expect(
+        tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_history").length,
+      ).toBe(historyCallsBefore);
+    });
   });
 
   it("replaces accumulated Pi tool updates instead of appending them", async () => {

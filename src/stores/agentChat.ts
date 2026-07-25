@@ -989,6 +989,12 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
     activeTitleTurnByChat.delete(chatId);
+    // #231 review fix: a `changesReview` flip while this turn was active
+    // deferred its reflow (replacing the whole timeline from persisted
+    // history mid-stream would wipe live-only rows/buffered deltas). The
+    // terminal event above already closed the receipt group and set
+    // `turnActive: false`, so it's now safe to run the deferred re-fold.
+    if (pendingChangesReceiptReflow.delete(chatId)) void reflowChangesReceiptFold(chatId);
     // #231 PR3: a live turn just closed — if this chat's changes-review store
     // target is already pointed at it, refresh it. Live-only (not called from
     // `stateFromHistory`'s replay), same as the activity-glow calls below.
@@ -1221,6 +1227,27 @@ async function reflowChangesReceiptFold(chatId: string): Promise<void> {
   });
 }
 
+// Chats whose reflow was deferred because a turn was active when
+// `changesReview` flipped (below) — `reduceOnTurnClose` (the turnDone/
+// turnFailed live-event branch) drains this once the turn's terminal event
+// has been applied. `disposeAgentChat` also drops entries here so a disposed
+// chat's stale chatId never triggers a reflow for a gone/reused slot.
+const pendingChangesReceiptReflow = new Set<string>();
+
+/** Re-derives one chat's fold immediately if idle, or defers it to the next
+ *  `turnDone`/`turnFailed` if a turn is active. `reflowChangesReceiptFold`
+ *  replaces the WHOLE timeline from persisted history — mid-stream rows
+ *  (`textDelta`/`thinkingDelta`/`commandOutput`/buffered deltas) are
+ *  live-only and never persisted, so running it against an active turn would
+ *  wipe that turn's in-progress chrome out from under the user. */
+function reflowOrDeferChangesReceiptFold(chatId: string): void {
+  if (chats[chatId]?.turnActive) {
+    pendingChangesReceiptReflow.add(chatId);
+    return;
+  }
+  void reflowChangesReceiptFold(chatId);
+}
+
 // Re-fold every already-hydrated chat whenever `changesReview` actually
 // CHANGES value (either edge) — `subscribeToFlagChanges` fires on any flag
 // flip, so this snapshot-compares just the one flag it cares about rather
@@ -1231,7 +1258,7 @@ subscribeToFlagChanges(() => {
   if (next === lastChangesReviewFlagValue) return;
   lastChangesReviewFlagValue = next;
   for (const chatId of Object.keys(chats)) {
-    void reflowChangesReceiptFold(chatId);
+    reflowOrDeferChangesReceiptFold(chatId);
   }
 });
 
@@ -1825,6 +1852,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
   modelTouchByChat.delete(chatId);
+  pendingChangesReceiptReflow.delete(chatId);
   dropPendingDeltas(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
   await dispose;

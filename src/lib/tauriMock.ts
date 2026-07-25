@@ -12,6 +12,7 @@ const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
 // the default fixture's numbers (and its pinned golden) — see #307's
 // ContextMeter overflow warning state.
 const VRT_AGENT_CHAT_CONTEXT_OVERFLOW_KEY = "pickforge.vrt.agentChatContextOverflow";
+const VRT_AGENT_CHAT_RUNNING_KEY = "pickforge.vrt.agentChatRunning";
 const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
 // #306 PR1's flat chat list (flag `flatChatList`) VRT scenario: adds a
@@ -529,9 +530,24 @@ function agentChatContextOverflowFixtureEnabled(): boolean {
   }
 }
 
+/** Replays the fixture without its terminal `turnDone`, leaving the chat with
+ * a live turn — the only state in which the composer queues (#357). */
+function agentChatRunningFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_AGENT_CHAT_RUNNING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** The default fixture's usage row, with contextUsed pushed past
  * contextWindow — renders ContextMeter's warn state (#307). */
 function agentChatHistoryForFixture(): AgentTimelineEntry[] {
+  if (agentChatRunningFixtureEnabled()) {
+    return AGENT_CHAT_HISTORY.filter(
+      (entry) => entry.entryType !== "item" || entry.kind !== "turnDone",
+    );
+  }
   if (!agentChatContextOverflowFixtureEnabled()) return AGENT_CHAT_HISTORY;
   return AGENT_CHAT_HISTORY.map((entry) => {
     if (entry.entryType !== "item" || entry.kind !== "usage") return entry;

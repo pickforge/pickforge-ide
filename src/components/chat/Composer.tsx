@@ -12,6 +12,8 @@ import {
 import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { errorText } from "../../lib/errors";
+import { hostPlatform } from "../../lib/platform";
+import { flagEnabled } from "../../stores/flags";
 import {
   type AgentProfile,
   discoverAgentCli,
@@ -208,6 +210,7 @@ export function Composer(props: {
   supportsImages: boolean;
   imageUnavailableReason?: string;
   onSend: (text: string, images?: string[]) => void | Promise<void>;
+  onQueue?: (text: string, images?: string[]) => void | Promise<void>;
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
   onModelChange?: (model: string | null) => void;
@@ -218,6 +221,7 @@ export function Composer(props: {
   onSteer?: (text: string) => void | Promise<void>;
   emberYielded?: boolean;
   meter?: JSX.Element;
+  editorRef?: (element: HTMLDivElement) => void;
 }): JSX.Element {
   const [text, setText] = createSignal("");
   const [piModels, setPiModels] = createSignal<AgentProfile["models"]>([]);
@@ -543,12 +547,30 @@ export function Composer(props: {
     }
   });
 
-  const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
+  const queueing = () => props.turnActive && flagEnabled("messageQueue");
+  const steerAvailable = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
+  const steering = () => !queueing() && steerAvailable();
+  const isMac = () => hostPlatform() === "macos";
+  const steerShortcutLabel = () => (isMac() ? "⌘⏎" : "Ctrl⏎");
+  const steerAriaShortcut = () => (isMac() ? "Meta+Enter" : "Control+Enter");
+  const isSteerShortcut = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" || event.shiftKey || event.altKey) return false;
+    return isMac()
+      ? event.metaKey && !event.ctrlKey
+      : event.ctrlKey && !event.metaKey;
+  };
   const canSend = () => {
+    if (queueing()) return text().trim().length > 0;
     if (props.turnActive) return steering() && text().trim().length > 0;
     return text().trim().length > 0 || attachments().length > 0;
   };
-  const placeholder = () => (steering() ? "Steer the running turn…" : "Message the agent…");
+  const placeholder = () => {
+    if (queueing()) {
+      const steerHint = props.supportsSteer ? ` · ${steerShortcutLabel()} steers…` : "";
+      return `Queue the next message…${steerHint}`;
+    }
+    return steering() ? "Steer the running turn…" : "Message the agent…";
+  };
 
   const suggestions = createMemo<Suggestion[]>(() => {
     const value = text();
@@ -1025,34 +1047,11 @@ export function Composer(props: {
     onCleanup(unregister);
   });
 
-  const dispatchSend = () => {
-    const savedText = text();
-    const savedAttachments = [...attachments()];
-    const value = expandTextAttachments(savedAttachments, savedText).trim();
-    const savedImages = readyAttachmentPaths(savedAttachments);
-    if (!value && savedImages.length === 0) return;
-    if (hasPendingAttachments(savedAttachments)) return;
-    if (props.turnActive) {
-      if (!steering() || !value) return;
-      pasteGeneration += 1;
-      droppedPasteGeneration = null;
-      const result = props.onSteer!(value);
-      setText("");
-      setAttachments([]);
-      renderEditor();
-      void Promise.resolve(result).catch(() => {
-        if (text().trim().length === 0 && attachments().length === 0) {
-          setText(savedText);
-          setAttachments(savedAttachments);
-          renderEditor();
-        }
-      });
-      return;
-    }
-
-    pasteGeneration += 1;
-    droppedPasteGeneration = null;
-    const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
+  const clearDispatchedDraft = (
+    result: void | Promise<void>,
+    savedText: string,
+    savedAttachments: ComposerAttachment[],
+  ) => {
     setText("");
     setAttachments([]);
     renderEditor();
@@ -1063,6 +1062,51 @@ export function Composer(props: {
         renderEditor();
       }
     });
+  };
+
+  const dispatchSteer = () => {
+    const savedText = text();
+    const savedAttachments = [...attachments()];
+    const value = expandTextAttachments(savedAttachments, savedText).trim();
+    if (!steerAvailable() || !value || hasPendingAttachments(savedAttachments)) return;
+    pasteGeneration += 1;
+    droppedPasteGeneration = null;
+    clearDispatchedDraft(props.onSteer!(value), savedText, savedAttachments);
+  };
+
+  const dispatchSend = () => {
+    const savedText = text();
+    const savedAttachments = [...attachments()];
+    const value = expandTextAttachments(savedAttachments, savedText).trim();
+    const savedImages = readyAttachmentPaths(savedAttachments);
+    if (!value && savedImages.length === 0) return;
+    if (hasPendingAttachments(savedAttachments)) return;
+    if (props.turnActive) {
+      if (queueing()) {
+        if (!props.onQueue || !value) return;
+        pasteGeneration += 1;
+        droppedPasteGeneration = null;
+        clearDispatchedDraft(
+          props.onQueue(value, savedImages.length > 0 ? savedImages : undefined),
+          savedText,
+          savedAttachments,
+        );
+        return;
+      }
+      if (!steering() || !value) return;
+      pasteGeneration += 1;
+      droppedPasteGeneration = null;
+      clearDispatchedDraft(props.onSteer!(value), savedText, savedAttachments);
+      return;
+    }
+
+    pasteGeneration += 1;
+    droppedPasteGeneration = null;
+    clearDispatchedDraft(
+      props.onSend(value, savedImages.length > 0 ? savedImages : undefined),
+      savedText,
+      savedAttachments,
+    );
   };
 
   createEffect(() => {
@@ -1107,6 +1151,11 @@ export function Composer(props: {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (event.isComposing) return;
+    if (queueing() && isSteerShortcut(event)) {
+      event.preventDefault();
+      if (steerAvailable()) dispatchSteer();
+      return;
+    }
     if (suggestionsOpen()) {
       const list = suggestions();
       if (event.key === "ArrowDown") {
@@ -1416,7 +1465,10 @@ export function Composer(props: {
           }}
         >
           <div
-            ref={field}
+            ref={(element) => {
+              field = element;
+              props.editorRef?.(element);
+            }}
             class="pf-chat-textarea pf-chat-editor"
             role="textbox"
             aria-multiline="true"
@@ -1427,6 +1479,9 @@ export function Composer(props: {
             }
             aria-description={
               props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+            }
+            aria-keyshortcuts={
+              queueing() && props.supportsSteer ? steerAriaShortcut() : undefined
             }
             contentEditable={!preparing()}
             spellcheck={true}

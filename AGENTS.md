@@ -87,9 +87,12 @@ PickForge has a first-class design system — read
 [`docs/design-system/`](docs/design-system/README.md) before any UI work, and
 keep new UI consistent with it.
 
-- **Tokens only — never raw values.** Use the CSS custom properties in
-  `src/styles/tokens.css` (color, spacing, radii, motion). No raw hex, font
-  sizes, radii, or durations in components.
+- **Tokens only — never raw values.** Use the `--pf-*` CSS custom properties
+  (color, spacing, radii, motion). They are defined in
+  `node_modules/@pickforge/brand/src/tokens.css` and imported through
+  `src/styles/global.css` — there is no `src/styles/tokens.css`. No raw hex,
+  font sizes, radii, or durations in components. If a value you need has no
+  token, raise it rather than inlining a literal.
 - **One ember per composition.** The ember accent is the only accent — reserve it
   for the single most important element (primary CTA, active/selected, live
   status). Everything else is surface / text / hairline / semantic status.
@@ -101,6 +104,18 @@ keep new UI consistent with it.
   and `src/lib/terminal-theme.ts`.
 - **Verify visuals via VRT.** After UI changes run `bun run vrt` and review the
   Playwright snapshots under `tests/vrt/` before committing.
+- **State commits before animation.** Never gate a store mutation on
+  `animationend`. The entry stays live for the animation's duration, so
+  anything reading that state meanwhile acts on a row the user already
+  deleted, and an unmount fires `animationcancel` instead — so the mutation
+  never lands at all. Write the state first and let the exit animation be
+  purely cosmetic, or drop the animation (#357 review).
+- **A live region announces content, not labels.** Screen readers fire on an
+  `aria-live` element's text changing; swapping its `aria-label` is usually
+  silent and also overrides the visible text as that element's accessible
+  name. Use a separate always-mounted visually-hidden `role="status"` whose
+  text is the message — one that unmounts with the last row can never
+  announce that the list emptied (#357 review).
 - **A frame you can click must accept text.** When a wrapper takes over an
   input's visible frame (border/background) from its editable element, route
   mousedown on the frame into that element — otherwise part of what reads as the

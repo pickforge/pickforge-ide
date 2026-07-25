@@ -117,6 +117,13 @@ export type AgentChatTotals = {
   estimated: boolean;
 };
 
+export interface QueuedMessage {
+  readonly id: string;
+  readonly text: string;
+  readonly images: readonly string[];
+  readonly queuedAt: number;
+}
+
 // Last cumulative usage snapshot (providers that report contextUsed send
 // running totals, not per-turn deltas). Kept on the chat so totals accumulate
 // positive deltas across provider-side thread restarts, which RESET the running
@@ -140,6 +147,7 @@ export interface AgentChatState {
   turnActive: boolean;
   error: string | null;
   timeline: AgentTimelineItem[];
+  queue: QueuedMessage[];
   approvals: AgentApproval[];
   contextUsed: number | null;
   contextWindow: number | null;
@@ -169,6 +177,9 @@ export interface AgentChatState {
 
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
+const nextQueueIdByChat = new Map<string, number>();
+const activeQueueDrainByChat = new Map<string, symbol>();
+const pendingQueueDrainByChat = new Set<string>();
 const ensurePromises = new Map<string, Promise<void>>();
 const hydratePromises = new Map<string, Promise<void>>();
 const pendingSetModelByChat = new Map<string, { promise: Promise<void>; sequence: number }>();
@@ -235,6 +246,36 @@ export function agentChat(chatId: string): AgentChatState | undefined {
   return chats[chatId];
 }
 
+export function enqueueAgentMessage(
+  chatId: string,
+  text: string,
+  images: string[] = [],
+): string {
+  const chat = chats[chatId];
+  if (!flagEnabled("messageQueue") || !chat) return "";
+  const ordinal = nextQueueIdByChat.get(chatId) ?? 1;
+  nextQueueIdByChat.set(chatId, ordinal + 1);
+  const id = `queued-${ordinal}`;
+  setChats(chatId, {
+    queue: [...chat.queue, { id, text, images: [...images], queuedAt: Date.now() }],
+  });
+  return id;
+}
+
+export function removeQueuedMessage(chatId: string, id: string): void {
+  const queue = chats[chatId]?.queue;
+  if (!flagEnabled("messageQueue") || !queue?.some((entry) => entry.id === id)) return;
+  setChats(chatId, { queue: queue.filter((entry) => entry.id !== id) });
+}
+
+/** No production caller yet — this is the store half of the held-queue
+ *  DISCARD action landing in #357 PR 2. Delete it if that slice changes shape. */
+export function clearAgentQueue(chatId: string): void {
+  const chat = chats[chatId];
+  if (!flagEnabled("messageQueue") || !chat || chat.queue.length === 0) return;
+  setChats(chatId, { queue: [] });
+}
+
 export function latestPlanForChat(
   chatId: string,
 ): Extract<AgentTimelineItem, { type: "plan" }> | null {
@@ -276,6 +317,7 @@ function emptyState(
     turnActive: false,
     error: null,
     timeline: [],
+    queue: [],
     approvals: [],
     contextUsed: null,
     contextWindow: null,
@@ -1060,17 +1102,21 @@ function notifyGitRefreshTargetsOfTurnCompletion(chatId: string): void {
   if (turnProjectRoot) notifyProjectTurnCompleted(turnProjectRoot);
 }
 
+/** Returns whether the turn this event closed was interrupted by the user.
+ *  The flag is consumed destructively here (`interruptedByUser.delete`), so
+ *  callers that need it must take it from this return value — reading the set
+ *  afterwards always reports false. */
 function trackTurnLifecycle(
   chatId: string,
   event: AgentEvent,
   activeTitleTurn: ActiveTitleTurn | undefined,
-) {
+): boolean {
   if (event.kind === "turnStarted") {
     interruptedByUser.delete(chatId);
     if (activityEligible(chatId)) agentTurnStarted(chatId);
-    return;
+    return false;
   }
-  if (event.kind !== "turnDone" && event.kind !== "turnFailed") return;
+  if (event.kind !== "turnDone" && event.kind !== "turnFailed") return false;
   activeTitleTurnByChat.delete(chatId);
   // #231 review fix: a `changesReview` flip while this turn was active
   // deferred its reflow (replacing the whole timeline from persisted
@@ -1095,9 +1141,25 @@ function trackTurnLifecycle(
     pendingProviderTitleByChat.delete(chatId);
   }
   const wasInterrupted = interruptedByUser.delete(chatId);
-  if (!activityEligible(chatId)) return;
+  if (!activityEligible(chatId)) return wasInterrupted;
   if (wasInterrupted) agentTurnCleared(chatId);
   else agentTurnDone(chatId);
+  return wasInterrupted;
+}
+
+/** A held queue is the deliberate outcome of an interrupt (#357): the user
+ *  stopped the turn to redirect, so firing the backlog into that moment is
+ *  the wrong read. `wasInterrupted` must come from `trackTurnLifecycle`'s
+ *  return value — see the note there. */
+function shouldAutoDrainAgentQueue(
+  chatId: string,
+  event: AgentEvent,
+  wasInterrupted: boolean,
+): boolean {
+  if (!flagEnabled("messageQueue") || !chats[chatId]?.queue.length) return false;
+  if (event.kind === "turnDone" && event.status === "interrupted") return false;
+  if (event.kind !== "turnDone" && event.kind !== "turnFailed") return false;
+  return !wasInterrupted;
 }
 
 function receiveAgentEvent(chatId: string, event: AgentEvent) {
@@ -1112,7 +1174,8 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
   const activeTitleTurn = activeTitleTurnByChat.get(chatId);
   trackPendingProviderTitle(chatId, event, activeTitleTurn);
-  trackTurnLifecycle(chatId, event, activeTitleTurn);
+  const wasInterrupted = trackTurnLifecycle(chatId, event, activeTitleTurn);
+  if (shouldAutoDrainAgentQueue(chatId, event, wasInterrupted)) void drainAgentQueue(chatId);
 }
 
 // `previousModel` is the last model the backend session is known to be
@@ -1256,6 +1319,16 @@ function trackCompletedTitleTurn(chatId: string, chat: AgentChatState) {
     ...completed,
     { seq: latestUser.seq, text: latestUser.text },
   ]);
+}
+
+/** The queue is live composer state, not persisted history (#357). Replacing
+ *  a chat's state from history must carry it over, or a message typed while
+ *  hydration was in flight vanishes without ever being sent. */
+function preservedQueue(
+  previous: AgentChatState | undefined,
+  loaded: AgentChatState,
+): QueuedMessage[] {
+  return previous?.queue ?? loaded.queue;
 }
 
 function stateFromHistory(
@@ -1447,6 +1520,7 @@ async function loadEnsuredHistory(
     effort: previous?.effort ?? loaded.effort,
     mode: previous?.mode ?? loaded.mode,
     providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+    queue: preservedQueue(previous, loaded),
   });
   return true;
 }
@@ -1660,6 +1734,7 @@ async function runHydrateAgentChatHistorySession(
       effort: previous?.effort ?? loaded.effort,
       mode: previous?.mode ?? loaded.mode,
       providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+      queue: preservedQueue(previous, loaded),
     });
   } finally {
     if (isCurrentPromise()) hydratePromises.delete(chatId);
@@ -1968,12 +2043,71 @@ function rollbackFailedSend(
   if (activityEligible(chatId)) agentTurnCleared(chatId);
 }
 
+/** The entry a drain should send right now, or `null` when the chat is not in
+ *  a drainable state (flag off, gone, mid-turn, or empty). */
+function nextDrainEntry(chatId: string): QueuedMessage | null {
+  const chat = chats[chatId];
+  if (!flagEnabled("messageQueue") || !chat || chat.turnActive || chat.queue.length === 0) {
+    return null;
+  }
+  return chat.queue[0];
+}
+
+/** Releases this drain's claim and replays a turn close that arrived while it
+ *  was in flight. Never replays after a failed send — a failure deliberately
+ *  holds the rest of the queue. */
+function releaseAgentQueueDrain(chatId: string, token: symbol, drained: boolean): void {
+  if (activeQueueDrainByChat.get(chatId) !== token) return;
+  activeQueueDrainByChat.delete(chatId);
+  const missed = pendingQueueDrainByChat.delete(chatId);
+  if (missed && drained && !chats[chatId]?.turnActive) void drainAgentQueue(chatId);
+}
+
+export async function drainAgentQueue(chatId: string): Promise<void> {
+  const entry = nextDrainEntry(chatId);
+  if (!entry) return;
+  // A turn can close while the previous drain is still awaiting its own send.
+  // Dropping that request would strand the rest of the queue until the user
+  // sent something by hand, so record it and replay once this drain lands.
+  if (activeQueueDrainByChat.has(chatId)) {
+    pendingQueueDrainByChat.add(chatId);
+    return;
+  }
+
+  const token = Symbol(chatId);
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  activeQueueDrainByChat.set(chatId, token);
+  let drained = false;
+  try {
+    // Only a dispatched send retires the entry. `sendAgentMessage` also
+    // resolves on paths that roll back without reaching the backend, and
+    // treating those as delivered would drop a message that never sent.
+    const sent = await sendAgentMessage(chatId, entry.text, [...entry.images]);
+    if (!sent) return;
+    if ((ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId]) return;
+    setChats(chatId, {
+      queue: chats[chatId].queue.filter((queued) => queued.id !== entry.id),
+    });
+    drained = true;
+  } catch (error) {
+    if ((ensureGenerations.get(chatId) ?? 0) === generation && chats[chatId]) {
+      setChats(chatId, { error: errorText(error) });
+    }
+  } finally {
+    releaseAgentQueueDrain(chatId, token, drained);
+  }
+}
+
+/** Returns true only once the message reached the backend. Some paths roll
+ *  back and resolve without dispatching, so callers that retire state on a
+ *  successful send (the queue drain) must gate on this rather than on the
+ *  promise merely settling. */
 export async function sendAgentMessage(
   chatId: string,
   text: string,
   images: string[] = [],
   options: SendAgentMessageOptions = {},
-): Promise<void> {
+): Promise<boolean> {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
   const chat = chats[chatId];
@@ -2004,7 +2138,7 @@ export async function sendAgentMessage(
         options,
         stale,
       );
-      if (!resolved) return;
+      if (!resolved) return false;
       sessionId = resolved.sessionId;
       optimisticSeq = resolved.optimisticSeq;
     }
@@ -2022,12 +2156,13 @@ export async function sendAgentMessage(
           );
         }
       }
-      return;
+      return false;
     }
     // ensureAgentChat can force a remote session onto v1 after the first
     // capability check. Gate the live state that will actually dispatch.
     assertImageInputSupported(target.chat, imageList);
     await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
+    return true;
   } catch (error) {
     if (stale()) throw error;
     rollbackFailedSend(chatId, chat, optimisticSeq, error);
@@ -2167,6 +2302,9 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   completedTitleTurnsByChat.delete(chatId);
   activeTitleTurnByChat.delete(chatId);
   nextSeqByChat.delete(chatId);
+  nextQueueIdByChat.delete(chatId);
+  activeQueueDrainByChat.delete(chatId);
+  pendingQueueDrainByChat.delete(chatId);
   ensurePromises.delete(chatId);
   hydratePromises.delete(chatId);
   pendingSetModelByChat.delete(chatId);

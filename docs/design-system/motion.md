@@ -39,7 +39,7 @@ if (ReduceMotion.of(context)) { /* jump to end state */ }
 ```
 
 The signature components already honor this internally (`EmberButton`,
-`EmberDot`, `SelectionBracket`). `flutter_animate` entrances must be gated by
+`StatusPill`, `SelectionBracket`). `flutter_animate` entrances must be gated by
 hand — only apply `.animate()` when `!ReduceMotion.of(context)` (this also keeps
 golden tests, which set `disableAnimations: true`, deterministic).
 
@@ -50,7 +50,8 @@ golden tests, which set `disableAnimations: true`, deterministic).
 - **Selection/hover**: `AnimatedContainer(duration: ReduceMotion.duration(
   context, PickforgeMotion.fast), curve: PickforgeMotion.forge)` for background
   / marker changes on the active row.
-- **Live pulse**: `EmberDot(pulsing: true)` for running/connected status.
+- **Live pulse**: `<StatusPill pulsing />` for running/connected status — the
+  bracket indicator pulses, not a dot.
 
 ## Do / don't
 

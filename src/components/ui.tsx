@@ -104,7 +104,7 @@ export function HairlinePanel(
   );
 }
 
-/** Small semantic status chip with a leading dot. */
+/** Semantic status tag: mono uppercase text behind a leading `[` bracket, never a filled chip. */
 export function StatusPill(props: {
   label: string;
   intent?: StatusIntent;
@@ -252,25 +252,6 @@ export function EmberSweepBorder(props: {
     >
       <div class="pf-sweep-inner">{props.children}</div>
     </div>
-  );
-}
-
-/** Small dot with an optional expanding pulse ring. */
-export function EmberDot(props: {
-  color?: string;
-  size?: number;
-  pulsing?: boolean;
-}): JSX.Element {
-  const size = () => `${props.size ?? 8}px`;
-  return (
-    <span
-      class={`pf-dot ${props.pulsing ? "pf-dot--pulsing" : ""}`}
-      style={{
-        "--pf-intent": props.color ?? "var(--pf-ember)",
-        width: size(),
-        height: size(),
-      }}
-    />
   );
 }
 

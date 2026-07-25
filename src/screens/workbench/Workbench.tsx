@@ -68,6 +68,7 @@ import { chatTerminalHostBinding, disposeChatTerminalHostBinding } from "../../l
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import { flagEnabled } from "../../stores/flags";
+import { notifyChangesReviewProjectChanged } from "../../stores/changes";
 import { operatorDockOpen, toggleOperatorDock } from "../../stores/operatorDock";
 import { OperatorDock } from "../../components/operator/OperatorDock";
 import { Tour } from "../../components/Tour";
@@ -329,6 +330,25 @@ function useOrchestraLaneFocusSync(
   });
 }
 
+/** #231 PR4's "project change" refresh trigger for the Changes review
+ *  surface's working-tree scope: fires whenever the active project changes,
+ *  for the app's lifetime, independent of whether the Source Control pane is
+ *  currently mounted (a hidden/collapsed dock unmounts it). The store's own
+ *  `notifyChangesReviewProjectChanged` is already scoped to a no-op unless
+ *  its working-tree slice is CURRENTLY targeting that exact root, so this is
+ *  cheap to call unconditionally on every root change rather than trying to
+ *  track pane visibility here too. Gated behind the flag: with `changesReview`
+ *  off, the store's working-tree target is never set, making this a
+ *  guaranteed no-op — skip it rather than call it anyway. A composable,
+ *  called synchronously from `WorkbenchScreen`'s own setup so its
+ *  `createEffect` runs under the same reactive owner as if written inline. */
+function useChangesReviewProjectSync(): void {
+  createEffect(() => {
+    const root = workspace.activeRoot;
+    if (root && flagEnabled("changesReview")) notifyChangesReviewProjectChanged(root);
+  });
+}
+
 /** Mounts a host the first time its chat becomes active, awaiting the
  *  project's MCP endpoint first so the very first shell carries the
  *  discovery env (see the call site's original comment for the race this
@@ -477,6 +497,7 @@ export function WorkbenchScreen() {
   useOrchestraCleanupSync(pendingOrchestraCleanup, setPendingOrchestraCleanup);
   useWorkbenchTourKickoff();
   useOrchestraLaneFocusSync(setLaneFocus);
+  useChangesReviewProjectSync();
   useChatHostMounting(mounted, setMounted);
   useWorkbenchLifecycle(
     available,

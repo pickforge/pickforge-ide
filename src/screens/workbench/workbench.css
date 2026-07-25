@@ -563,6 +563,267 @@ body.pf-resizing .pf-dock-panel {
   color: var(--pf-text-low);
 }
 
+/* ---- changes review surface (#231 PR4, behind `changesReview`) ----
+ * Master/detail-in-one-column: a bounded, independently-scrolling file
+ * navigator above a diff pane that fills the rest of the slot. The active
+ * file's header stays in ordinary flex flow above its own scrolling diff
+ * body (only one file is ever shown at a time in v1, so no CSS
+ * position:sticky trickery is needed to keep it visible). Add/del line tints
+ * reuse `.pf-diff-add`/`.pf-diff-del`/`.pf-diff-hunk` above — one diff color
+ * language for the whole app. The active file/scope is this composition's
+ * one ember accent; everything else stays neutral. */
+.pf-crs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.pf-crs-header {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-crs-headrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  min-height: 22px;
+}
+.pf-crs-repo {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-crs-branch {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  padding: 1px var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-item-fill);
+}
+.pf-crs-meta {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-crs-stat {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-crs-stat--add {
+  color: var(--pf-connected);
+}
+.pf-crs-stat--del {
+  color: var(--pf-error);
+}
+.pf-crs-unknown {
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-crs-unknown-flag {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  cursor: help;
+}
+.pf-crs-badge {
+  padding: 0 var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-crs-freshness {
+  margin-left: auto;
+}
+.pf-crs-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* file navigator: bounded height, own scrollbar, so a large change-set never
+   pushes the diff pane below the fold. */
+.pf-crs-nav {
+  flex: none;
+  max-height: 30%;
+  overflow-y: auto;
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-crs-navrow {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+  width: 100%;
+  padding: 3px var(--pf-space-sm);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+}
+.pf-crs-navrow:hover {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+.pf-crs-navrow--active {
+  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
+  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-ember);
+  color: var(--pf-text-hi);
+}
+.pf-crs-letter {
+  font-family: var(--pf-font-mono);
+  font-weight: var(--pf-weight-semibold);
+  text-align: center;
+}
+.pf-crs-a { color: var(--pf-connected); }
+.pf-crs-m { color: var(--pf-warning); }
+.pf-crs-d { color: var(--pf-error); }
+.pf-crs-r { color: var(--pf-info); }
+.pf-crs-navpath {
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-crs-navpath-old {
+  color: var(--pf-text-low);
+}
+.pf-crs-navstats {
+  flex: none;
+  display: flex;
+  gap: var(--pf-space-xs);
+  grid-column: 3;
+}
+/* Visible rows already convey status via the letter + color; this duplicate
+ * spells it out in words for assistive tech without adding visible clutter
+ * (screen-reader labels must not rely on color alone, #231's UX contract). */
+.pf-crs-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* diff pane: header stays in ordinary flow above its own independently
+   scrolling body (v1 only ever shows one file, so there's nothing to keep
+   "sticky" against beyond normal layout). */
+.pf-crs-diffpane {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pf-crs-diffhead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-crs-diffpath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-crs-diffheadstats {
+  flex: none;
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+.pf-crs-diffnav {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+.pf-crs-diffbody {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--pf-surface);
+}
+.pf-crs-diffmessage {
+  padding: var(--pf-space-md);
+}
+.pf-crs-diffnotice {
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-crs-hunk {
+  margin-bottom: var(--pf-space-xs);
+}
+.pf-crs-hunkhead {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  padding: 2px var(--pf-space-md);
+}
+.pf-crs-diffline {
+  display: grid;
+  grid-template-columns: 3ch 3ch 1.2ch 1fr;
+  align-items: baseline;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+  white-space: pre;
+}
+.pf-crs-diffline--nonl {
+  color: var(--pf-text-low);
+  font-style: italic;
+}
+.pf-crs-gutter {
+  text-align: right;
+  padding-right: var(--pf-space-xs);
+  color: var(--pf-text-low);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.pf-crs-diffmarker {
+  text-align: center;
+  color: var(--pf-text-low);
+  user-select: none;
+}
+.pf-diff-add .pf-crs-diffmarker,
+.pf-diff-add .pf-crs-gutter {
+  color: var(--pf-connected);
+}
+.pf-diff-del .pf-crs-diffmarker,
+.pf-diff-del .pf-crs-gutter {
+  color: var(--pf-error);
+}
+.pf-crs-difftext {
+  padding-right: var(--pf-space-md);
+}
+
 /* ---- left rail ---- */
 .pf-rail {
   display: flex;

@@ -132,12 +132,23 @@ export function revealPane(pane: PaneId) {
   if (state().collapsed[pane]) togglePaneCollapsed(pane);
 }
 
-/** #231 PR3 "Review changes" seam: focuses today's Source Control pane, the
- *  closest existing surface to a turn's changes. PR4 retarget seam — once the
- *  reusable Changes reviewer surface exists, callers should open/focus THAT
- *  surface at the selected review scope instead of this pane. */
+// #231 PR4 retarget: `focusChangesReviewSurface` now also bumps this epoch,
+// which `SourceControl`'s own "Changes"/"Graph" view toggle (local component
+// state, not store state) watches to force itself back to "Changes" —
+// otherwise a receipt's "Review changes" click while the pane was showing the
+// commit graph would reveal the pane without ever showing the review surface
+// it just targeted.
+const [changesFocusEpoch, setChangesFocusEpoch] = createSignal(0);
+export const changesReviewFocusEpoch = changesFocusEpoch;
+
+/** #231 PR3/PR4 "Review changes" seam: focuses today's Source Control pane
+ *  and lands it on the Changes review surface (PR4), with the turn's
+ *  `ChangeSet` already selected as `thisTurn` scope by the caller (see
+ *  `lib/changesReceiptActions.ts`'s `reviewTurnChanges`, which sets the store
+ *  target before calling this). */
 export function focusChangesReviewSurface() {
   revealPane("sourceControl");
+  setChangesFocusEpoch((n) => n + 1);
 }
 export function isCollapsed(pane: PaneId): boolean {
   return !!state().collapsed[pane];

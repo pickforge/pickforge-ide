@@ -7,6 +7,7 @@ import { IconChevronDown, IconClose, IconRefresh } from "../../components/icons"
 import { gitDiff, gitDiscoverRepos, gitStatus, type GitStatus } from "../../lib/git";
 import { changesWorkingTree, type ChangedFile } from "../../lib/changes";
 import { watchGitChanges, type WatchHandle } from "../../lib/fsWatch";
+import { createSingleFlightRunner } from "../../lib/singleFlight";
 import { GitGraph } from "./GitGraph";
 import { ChangesReviewSurface, STATUS_LETTER, STATUS_TONE, FileStatsInline } from "./ChangesReviewSurface";
 import { Dropdown } from "../../components/Dropdown";
@@ -14,8 +15,7 @@ import { workspace } from "../../stores/workspace";
 import { isScmCollapsed, toggleScmCollapsed } from "../../stores/scmCollapsed";
 import { changesReviewFocusEpoch } from "../../stores/workbenchLayout";
 import { flagEnabled } from "../../stores/flags";
-import { notifyChangesReviewProjectChanged } from "../../stores/changes";
-import { lastTurnCompletedProjectRoot, turnCompletedEpoch } from "../../stores/repoRefresh";
+import { notifyChangesReviewProjectChanged, onProjectTurnCompleted } from "../../stores/changes";
 
 function baseName(p: string): string {
   return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
@@ -265,24 +265,27 @@ function DiffModal(props: {
 /** Discovers repos beneath the active project root and their status,
  *  re-scanning whenever the active project changes. A composable, called
  *  synchronously from `SourceControl`'s own setup so its `createEffect`
- *  runs under the same reactive owner as if written inline. */
-function createRepoScanner() {
+ *  runs under the same reactive owner as if written inline.
+ *
+ *  Scanning itself is single-flight (#333 review P2): overlapping triggers
+ *  (a filesystem-watch burst, an agent-turn completion, a focus refresh, the
+ *  manual button) never run two scans concurrently — see
+ *  `createSingleFlightRunner`'s doc comment for why that matters (an older,
+ *  slower scan must never overwrite a newer one's state) and its `isStale`
+ *  contract, which `scanOnce` below checks before every `setRepos` commit. */
+export function createRepoScanner() {
   const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [graphVersion, setGraphVersion] = createSignal(0);
 
-  const refresh = async () => {
+  const scanOnce = async (isStale: () => boolean) => {
     const root = workspace.activeRoot;
-    if (!root) {
-      setRepos([]);
-      setLoading(false);
-      return;
-    }
+    if (!root) return; // callers clear state synchronously themselves; nothing to scan
     setLoading(true);
     try {
       // Discover repos at/beneath the root (monorepos keep their git in app/, api/…).
       const paths = await gitDiscoverRepos(root);
-      if (workspace.activeRoot !== root) return; // project switched mid-flight
+      if (isStale()) return;
       const loaded = await Promise.all(
         paths.map(async (p) => {
           const [status, changes] = await Promise.all([gitStatus(p), changesWorkingTree(p)]);
@@ -294,37 +297,61 @@ function createRepoScanner() {
           return { path: p, status, changedFiles };
         }),
       );
-      if (workspace.activeRoot !== root) return;
+      if (isStale()) return;
       setRepos(loaded.filter((r) => r.status.isRepo));
       setGraphVersion((v) => v + 1); // let the graph view refetch on Refresh too
     } catch (err) {
       console.error("[pickforge] git scan failed", err);
-      if (workspace.activeRoot === root) setRepos([]);
+      if (!isStale()) setRepos([]);
     } finally {
-      if (workspace.activeRoot === root) setLoading(false);
+      if (!isStale()) setLoading(false);
     }
+  };
+
+  const runner = createSingleFlightRunner(scanOnce);
+
+  /** The scanner's public refresh entry point — every trigger below (project
+   *  switch, agent-turn completion, window refocus, the fs watch, the manual
+   *  button) calls this same function; the single-flight runner is what
+   *  coalesces overlapping calls. */
+  const refresh = () => {
+    if (!workspace.activeRoot) {
+      // No active project: clear synchronously rather than going through the
+      // runner — there's nothing to scan, and any run still in flight for a
+      // just-abandoned root must be invalidated immediately, not queued.
+      runner.invalidate();
+      setRepos([]);
+      setLoading(false);
+      return;
+    }
+    runner.trigger();
   };
 
   // Reload whenever the active project changes.
   createEffect(() => {
     workspace.activeRoot;
-    void refresh();
+    refresh();
   });
 
   // #333 auto-refresh triggers, generalized from `stores/changes.ts`'s
   // per-target notify pattern (project-change is already covered by the
   // effect above — the scanner IS keyed to `workspace.activeRoot`):
-  //  - agent-turn completion in the active project (`stores/repoRefresh.ts`
-  //    — NOT gated by the `changesReview` flag, since this pane is the
-  //    default UI with the flag off).
+  //  - agent-turn completion in the active project — `onProjectTurnCompleted`
+  //    is a genuine EVENT (subscribed here, in `onMount`), not a replayable
+  //    signal/epoch: a turn that completed before this component mounted (in
+  //    a previously-active project) must never trigger an extra scan the
+  //    instant this one mounts (#333 review P2's "sticky epoch replays on
+  //    remount" finding). NOT gated by the `changesReview` flag, since this
+  //    pane is the default UI with the flag off.
   //  - window refocus, for changes made outside PickForge (another editor,
   //    a terminal git command) while the window was unfocused.
-  createEffect(() => {
-    turnCompletedEpoch();
-    if (lastTurnCompletedProjectRoot() === workspace.activeRoot) void refresh();
-  });
   onMount(() => {
-    const onFocus = () => void refresh();
+    onCleanup(
+      onProjectTurnCompleted((root) => {
+        if (root === workspace.activeRoot) refresh();
+      }),
+    );
+    const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     onCleanup(() => window.removeEventListener("focus", onFocus));
   });

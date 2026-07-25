@@ -37,6 +37,7 @@ const activity = vi.hoisted(() => ({
 }));
 const changesReview = vi.hoisted(() => ({
   notifyChangesReviewTurnCompleted: vi.fn(),
+  notifyProjectTurnCompleted: vi.fn(),
 }));
 const flags = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -284,6 +285,7 @@ beforeEach(() => {
   activity.agentTurnDone.mockClear();
   activity.agentTurnCleared.mockClear();
   changesReview.notifyChangesReviewTurnCompleted.mockClear();
+  changesReview.notifyProjectTurnCompleted.mockClear();
   workspace.chats.clear();
   workspace.setChatTitle.mockClear();
   workspace.setChatAgent.mockClear();

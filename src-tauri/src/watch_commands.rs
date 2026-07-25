@@ -21,7 +21,7 @@
 //! `src/lib/fsWatch.ts`). Watchers are keyed by id so the UI can stop them
 //! independently (e.g. a run ending, or the active project changing).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -30,19 +30,22 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter, State};
 
 /// Which caller a watcher was started for, and therefore which path filter
-/// applies. `Dart` is the default (matches every caller before #333, none of
-/// which pass `mode` at all).
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// applies. `Dart` is the default when `mode` is omitted (every pre-#333
+/// caller). Any OTHER string is rejected outright (#333 review P3) — a typo'd
+/// or forward-incompatible mode value must never silently degrade to the
+/// wrong filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WatchMode {
     Dart,
     Git,
 }
 
 impl WatchMode {
-    fn from_param(mode: Option<&str>) -> Self {
+    fn from_param(mode: Option<&str>) -> Result<Self, String> {
         match mode {
-            Some("git") => WatchMode::Git,
-            _ => WatchMode::Dart,
+            None | Some("dart") => Ok(WatchMode::Dart),
+            Some("git") => Ok(WatchMode::Git),
+            Some(other) => Err(format!("invalid watch mode: {other:?}")),
         }
     }
 }
@@ -95,6 +98,69 @@ fn git_watch_ignored(rel: &Path) -> bool {
     false
 }
 
+/// Resolves `repo_root`'s real git-state directory — the equivalent of
+/// `git rev-parse --git-path HEAD`/`--git-path index`'s parent, without
+/// shelling out. For an ordinary repo this is just `<repo_root>/.git` (a
+/// directory). For a LINKED WORKTREE (`git worktree add`, including this very
+/// checkout: its `.git` is a plain text FILE reading `gitdir: <path>`), `HEAD`
+/// and `index` instead live in a per-worktree private dir under the MAIN
+/// repo's `.git/worktrees/<name>/` — often entirely outside `repo_root`'s own
+/// directory tree, so a recursive watch of `repo_root` alone never observes
+/// writes there (#333 review P2: `git add`/`reset`/`commit` in a linked
+/// worktree touch only that dir, never anything under `repo_root`). Returns
+/// `None` if `.git` doesn't exist or the pointer file can't be read/parsed.
+fn resolve_git_state_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    let meta = std::fs::symlink_metadata(&dot_git).ok()?;
+    if meta.is_dir() {
+        return Some(dot_git);
+    }
+    if !meta.is_file() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = contents.lines().find_map(|line| line.strip_prefix("gitdir:"))?.trim();
+    if gitdir.is_empty() {
+        return None;
+    }
+    let resolved = if Path::new(gitdir).is_absolute() {
+        PathBuf::from(gitdir)
+    } else {
+        repo_root.join(gitdir)
+    };
+    // Best-effort canonicalize (resolves a relative `../` pointer to its real
+    // absolute form); fall back to the joined-but-uncanonicalized path if the
+    // target doesn't exist yet or canonicalization otherwise fails; the
+    // caller's own watch/comparison still works against either form.
+    Some(std::fs::canonicalize(&resolved).unwrap_or(resolved))
+}
+
+/// The `HEAD`/`index` paths a "git" watch must always let through, resolved
+/// across `root` and every discovered sub-repo beneath it (a monorepo's
+/// `app/`, `api/`, … each get their own worktree resolution) — see
+/// [`resolve_git_state_dir`]. Also returns the DISTINCT state dirs
+/// themselves, so the caller can add an explicit non-recursive watch on each
+/// one that isn't already inside `root`'s own recursively-watched tree (a
+/// linked worktree's private gitdir lives under the MAIN repo's checkout,
+/// wholly outside `root`).
+fn git_head_index_watch_targets(root: &Path) -> (HashSet<PathBuf>, Vec<PathBuf>) {
+    let root_str = root.to_string_lossy().into_owned();
+    let mut state_dirs: Vec<PathBuf> = pickforge_core::git::discover_repos(&root_str)
+        .into_iter()
+        .filter_map(|repo_root| resolve_git_state_dir(Path::new(&repo_root)))
+        .collect();
+    state_dirs.sort();
+    state_dirs.dedup();
+
+    let mut head_index_paths = HashSet::new();
+    for dir in &state_dirs {
+        head_index_paths.insert(dir.join("HEAD"));
+        head_index_paths.insert(dir.join("index"));
+    }
+    let extra_watch_dirs = state_dirs.into_iter().filter(|dir| !dir.starts_with(root)).collect();
+    (head_index_paths, extra_watch_dirs)
+}
+
 #[derive(Default)]
 pub struct WatchManager {
     watchers: Mutex<HashMap<u32, RecommendedWatcher>>,
@@ -131,10 +197,21 @@ pub fn fs_watch_start(
     // Allocate the id up front so the watcher closure can tag every event with
     // it — the UI filters on this id so a racing watcher can't cross-fire.
     let id = manager.next_id.fetch_add(1, Ordering::Relaxed);
-    let watch_mode = WatchMode::from_param(mode.as_deref());
+    let watch_mode = WatchMode::from_param(mode.as_deref())?;
     let app = app.clone();
     let root = PathBuf::from(&path);
     let watch_root = root.clone(); // `root` is moved into the closure below
+
+    // #333 review P2: resolved BEFORE the watcher is created, so the extra
+    // dirs below can be added to the same watcher instance right after —
+    // `git`-mode only (the Dart caller's `.git` handling is unaffected and
+    // doesn't need a linked worktree's private gitdir).
+    let (head_index_paths, extra_watch_dirs) = if watch_mode == WatchMode::Git {
+        git_head_index_watch_targets(&root)
+    } else {
+        (HashSet::new(), Vec::new())
+    };
+
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
         // Only content/lifecycle changes — ignore pure access/metadata events.
@@ -166,7 +243,12 @@ pub fn fs_watch_start(
                     }
                 }
                 WatchMode::Git => {
-                    if git_watch_ignored(rel) {
+                    // A linked worktree's `HEAD`/`index` live OUTSIDE `root`
+                    // entirely (see `resolve_git_state_dir`) — `rel`'s
+                    // component-based ignore check can't recognize them
+                    // (there's no `.git` component directly preceding them),
+                    // so they're allowed through by exact path match first.
+                    if !head_index_paths.contains(p) && git_watch_ignored(rel) {
                         continue;
                     }
                 }
@@ -182,6 +264,12 @@ pub fn fs_watch_start(
     watcher
         .watch(&watch_root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
+    for dir in &extra_watch_dirs {
+        // Best-effort: a repo whose resolved gitdir has since vanished (e.g. a
+        // worktree removed mid-scan) just doesn't get this extra watch — the
+        // recursive watch on `root` and the generic filter still apply.
+        let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
+    }
 
     manager
         .watchers
@@ -242,9 +330,191 @@ mod tests {
     }
 
     #[test]
-    fn watch_mode_from_param_defaults_to_dart() {
-        assert!(WatchMode::from_param(None) == WatchMode::Dart);
-        assert!(WatchMode::from_param(Some("bogus")) == WatchMode::Dart);
-        assert!(WatchMode::from_param(Some("git")) == WatchMode::Git);
+    fn watch_mode_from_param_defaults_to_dart_and_accepts_git() {
+        assert!(WatchMode::from_param(None) == Ok(WatchMode::Dart));
+        assert!(WatchMode::from_param(Some("dart")) == Ok(WatchMode::Dart));
+        assert!(WatchMode::from_param(Some("git")) == Ok(WatchMode::Git));
+    }
+
+    #[test]
+    fn watch_mode_from_param_rejects_an_unknown_mode() {
+        // #333 review P3: a typo'd/unknown mode must be rejected outright, not
+        // silently degrade to Dart (that previously locked in "bogus" -> Dart).
+        assert_eq!(
+            WatchMode::from_param(Some("bogus")),
+            Err("invalid watch mode: \"bogus\"".to_string()),
+        );
+    }
+
+    // ---- resolve_git_state_dir / git_head_index_watch_targets: linked worktrees ----
+
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("git available for tests");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn init_repo(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pf-watch-{}-{tag}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        run_git(&dir, &["init", "-q"]);
+        run_git(&dir, &["config", "user.email", "test@pickforge.dev"]);
+        run_git(&dir, &["config", "user.name", "PickForge Test"]);
+        std::fs::write(dir.join("README.md"), "hello\n").unwrap();
+        run_git(&dir, &["add", "-A"]);
+        run_git(&dir, &["commit", "-q", "-m", "initial"]);
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    /// Adds a LINKED worktree (`git worktree add`) at a fresh temp path,
+    /// checked out on a new branch — the case #333 review P2 flagged: this
+    /// worktree's own `.git` is a plain FILE (`gitdir: <path>`), not a
+    /// directory, pointing at a private dir under the MAIN repo's
+    /// `.git/worktrees/<name>/`.
+    fn add_worktree(main_repo: &Path, tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pf-watch-worktree-{}-{tag}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        run_git(
+            main_repo,
+            &["worktree", "add", "-q", "-b", &format!("wt-{tag}"), dir.to_str().unwrap()],
+        );
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn resolve_git_state_dir_is_the_dot_git_dir_for_a_normal_repo() {
+        let repo = init_repo("normal");
+        assert_eq!(resolve_git_state_dir(&repo), Some(repo.join(".git")));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn resolve_git_state_dir_resolves_a_linked_worktrees_private_gitdir() {
+        let main_repo = init_repo("main-for-resolve");
+        let worktree = add_worktree(&main_repo, "resolve");
+
+        // The worktree's own `.git` is a FILE, not a directory — the case the
+        // prior (pre-#333-review) watcher silently mishandled.
+        assert!(worktree.join(".git").is_file());
+
+        let state_dir = resolve_git_state_dir(&worktree).expect("resolves a state dir");
+        assert!(state_dir.join("HEAD").is_file(), "resolved dir has its own HEAD");
+        assert!(
+            !state_dir.starts_with(&worktree),
+            "the private gitdir lives outside the worktree's own tree, under the main repo's .git/worktrees/",
+        );
+
+        let _ = std::fs::remove_dir_all(&main_repo);
+        let _ = std::fs::remove_dir_all(&worktree);
+    }
+
+    #[test]
+    fn git_head_index_watch_targets_covers_a_linked_worktree_outside_root() {
+        let main_repo = init_repo("main-for-targets");
+        let worktree = add_worktree(&main_repo, "targets");
+
+        let (head_index_paths, extra_watch_dirs) = git_head_index_watch_targets(&worktree);
+        let state_dir = resolve_git_state_dir(&worktree).expect("resolves a state dir");
+        assert!(head_index_paths.contains(&state_dir.join("HEAD")));
+        assert!(head_index_paths.contains(&state_dir.join("index")));
+        assert!(
+            extra_watch_dirs.contains(&state_dir),
+            "the resolved private gitdir (outside `root`) must get its own explicit watch",
+        );
+
+        let _ = std::fs::remove_dir_all(&main_repo);
+        let _ = std::fs::remove_dir_all(&worktree);
+    }
+
+    /// #333 review P2's requested regression test: `git worktree add`, then an
+    /// operation that mutates ONLY the worktree's private index (never a file
+    /// under the worktree's own directory) — `git rm --cached` unstages a
+    /// tracked file without touching its on-disk bytes. Reproduces the exact
+    /// prior bug end to end (real `notify` watcher + real git), independent of
+    /// Tauri's `AppHandle`/`emit` plumbing: builds the SAME watch-target set
+    /// `fs_watch_start` would (recursive on `root` + non-recursive on each
+    /// resolved extra gitdir) and the SAME allow/ignore decision per event,
+    /// just sending matched paths into a channel instead of emitting them.
+    #[test]
+    fn git_watch_observes_an_index_only_mutation_in_a_linked_worktree() {
+        let main_repo = init_repo("main-for-index-mutation");
+        let worktree = add_worktree(&main_repo, "index-mutation");
+
+        let (head_index_paths, extra_watch_dirs) = git_head_index_watch_targets(&worktree);
+        assert!(!extra_watch_dirs.is_empty(), "a linked worktree must get an extra watch dir");
+
+        let (tx, rx) = mpsc::channel::<PathBuf>();
+        let root = worktree.clone();
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            let Ok(event) = res else { return };
+            if !matches!(
+                event.kind,
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+            ) {
+                return;
+            }
+            for p in &event.paths {
+                let rel = p.strip_prefix(&root).unwrap_or(p);
+                if head_index_paths.contains(p) || !git_watch_ignored(rel) {
+                    let _ = tx.send(p.clone());
+                }
+            }
+        })
+        .expect("recommended_watcher");
+        watcher
+            .watch(&worktree, RecursiveMode::Recursive)
+            .expect("watch worktree root");
+        for dir in &extra_watch_dirs {
+            watcher.watch(dir, RecursiveMode::NonRecursive).expect("watch extra gitdir");
+        }
+
+        // Give the watcher backend a moment to actually start observing
+        // before the mutation, same allowance other notify-backed setups need.
+        std::thread::sleep(Duration::from_millis(300));
+
+        // Index-only mutation: unstages README.md without touching its
+        // on-disk content — no event under `worktree` itself should be
+        // required for this to be observed; only the private gitdir's
+        // `index` file changes.
+        run_git(&worktree, &["rm", "--cached", "-q", "README.md"]);
+
+        let saw_index_event = {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut seen = false;
+            while std::time::Instant::now() < deadline {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                match rx.recv_timeout(remaining.min(Duration::from_millis(500))) {
+                    Ok(path) if path.file_name().and_then(|n| n.to_str()) == Some("index") => {
+                        seen = true;
+                        break;
+                    }
+                    Ok(_) => continue,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            seen
+        };
+        assert!(saw_index_event, "expected an fs-changed-equivalent event for the worktree's private index file");
+
+        drop(watcher);
+        let _ = std::fs::remove_dir_all(&main_repo);
+        let _ = std::fs::remove_dir_all(&worktree);
     }
 }

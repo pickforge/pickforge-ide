@@ -8,10 +8,15 @@ import { expect, test } from "@playwright/test";
 // projects (acme-app, widgets):
 //   acme-app: "Login screen" (quiet, now), "Settings polish" (quiet, now),
 //             "Sidebar waiting state" (working, real context+cost+3 swarm
-//             lanes — see FLAT_CHAT_LIST_WORKING_HISTORY/_SWARM_RUN)
+//             lanes+plan 2/5 — see FLAT_CHAT_LIST_WORKING_HISTORY/_SWARM_RUN)
 //   widgets:  "Slider refactor" (quiet, now), "PR monitoring agent flow"
-//             (needs-you, no swarm/usage data), "Local usage analytics
+//             (needs-you, no swarm/usage/plan data), "Local usage analytics
 //             plan" (quiet, 2d old)
+// The mock `git_status` command (#306 PR3) reports every project root as a
+// repo on branch "main" by default, so both projects' cards carry a branch
+// footer item regardless of their other live data — override per-test via
+// `pickforge.vrt.flatChatListNoBranchRoot` (a projectRoot) to make one
+// project report no branch instead.
 // The "heavy" fixture (pickforge.vrt.flatChatListHeavyFixture) stacks two
 // more live chats on top: "ADB session recovery" (needs-you, acme-app) and
 // "Whisper batch tuning" (working, widgets).
@@ -226,10 +231,13 @@ test("flatChatList: a working card shows no bracket markup even when active", as
   await expect(activeWorking.locator(".pf-work-card-status--needsyou")).toHaveCount(0);
 });
 
-// #306 PR2 — footer principle: every footer item is conditional on real
-// data. The working chat has real swarm lanes + cost (fixture-seeded);
-// the needs-you chat has neither, and branch/plan stay absent everywhere
-// in PR2 (that plumbing is PR3) — no placeholders, no zeros-as-present.
+// #306 PR2/PR3 — footer principle: every footer item is conditional on real
+// data, independently of every other item. The working chat has real swarm
+// lanes + cost (fixture-seeded) AND (PR3) a real branch + an active plan;
+// the needs-you chat has a real branch (its project is a repo too) but no
+// swarm/usage/plan data — its footer renders with ONLY the branch item, not
+// present-with-zeros for the rest and not absent outright. Order matches the
+// locked mockup: branch · plan M/N · lane ticks · cost.
 test("flatChatList: footer items render only with real data", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
@@ -240,19 +248,52 @@ test("flatChatList: footer items render only with real data", async ({ page }) =
 
   const workingCard = page.locator(".pf-work-card--working");
   await expect(workingCard.locator(".pf-work-card-foot")).toHaveCount(1);
+  await expect(workingCard.locator(".pf-work-card-branch")).toHaveText("main");
+  await expect(workingCard.locator(".pf-work-card-plan")).toHaveText("plan 2/5");
   await expect(workingCard.locator(".pf-work-card-lane")).toHaveCount(3);
   await expect(workingCard.locator(".pf-work-card-lane-count")).toHaveText("1/3");
   await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.4100");
+  // Document order within the footer follows branch · plan · lanes · cost.
+  await expect(workingCard.locator(".pf-work-card-foot > *")).toHaveCount(4);
+  const footItems = workingCard.locator(".pf-work-card-foot > *");
+  await expect(footItems.nth(0)).toHaveClass(/pf-work-card-branch/);
+  await expect(footItems.nth(1)).toHaveClass(/pf-work-card-plan/);
+  await expect(footItems.nth(2)).toHaveClass(/pf-work-card-lanes/);
+  await expect(footItems.nth(3)).toHaveClass(/pf-work-card-cost/);
 
-  // No swarm dispatched, no usage data warmed for this chat — the footer
-  // itself is absent, not present-with-zeros.
+  // No swarm dispatched, no usage/plan data warmed for this chat — only the
+  // branch item (real: its project is a repo too) renders, nothing else.
   const needsYouCard = page.locator(".pf-work-card--needsyou");
-  await expect(needsYouCard.locator(".pf-work-card-foot")).toHaveCount(0);
+  await expect(needsYouCard.locator(".pf-work-card-foot")).toHaveCount(1);
+  await expect(needsYouCard.locator(".pf-work-card-foot > *")).toHaveCount(1);
+  await expect(needsYouCard.locator(".pf-work-card-branch")).toHaveText("main");
+  await expect(needsYouCard.locator(".pf-work-card-plan")).toHaveCount(0);
+  await expect(needsYouCard.locator(".pf-work-card-lanes")).toHaveCount(0);
+  await expect(needsYouCard.locator(".pf-work-card-cost")).toHaveCount(0);
+});
 
-  // Branch and plan M/N stay absent everywhere in PR2 (new plumbing, #306
-  // PR3) — assert the slots don't exist at all, not merely empty.
-  await expect(page.locator(".pf-work-card-branch")).toHaveCount(0);
-  await expect(page.locator(".pf-work-card-plan")).toHaveCount(0);
+// #306 PR3 review (P3) — the OTHER half of the branch conditional: a project
+// with no resolvable branch (git_status mocked to return branch: null for
+// acme-app via flatChatListNoBranchRoot) must omit the branch item while its
+// other real footer data — plan/lanes/cost, all still fixture-seeded for
+// this same working chat — keeps rendering independently. Closes the loop
+// with the test above (branch present + other items absent) so both
+// directions of "every item is its own conditional" are pinned.
+test("flatChatList: a project with no branch omits the branch item, other footer data still renders", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+    localStorage.setItem("pickforge.vrt.flatChatListNoBranchRoot", "/home/dev/acme-app");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  const workingCard = page.locator(".pf-work-card--working");
+  await expect(workingCard.locator(".pf-work-card-branch")).toHaveCount(0);
+  await expect(workingCard.locator(".pf-work-card-plan")).toHaveText("plan 2/5");
+  await expect(workingCard.locator(".pf-work-card-lane")).toHaveCount(3);
+  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.4100");
+  await expect(workingCard.locator(".pf-work-card-foot > *")).toHaveCount(3);
 });
 
 // #306 PR2 — context edge: ember while working, amber while waiting. The

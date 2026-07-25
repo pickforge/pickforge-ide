@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
+import type { PlanItemStatus } from "../../src/lib/agentChat";
 import type { Chat } from "../../src/lib/db";
 import type { SwarmLaneSnapshot, SwarmRunSnapshot } from "../../src/lib/mcp";
 import {
   type CardAgentChatLike,
+  type CardPlanLike,
+  cardBranch,
   cardBrief,
   cardContextEdge,
   cardCost,
   cardLanes,
+  cardPlanProgress,
   cardSwarmRun,
   laneTickTone,
 } from "../../src/stores/flatWorkCard";
@@ -201,5 +205,60 @@ describe("cardBrief — present only with real task-brief text", () => {
 
   it("returns the trimmed brief text", () => {
     expect(cardBrief(chat({ taskBriefText: "  Fix the flaky test  " }))).toBe("Fix the flaky test");
+  });
+});
+
+describe("cardBranch — footer principle: present only for a worktree with a resolvable branch (#306 PR3)", () => {
+  it("returns the branch when the project root's cache holds one", () => {
+    const branchOf = (root: string) => (root === "/proj/a" ? "feat/flat-card-plumbing" : undefined);
+    expect(cardBranch("/proj/a", branchOf)).toBe("feat/flat-card-plumbing");
+  });
+
+  it("is null when the cache resolved to no branch (not a repo / no HEAD)", () => {
+    expect(cardBranch("/proj/a", () => null)).toBeNull();
+  });
+
+  it("is null (absent) while the branch hasn't been fetched yet — never a placeholder", () => {
+    expect(cardBranch("/proj/a", () => undefined)).toBeNull();
+  });
+
+  it("is scoped by project root — another root's cached branch never leaks in", () => {
+    const branchOf = (root: string) => (root === "/proj/b" ? "main" : undefined);
+    expect(cardBranch("/proj/a", branchOf)).toBeNull();
+  });
+});
+
+describe("cardPlanProgress — completed/total from the EXISTING plan state, present only with an active plan (#306 PR3)", () => {
+  function plan(items: readonly PlanItemStatus[]): CardPlanLike {
+    return { items: items.map((status) => ({ status })) };
+  }
+
+  it("is null when the chat has no plan at all", () => {
+    expect(cardPlanProgress("chat-1", () => null)).toBeNull();
+  });
+
+  it("is null when the plan has zero items", () => {
+    expect(cardPlanProgress("chat-1", () => plan([]))).toBeNull();
+  });
+
+  it("computes completed/total from the plan's step statuses", () => {
+    const p = plan(["completed", "completed", "inProgress", "pending", "pending"]);
+    expect(cardPlanProgress("chat-1", () => p)).toEqual({ completed: 2, total: 5 });
+  });
+
+  it("renders the zero-complete case (all pending/inProgress) as 0/total", () => {
+    const p = plan(["pending", "inProgress", "pending"]);
+    expect(cardPlanProgress("chat-1", () => p)).toEqual({ completed: 0, total: 3 });
+  });
+
+  it("renders the all-complete case as N/N, not absent", () => {
+    const p = plan(["completed", "completed", "completed"]);
+    expect(cardPlanProgress("chat-1", () => p)).toEqual({ completed: 3, total: 3 });
+  });
+
+  it("looks up the plan by the given chat id", () => {
+    const latestPlanOf = (id: string) => (id === "chat-1" ? plan(["completed", "pending"]) : null);
+    expect(cardPlanProgress("chat-1", latestPlanOf)).toEqual({ completed: 1, total: 2 });
+    expect(cardPlanProgress("chat-2", latestPlanOf)).toBeNull();
   });
 });

@@ -97,15 +97,18 @@ import {
   visibleFlatChats,
 } from "../../stores/flatChatSort";
 import {
+  cardBranch,
   cardBrief,
   cardContextEdge,
   cardCost,
   cardLanes,
+  cardPlanProgress,
   cardSwarmRun,
   laneTickTone,
 } from "../../stores/flatWorkCard";
 import { formatCost } from "../../components/chat/ContextMeter";
-import { agentChat } from "../../stores/agentChat";
+import { agentChat, latestPlanForChat } from "../../stores/agentChat";
+import { ensureProjectBranch, projectBranchOf } from "../../stores/projectBranch";
 import { swarmRuns } from "../../stores/swarm";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
@@ -1347,12 +1350,33 @@ const WorkCardCorners = () => (
   </>
 );
 
-// Footer: lane ticks (only when this chat dispatched a swarm) and cost (only
-// when nonzero) — every item conditional on real data, per the locked footer
-// principle. Branch and plan M/N stay absent until #306 PR3.
-const WorkCardFooter = (props: { lanes: () => CardLanesResult; cost: () => CardCostResult }) => (
-  <Show when={props.lanes() || props.cost()}>
+// Footer: branch (#306 PR3, only when the project root resolves to a git
+// branch), plan M/N (#306 PR3, only with an active plan), lane ticks (only
+// when this chat dispatched a swarm), and cost (only when nonzero) — every
+// item conditional on real data, per the locked footer principle. Order
+// matches the mockup exactly: branch · plan · lanes · cost.
+const WorkCardFooter = (props: {
+  branch: () => string | null;
+  plan: () => CardPlanResult;
+  lanes: () => CardLanesResult;
+  cost: () => CardCostResult;
+}) => (
+  <Show when={props.branch() || props.plan() || props.lanes() || props.cost()}>
     <div class="pf-work-card-foot">
+      <Show when={props.branch()}>
+        {(b) => (
+          <span class="pf-work-card-branch" title={b()}>
+            {b()}
+          </span>
+        )}
+      </Show>
+      <Show when={props.plan()}>
+        {(p) => (
+          <span class="pf-work-card-plan">
+            plan {p().completed}/{p().total}
+          </span>
+        )}
+      </Show>
       <Show when={props.lanes()}>
         {(l) => (
           <span class="pf-work-card-lanes" title="Swarm lanes">
@@ -1391,6 +1415,7 @@ const WorkCardEdge = (props: { edge: () => CardEdgeResult }) => (
 
 type CardLanesResult = ReturnType<typeof cardLanes>;
 type CardCostResult = ReturnType<typeof cardCost>;
+type CardPlanResult = ReturnType<typeof cardPlanProgress>;
 type CardEdgeResult = ReturnType<typeof cardContextEdge> | null;
 
 const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: CardVisualState }) => {
@@ -1399,11 +1424,17 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
   const root = props.chat.projectRoot;
   const project = () => workspace.projects.find((p) => p.projectRoot === root);
   const staged = () => isChatStaged(id);
+  // #306 PR3: kicks off the cached, per-project branch fetch (a no-op if
+  // already cached/in flight for this root — see ensureProjectBranch) rather
+  // than a per-chat/per-render git spawn.
+  ensureProjectBranch(root);
   // LOCKED bracket rule: the four L-corners frame EVERY needs-you card, full
   // stop — active/staged/focus never suppress it (P2 fix, review of #306
   // PR2: this must not mirror FlatChatRow's active-chat attention
   // suppression, which is a different, unrelated convention).
   const showBracket = () => props.state === "needsYou";
+  const branch = () => cardBranch(root, projectBranchOf);
+  const plan = () => cardPlanProgress(id, latestPlanForChat);
   const lanes = () => cardLanes(cardSwarmRun(id, root, swarmRuns));
   const cost = () => cardCost(id, agentChat);
   const brief = () => cardBrief(props.chat);
@@ -1464,7 +1495,7 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
         </span>
       </div>
       <Show when={brief()}>{(text) => <div class="pf-work-card-brief">{text()}</div>}</Show>
-      <WorkCardFooter lanes={lanes} cost={cost} />
+      <WorkCardFooter branch={branch} plan={plan} lanes={lanes} cost={cost} />
       <WorkCardEdge edge={edge} />
     </div>
   );

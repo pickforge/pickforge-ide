@@ -27,6 +27,13 @@ const VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY = "pickforge.vrt.flatChatListLoadErrorRo
 // fixture (a second needs-you and a second working chat), matching the
 // approved mockup's calm/normal/heavy density comparison.
 const VRT_FLAT_CHAT_LIST_HEAVY_FIXTURE_KEY = "pickforge.vrt.flatChatListHeavyFixture";
+// Set to a projectRoot to make git_status report no branch for just that
+// project (#306 PR3 review P3) — every other root keeps the default
+// isRepo/branch:"main" response. Pins the OTHER half of the footer's branch
+// conditional: a card whose project genuinely has no resolvable branch must
+// omit the branch item while its other real footer data (plan/lanes/cost)
+// still renders.
+const VRT_FLAT_CHAT_LIST_NO_BRANCH_KEY = "pickforge.vrt.flatChatListNoBranchRoot";
 
 // A trimmed, representative slice of `omp models --json --no-extensions`
 // output (captured from a real omp 17.1.1 install, truncated to a handful of
@@ -426,11 +433,13 @@ const FLAT_CHAT_LIST_HEAVY_EXTRA_CHATS: Chat[] = [
   { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID_2, projectRoot: "/home/dev/acme-app", title: "ADB session recovery", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Wants to run: adb kill-server", createdAt: now, lastActivityAt: now, sortOrder: 7 },
   { chatId: FLAT_CHAT_LIST_WORKING_ID_2, projectRoot: "/home/dev/widgets", title: "Whisper batch tuning", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "omp", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Cut transcription latency below 800ms", createdAt: now, lastActivityAt: now, sortOrder: 8 },
 ];
-// #306 PR2's flat work-card VRT scenario: usage history for the working
-// chat (installFlatChatListFixture calls ensureAgentChat with this id,
-// headlessly — the chat is never opened) so its context edge + footer cost
-// have real, nonzero data to render, same replay mechanism AGENT_CHAT_FIXTURE
-// already uses for ContextMeter's own VRT.
+// #306 PR2's flat work-card VRT scenario: usage + plan history for the
+// working chat (installFlatChatListFixture calls ensureAgentChat with this
+// id, headlessly — the chat is never opened) so its context edge, footer
+// cost, and (#306 PR3) footer plan M/N have real, nonzero data to render,
+// same replay mechanism AGENT_CHAT_FIXTURE already uses for ContextMeter's
+// own VRT. The plan tally (2/5) matches the locked mockup's own worked
+// example for this exact card (sidebar-work-card-merge.html).
 const FLAT_CHAT_LIST_WORKING_HISTORY: AgentTimelineEntry[] = [
   {
     entryType: "message",
@@ -461,6 +470,16 @@ const FLAT_CHAT_LIST_WORKING_HISTORY: AgentTimelineEntry[] = [
     }),
     createdAt: now,
   },
+  item(4, {
+    kind: "planUpdate",
+    items: [
+      { text: "Survey existing waiting-state precedent", status: "completed" },
+      { text: "Add the waiting status to the sidebar row", status: "completed" },
+      { text: "Wire the swarm survey lanes into the footer", status: "inProgress" },
+      { text: "VRT coverage for the waiting state", status: "pending" },
+      { text: "Update the issue checklist", status: "pending" },
+    ],
+  }),
 ];
 // One lane done, two still running — the mixed state the merged mockup's
 // "normal" moment shows for this same chat.
@@ -545,6 +564,14 @@ function flatChatListHeavyFixtureEnabled(): boolean {
     return localStorage.getItem(VRT_FLAT_CHAT_LIST_HEAVY_FIXTURE_KEY) === "1";
   } catch {
     return false;
+  }
+}
+
+function flatChatListNoBranchRoot(): string | null {
+  try {
+    return localStorage.getItem(VRT_FLAT_CHAT_LIST_NO_BRANCH_KEY);
+  } catch {
+    return null;
   }
 }
 
@@ -1022,15 +1049,20 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   "plugin:app|version": () => "0.1.0",
   open_path: () => null,
   open_external_url: () => null,
-  git_status: () => ({
-    isRepo: true,
-    branch: "main",
-    files: [
-      { path: "lib/login.dart", status: " M", staged: false, unstaged: true, untracked: false },
-      { path: "lib/new_widget.dart", status: "??", staged: false, unstaged: true, untracked: true },
-      { path: "README.md", status: "A ", staged: true, unstaged: false, untracked: false },
-    ],
-  }),
+  git_status: (a) => {
+    if (flatChatListNoBranchRoot() === a.projectRoot) {
+      return { isRepo: true, branch: null, files: [] };
+    }
+    return {
+      isRepo: true,
+      branch: "main",
+      files: [
+        { path: "lib/login.dart", status: " M", staged: false, unstaged: true, untracked: false },
+        { path: "lib/new_widget.dart", status: "??", staged: false, unstaged: true, untracked: true },
+        { path: "README.md", status: "A ", staged: true, unstaged: false, untracked: false },
+      ],
+    };
+  },
   git_diff: () =>
     "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
   git_discover_repos: (a) => [a.projectRoot],

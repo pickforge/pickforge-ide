@@ -1,10 +1,13 @@
-// Data the PR2 live work card renders beyond the lifecycle state PR1 already
-// computes (#306): footer lane ticks + cost, the context-edge fraction/color,
-// and the task brief. Pure functions, same reasoning as flatChatSort.ts —
-// the swarm-run and agent-chat lookups are required parameters (never a
-// default reaching into the live stores) so this module carries no runtime
-// dependency on swarm.ts/agentChat.ts's own import chains; ProjectsPane.tsx
-// passes `swarmRuns`/`agentChat` in directly, and unit tests pin fixtures.
+// Data the live work card renders beyond the lifecycle state PR1 already
+// computes (#306): footer lane ticks + cost + branch + plan M/N, the
+// context-edge fraction/color, and the task brief. Pure functions, same
+// reasoning as flatChatSort.ts — the swarm-run, agent-chat, branch-cache and
+// plan lookups are required parameters (never a default reaching into the
+// live stores) so this module carries no runtime dependency on
+// swarm.ts/agentChat.ts/projectBranch.ts's own import chains; ProjectsPane.tsx
+// passes `swarmRuns`/`agentChat`/`projectBranchOf`/`latestPlanForChat` in
+// directly, and unit tests pin fixtures.
+import type { PlanItemStatus } from "../lib/agentChat";
 import type { Chat } from "../lib/db";
 import type { SwarmLaneSnapshot, SwarmRunSnapshot } from "../lib/mcp";
 
@@ -113,4 +116,48 @@ export function cardContextEdge(
 export function cardBrief(chat: Chat): string | null {
   const text = chat.taskBriefText?.trim();
   return text ? text : null;
+}
+
+/** Footer branch item (#306 PR3) — present only when the chat's project root
+ *  resolves to a real git branch (footer principle: no slot for a project
+ *  that isn't a git repo, or whose branch hasn't resolved yet). `branchOf`
+ *  reads `stores/projectBranch.ts`'s cache rather than spawning git directly
+ *  — same DI shape as the other card helpers, keyed by projectRoot (not
+ *  chatId) since every chat sharing a project shares its branch. */
+export function cardBranch(
+  projectRoot: string,
+  branchOf: (root: string) => string | null | undefined,
+): string | null {
+  return branchOf(projectRoot) ?? null;
+}
+
+/** The minimal plan shape these helpers read — matches
+ *  `Extract<AgentTimelineItem, { type: "plan" }>`'s `items` field without
+ *  importing agentChat.ts's own timeline type for it alone (same reasoning
+ *  as `CardAgentChatLike` above). */
+export interface CardPlanLike {
+  items: readonly { status: PlanItemStatus }[];
+}
+
+export interface CardPlanProgress {
+  completed: number;
+  total: number;
+}
+
+/** Footer plan-progress item (#306 PR3) — present only when the chat has an
+ *  active plan with steps (footer principle: no M/N for a chat that never
+ *  got one). "Active" means "has plan items", not "has incomplete items": an
+ *  all-complete plan (M === N) still renders its final tally, same as a
+ *  zero-complete one just getting started — the mockup shows a finished
+ *  plan's tally (`3/3`) the same way as an in-progress one. Derived from the
+ *  chat's EXISTING plan-step status (`latestPlanForChat`/the timeline's
+ *  `plan` item), never a new plan store. */
+export function cardPlanProgress(
+  chatId: string,
+  latestPlanOf: (id: string) => CardPlanLike | null,
+): CardPlanProgress | null {
+  const plan = latestPlanOf(chatId);
+  if (!plan || plan.items.length === 0) return null;
+  const completed = plan.items.filter((item) => item.status === "completed").length;
+  return { completed, total: plan.items.length };
 }

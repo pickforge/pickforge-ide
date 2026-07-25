@@ -15,8 +15,11 @@ import { flagEnabled } from "./flags";
 import { creditBalanceCents, refreshCreditBalance } from "./credits";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import { errorText } from "../lib/errors";
-import type { OperatorIntent } from "../lib/operatorIntent";
+import { riskTier, type OperatorIntent, type OperatorProvenance } from "../lib/operatorIntent";
+import { spokenForm } from "../lib/spokenForm";
 import { navigateSettingsSection, onRouteChange } from "../router";
+import { speakReply } from "./voiceDock";
+import { voiceOutputEnabled } from "./voiceSettings";
 
 export interface HostedRouteMeta {
   costCents: number;
@@ -48,9 +51,24 @@ export const operatorDockOpen = open;
 
 const [input, setInput] = createSignal("");
 export const operatorInput = input;
+
+// Tracks whether the current input text is mic-originated — the loop gate
+// for Ember talk-back (voice-in -> voice-out only; typed commands stay
+// silent). Any typed edit through `setOperatorInput` reverts it to "typed";
+// only voiceDock landing a final dictation transcript marks it "voice".
+const [inputOrigin, setInputOrigin] = createSignal<OperatorProvenance>("typed");
+
 export function setOperatorInput(value: string) {
   if (value !== input() && view().kind !== "idle") resetView();
   setInput(value);
+  setInputOrigin("typed");
+}
+
+/** Called only by voiceDock landing a final dictation transcript. */
+export function setOperatorInputFromVoice(value: string) {
+  if (value !== input() && view().kind !== "idle") resetView();
+  setInput(value);
+  setInputOrigin("voice");
 }
 
 const [view, setView] = createSignal<DockView>({ kind: "idle" });
@@ -91,6 +109,7 @@ export function closeOperatorDock() {
   requestEpoch++;
   setOpen(false);
   setInput("");
+  setInputOrigin("typed");
   setRouteMeta(null);
   resetView();
   setBusy(false);
@@ -130,13 +149,13 @@ export async function refreshRecent(): Promise<void> {
  * route that completed server-side already charged, so the balance must
  * refresh even if the dock was closed mid-flight — only the dropped UI is
  * gated on the epoch. */
-async function submitViaRouter(text: string): Promise<void> {
+async function submitViaRouter(text: string, provenance: OperatorProvenance): Promise<void> {
   const epoch = ++requestEpoch;
   setBusy(true);
   setRouteMeta(null);
   setView({ kind: "needsRouter", reason: "routing…" });
   try {
-    const routed = await routeCommand(text);
+    const routed = await routeCommand(text, provenance);
     const cost = billedCost(routed);
     if (cost !== undefined) await refreshCreditBalance();
     if (epoch !== requestEpoch) return;
@@ -154,18 +173,22 @@ async function submitViaRouter(text: string): Promise<void> {
         return;
       case "needsCredits":
         setView({ kind: "needsCredits", balance: routed.balance });
+        speakIfEligible(provenance, spokenForm(routed));
         return;
       case "unclear":
         setView({ kind: "needsRouter", reason: routed.reason });
+        speakIfEligible(provenance, spokenForm(routed));
         return;
       case "error":
         setView({ kind: "needsRouter", reason: routed.message });
+        speakIfEligible(provenance, spokenForm(routed));
         return;
       case "unconfigured":
         setView({
           kind: "needsRouter",
           reason: "Operator router is off. Choose a backend in Settings.",
         });
+        speakIfEligible(provenance, spokenForm(routed));
         return;
     }
   } finally {
@@ -177,14 +200,19 @@ async function submitViaRouter(text: string): Promise<void> {
 export async function submitOperatorCommand(): Promise<void> {
   if (busy()) return;
   const text = input().trim();
-  const parsed = parseCommand(text);
+  const provenance = inputOrigin();
+  // Consumed here: a later re-submit of leftover text (e.g. hitting Enter
+  // again on an "unclear" result) is a fresh, typed action unless voiceDock
+  // lands another transcript first.
+  setInputOrigin("typed");
+  const parsed = parseCommand(text, provenance);
   if (parsed.kind === "empty") return;
   if (parsed.kind === "validationError") {
     setView({ kind: "validationError", reason: parsed.reason });
     return;
   }
   if (parsed.kind === "needsRouter") {
-    await submitViaRouter(text);
+    await submitViaRouter(text, provenance);
     return;
   }
 
@@ -350,6 +378,15 @@ function applyResult(result: DispatchResult) {
   if (result.status === "done") setInput("");
 }
 
+/** Ember talk-back's loop gate: speaks `text` only for a mic-originated
+ *  command, only when the voiceOutput setting is on. The safe-action gate
+ *  (risk tier 0 only) already happened inside `spokenForm` — `text` is null
+ *  for anything that shouldn't be spoken at all. */
+function speakIfEligible(provenance: OperatorProvenance, text: string | null): void {
+  if (!text || provenance !== "voice" || !voiceOutputEnabled()) return;
+  void speakReply(text);
+}
+
 async function submitIntent(
   intent: OperatorIntent,
   text: string,
@@ -365,6 +402,8 @@ async function submitIntent(
     return;
   }
   if (result.status === "needsConfirmation") {
+    // Confirmation always stays on-screen — safe action or not, this is
+    // never spoken; only a directly-dispatched terminal result is eligible.
     setView({
       kind: "preview",
       intent,
@@ -376,6 +415,10 @@ async function submitIntent(
     });
   } else {
     applyResult(result);
+    speakIfEligible(
+      intent.provenance,
+      spokenForm({ kind: "dispatch", result, riskTier: riskTier(intent.action) }),
+    );
   }
 }
 

@@ -6,6 +6,7 @@ import {
   operatorActionSchema,
   parseOperatorIntent,
   type OperatorIntent,
+  type OperatorProvenance,
 } from "./operatorIntent";
 import {
   configuredRouterBackend,
@@ -155,11 +156,12 @@ export function composeIntent(
   action: unknown,
   confidence: number,
   projectRef: string | null | undefined,
+  provenance: OperatorProvenance = "typed",
 ): OperatorIntent {
   const parsed = parseOperatorIntent(JSON.stringify({
     v: 2,
     id: crypto.randomUUID(),
-    provenance: "typed",
+    provenance,
     confidence,
     projectRef: projectRef ?? null,
     action,
@@ -190,10 +192,13 @@ function persistLatencyBestEffort(backend: OperatorRouterBackend, latencyMs: num
   }
 }
 
-export async function routeCommand(text: string): Promise<RouteOutcome> {
+export async function routeCommand(
+  text: string,
+  provenance: OperatorProvenance = "typed",
+): Promise<RouteOutcome> {
   if (configuredRouterBackend() === "hosted") {
     const { hostedRoute } = await import("./hostedRouter");
-    return hostedRoute(text);
+    return hostedRoute(text, provenance);
   }
 
   const raw = await routeRawPrompt(buildRouterPrompt(text));
@@ -207,7 +212,7 @@ export async function routeCommand(text: string): Promise<RouteOutcome> {
     }
     return {
       kind: "proposal",
-      intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef),
+      intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef, provenance),
       confidence: proposal.confidence,
       latencyMs: raw.latencyMs,
     };

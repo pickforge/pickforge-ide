@@ -126,10 +126,14 @@ const legacyOperatorActionSchema = z.discriminatedUnion("action", [
   selectWidgetSchema,
 ]);
 
+export type OperatorProvenance = "typed" | "voice";
+
+const operatorProvenanceSchema = z.union([z.literal("typed"), z.literal("voice")]);
+
 export const operatorIntentSchema = z.strictObject({
   v: z.literal(2),
   id: nonEmptyString,
-  provenance: z.union([z.literal("typed"), z.literal("voice")]),
+  provenance: operatorProvenanceSchema,
   confidence: z.number().min(0).max(1),
   projectRef: optionalString,
   action: operatorActionSchema,
@@ -138,7 +142,7 @@ export const operatorIntentSchema = z.strictObject({
 const legacyOperatorIntentSchema = z.strictObject({
   v: z.literal(1),
   id: nonEmptyString,
-  provenance: z.union([z.literal("typed"), z.literal("voice")]),
+  provenance: operatorProvenanceSchema,
   confidence: z.number().min(0).max(1),
   projectRef: optionalString,
   action: legacyOperatorActionSchema,

@@ -15,6 +15,8 @@ const deps = vi.hoisted(() => ({
   refreshCreditBalance: vi.fn(),
   navigateSettingsSection: vi.fn(),
   creditBalance: null as number | null,
+  speakReply: vi.fn(),
+  voiceOutputEnabled: vi.fn(),
 }));
 
 vi.mock("../../src/lib/operatorParser", () => ({
@@ -39,6 +41,12 @@ vi.mock("../../src/lib/db", () => ({
   operatorAuditList: deps.operatorAuditList,
   operatorAuditUpdate: deps.operatorAuditUpdate,
 }));
+vi.mock("../../src/stores/voiceDock", () => ({
+  speakReply: deps.speakReply,
+}));
+vi.mock("../../src/stores/voiceSettings", () => ({
+  voiceOutputEnabled: deps.voiceOutputEnabled,
+}));
 vi.mock("../../src/router", () => {
   let current = "workbench";
   const listeners = new Set<(r: string) => void>();
@@ -57,11 +65,11 @@ vi.mock("../../src/router", () => {
   };
 });
 
-function intent(action: OperatorAction): OperatorIntent {
+function intent(action: OperatorAction, provenance: "typed" | "voice" = "typed"): OperatorIntent {
   return {
     v: 1,
     id: `intent-${action.action}`,
-    provenance: "typed",
+    provenance,
     confidence: 1,
     projectRef: null,
     action,
@@ -95,6 +103,8 @@ beforeEach(() => {
   deps.refreshCreditBalance.mockReset().mockResolvedValue(undefined);
   deps.navigateSettingsSection.mockReset();
   deps.creditBalance = null;
+  deps.speakReply.mockReset();
+  deps.voiceOutputEnabled.mockReset().mockReturnValue(true);
 });
 
 describe("operatorDock store", () => {
@@ -178,7 +188,7 @@ describe("operatorDock store", () => {
     s.setOperatorInput("teach me to fly");
     await s.submitOperatorCommand();
 
-    expect(deps.routeCommand).toHaveBeenCalledWith("teach me to fly");
+    expect(deps.routeCommand).toHaveBeenCalledWith("teach me to fly", "typed");
     expect(s.operatorView()).toEqual({
       kind: "needsRouter",
       reason: "Operator router is off. Choose a backend in Settings.",
@@ -972,5 +982,133 @@ describe("operatorDock store", () => {
     expect(s.relativeTime(now - 120_000, now)).toBe("2m ago");
     expect(s.relativeTime(now - 3_600_000, now)).toBe("1h ago");
     expect(s.relativeTime(now - 172_800_000, now)).toBe("2d ago");
+  });
+});
+
+describe("operatorDock store — Ember talk-back gating", () => {
+  it("tracks mic-originated input and threads it into the router call", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("teach me to fly");
+    await s.submitOperatorCommand();
+
+    expect(deps.routeCommand).toHaveBeenCalledWith("teach me to fly", "voice");
+  });
+
+  it("reverts to typed provenance once the voice-landed text is manually edited", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("teach me to fly");
+    s.setOperatorInput("teach me to fly high");
+    await s.submitOperatorCommand();
+
+    expect(deps.routeCommand).toHaveBeenCalledWith("teach me to fly high", "typed");
+  });
+
+  it("speaks a mic-originated, tier-0, directly-dispatched result when talk-back is on", async () => {
+    const openProject = intent({ action: "openProject" }, "voice");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project App" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("open project app");
+    await s.submitOperatorCommand();
+
+    expect(deps.speakReply).toHaveBeenCalledExactlyOnceWith("Opened project App");
+  });
+
+  it("never speaks a typed command's result, even tier-0 with talk-back on", async () => {
+    const openProject = intent({ action: "openProject" }, "typed");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project App" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("open project app");
+    await s.submitOperatorCommand();
+
+    expect(deps.speakReply).not.toHaveBeenCalled();
+  });
+
+  it("never speaks when talk-back is off, even for a mic-originated tier-0 result", async () => {
+    deps.voiceOutputEnabled.mockReturnValue(false);
+    const openProject = intent({ action: "openProject" }, "voice");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project App" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("open project app");
+    await s.submitOperatorCommand();
+
+    expect(deps.speakReply).not.toHaveBeenCalled();
+  });
+
+  it("never speaks a tier-1 result, even mic-originated with talk-back on (screen-gate only)", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null }, "voice");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Sent prompt to Chat" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("send hi");
+    await s.submitOperatorCommand();
+
+    expect(deps.speakReply).not.toHaveBeenCalled();
+  });
+
+  it("never speaks a needsConfirmation preview, tier-0 or not, mic-originated or not", async () => {
+    const selectWidget = intent({ action: "selectWidget", description: "the login button" }, "voice");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      auditId: "audit-widget",
+      candidates: [{ index: 4, className: "LoginButton", label: "Sign in" }],
+    } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("select the login button");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView().kind).toBe("preview");
+    expect(deps.speakReply).not.toHaveBeenCalled();
+  });
+
+  it("speaks a mic-originated unclear/error/needsCredits/unconfigured route outcome when talk-back is on", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    const s = await loadStore();
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "unclear", reason: "too vague" });
+    s.setOperatorInputFromVoice("make it better");
+    await s.submitOperatorCommand();
+    expect(deps.speakReply).toHaveBeenLastCalledWith("I didn't catch that. too vague");
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "error", message: "model not found" });
+    s.setOperatorInputFromVoice("open project App");
+    await s.submitOperatorCommand();
+    expect(deps.speakReply).toHaveBeenLastCalledWith("Something went wrong. model not found");
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "needsCredits", balance: 0 });
+    s.setOperatorInputFromVoice("open the billing project");
+    await s.submitOperatorCommand();
+    expect(deps.speakReply).toHaveBeenLastCalledWith("You're out of routing credits.");
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "unconfigured" });
+    s.setOperatorInputFromVoice("do a thing");
+    await s.submitOperatorCommand();
+    expect(deps.speakReply).toHaveBeenLastCalledWith("The operator router isn't set up.");
+
+    expect(deps.speakReply).toHaveBeenCalledTimes(4);
+  });
+
+  it("never speaks a typed unclear route outcome", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "unclear", reason: "too vague" });
+    const s = await loadStore();
+
+    s.setOperatorInput("make it better");
+    await s.submitOperatorCommand();
+
+    expect(deps.speakReply).not.toHaveBeenCalled();
   });
 });

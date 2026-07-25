@@ -1069,6 +1069,13 @@ export function Composer(props: {
     const savedAttachments = [...attachments()];
     const value = expandTextAttachments(savedAttachments, savedText).trim();
     if (!steerAvailable() || !value || hasPendingAttachments(savedAttachments)) return;
+    // A steer carries text only. Images became pastable mid-turn along with
+    // queueing, so dispatching one here would clear the draft and silently
+    // destroy an attachment the user had already staged.
+    if (readyAttachmentPaths(savedAttachments).length > 0) {
+      showPasteError("Steering can't carry images — queue the message instead", 4000);
+      return;
+    }
     pasteGeneration += 1;
     droppedPasteGeneration = null;
     clearDispatchedDraft(props.onSteer!(value), savedText, savedAttachments);

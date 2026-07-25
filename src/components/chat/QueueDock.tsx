@@ -95,8 +95,8 @@ function QueueHeader(props: {
       <Show when={props.held} fallback={<span>QUEUED · {props.count}</span>}>
         {/* The bracket is the indicator — never a filled chip, never a dot —
             and it alone carries the warning colour; the words stay neutral. */}
-        <span>
-          <span class="pf-chat-queue-bracket" aria-hidden="true">[</span>
+        <span class="pf-chat-queue-status">
+          <span class="pf-chat-queue-bracket" />
           HELD · {props.count}
         </span>
         <span class="pf-chat-queue-actions">
@@ -137,6 +137,7 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
   const removeButtons = new Map<string, HTMLButtonElement>();
   let previousIds: string[] = [];
   let manuallyRemovedId: string | null = null;
+  let discardedAll = false;
 
   createEffect(() => {
     const ids = props.messages.map((message) => message.id);
@@ -147,7 +148,7 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       previousIds = ids;
       return;
     }
-    if (props.held) {
+    if (props.held && ids.length > 0) {
       setAnnouncement(`Queue held, ${ids.length} waiting. Choose send or discard.`);
       previousIds = ids;
       return;
@@ -156,12 +157,11 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       setAnnouncement(`${ids.length} ${ids.length === 1 ? "message" : "messages"} queued`);
     } else if (ids.length < previousIds.length) {
       const byHand = manuallyRemovedId !== null && !ids.includes(manuallyRemovedId);
-      setAnnouncement(
-        byHand
-          ? `Queued message removed, ${remaining(ids.length)}`
-          : `Message sent, ${remaining(ids.length)}`,
-      );
+      if (discardedAll) setAnnouncement(`Queue discarded, ${remaining(ids.length)}`);
+      else if (byHand) setAnnouncement(`Queued message removed, ${remaining(ids.length)}`);
+      else setAnnouncement(`Message sent, ${remaining(ids.length)}`);
       manuallyRemovedId = null;
+      discardedAll = false;
     }
     previousIds = ids;
   });
@@ -203,8 +203,15 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
           <QueueHeader
             count={props.messages.length}
             held={props.held === true}
-            onSendHeld={() => props.onSendHeld?.()}
-            onDiscard={() => props.onDiscard?.()}
+            onSendHeld={() => {
+              props.onFallbackFocus?.();
+              props.onSendHeld?.();
+            }}
+            onDiscard={() => {
+              discardedAll = true;
+              props.onFallbackFocus?.();
+              props.onDiscard?.();
+            }}
           />
           <ol class="pf-chat-queue-list">
             <For each={props.messages}>

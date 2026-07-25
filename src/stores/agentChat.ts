@@ -1223,7 +1223,11 @@ function markQueueHeld(chatId: string, event: AgentEvent, wasInterrupted: boolea
   }
   const closed = event.kind === "turnDone" || event.kind === "turnFailed";
   const stopped = wasInterrupted || (event.kind === "turnDone" && event.status === "interrupted");
-  if (closed && stopped && chat.queue.length > 0 && !chat.queueHeld) {
+  // The dispatching entry is past cancellation, so a hold over it alone would
+  // offer a decision the user cannot act on — and it retires moments later,
+  // stranding the flag on an empty queue.
+  const holdable = chat.queue.some((entry) => entry.id !== chat.drainingId);
+  if (closed && stopped && holdable && !chat.queueHeld) {
     setChats(chatId, { queueHeld: true });
   }
 }

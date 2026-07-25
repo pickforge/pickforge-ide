@@ -1254,6 +1254,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--pf-space-md);
   margin-bottom: var(--pf-space-sm);
   color: var(--pf-text-med);
@@ -1263,16 +1264,33 @@
   text-transform: uppercase;
 }
 /* Held state. The bracket is the indicator — no fill, no chip, no dot — and
-   it is the only thing that takes the warning colour; the words stay neutral
-   so the row reads as status, not alarm. */
+   it alone takes the warning colour; the words stay neutral so the row reads
+   as status, not alarm. Drawn with the same recipe as the StatusPill mark and
+   the dropdown bracket, not typed as a `[` glyph, so it sits at the same
+   weight as every other bracket on screen. */
+.pf-chat-queue-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
 .pf-chat-queue-bracket {
-  color: var(--pf-warning);
-  margin-right: var(--pf-space-xs);
+  width: 5px;
+  height: 11px;
+  flex: none;
+  border: var(--pf-bracket-width) solid var(--pf-warning);
+  border-right: none;
+  border-radius: 2px 0 0 2px;
 }
 .pf-chat-queue-actions {
   display: flex;
   align-items: center;
-  gap: var(--pf-space-xs);
+  gap: var(--pf-space-sm);
+}
+/* --pf-surface on --pf-ember is only 3.3:1 in the light theme, under AA for
+   an 11px label. Applies to every primary approval button, not just this one. */
+:root[data-theme="light"] .pf-approval-btn--primary,
+:root[data-theme="light"] .pf-approval-btn--primary:hover {
+  color: var(--pf-text-hi);
 }
 .pf-chat-queue-list {
   display: flex;

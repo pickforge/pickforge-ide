@@ -2827,6 +2827,34 @@ describe("agent message queue", () => {
     );
   });
 
+  it("does not hold over an entry that is already being dispatched", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "already gone");
+
+    const send = deferred<null>();
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_send" ? send.promise : Promise.resolve(null),
+    );
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    // The turn is interrupted while that entry's send is still in flight.
+    emit({ kind: "turnStarted" });
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+
+    // Holding here would offer a decision over a message past cancellation,
+    // and strand the flag when the send lands and retires it.
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+
+    send.resolve(null);
+    await flushPromises();
+    expect(agentChat(chatId)?.queue).toEqual([]);
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+  });
+
   it("sends a held queue only when the user asks", async () => {
     const { chatId, emit } = await startChat();
     emit({ kind: "turnStarted" });

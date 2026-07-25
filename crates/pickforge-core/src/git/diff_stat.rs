@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use crate::changes::{ChangeFileStatus, ChangedFile};
+use crate::changes::{ChangeFileKind, ChangeFileStatus, ChangedFile};
 
 /// Hard cap on numstat/name-status records parsed from one git invocation. A
 /// pathological change (a rebase touching a vendored tree, a bad
@@ -314,23 +314,37 @@ pub fn classify_porcelain_status(code: &str) -> ChangeFileStatus {
     ChangeFileStatus::Modify
 }
 
-/// Joins a `--name-status -z` parse with a `--numstat -z` parse from the same
-/// diff invocation into [`ChangedFile`] rows. `staged` reflects which single
-/// invocation produced both inputs (`--cached` vs. not) — a file with both
-/// staged and unstaged changes requires the caller to merge two calls, which
-/// is a live working-tree (PR2) concern, not this pure join.
+/// Joins a `--name-status -z` parse with a `--numstat -z` parse AND a
+/// `--raw -z` parse from the same diff invocation into [`ChangedFile`] rows.
+/// `staged` reflects which single invocation produced all three inputs
+/// (`--cached` vs. not) — a file with both staged and unstaged changes
+/// requires the caller to merge two calls, which is a live working-tree
+/// (PR2) concern, not this pure join.
 ///
-/// Joins on [`DiffStatEntry::path_bytes`] / [`NameStatusEntry::path_bytes`]
-/// — the raw bytes git emitted — never on the lossily-decoded `path`
-/// `String`. Two distinct invalid-UTF-8 paths can decode to an identical
-/// lossy string; joining on that string would silently pair one file's
-/// status with a different file's stats.
+/// Joins on [`DiffStatEntry::path_bytes`] / [`NameStatusEntry::path_bytes`] /
+/// [`RawModeEntry::path_bytes`] — the raw bytes git emitted — NEVER on the
+/// lossily-decoded `path` `String`. Two distinct invalid-UTF-8 paths can
+/// decode to an identical lossy string; joining on that string would
+/// silently pair one file's status with a different file's stats (P2-3, see
+/// `merge_keys_on_raw_bytes_not_lossy_path_to_avoid_conflating_distinct_paths`)
+/// — and, since #231 PR5's review, would ALSO silently miss the raw-mode
+/// join for any non-UTF-8 path entirely: `raw_mode` was previously joined
+/// after the fact by `crate::git::working_tree::overlay_kind`, keyed off the
+/// already-lossy `ChangedFile::path` — a submodule/symlink/mode-only path
+/// with invalid UTF-8 bytes would never match and silently stay `Regular`.
+/// Joining here, while every entry's own `path_bytes` field is still in
+/// scope, closes that gap the same way the stats join already avoided it.
 pub fn merge_changed_files(
     name_status: &[NameStatusEntry],
     numstat: &[DiffStatEntry],
+    raw_mode: &[RawModeEntry],
     staged: bool,
 ) -> Vec<ChangedFile> {
     let stats_by_path: HashMap<&[u8], &DiffStatEntry> = numstat
+        .iter()
+        .map(|entry| (entry.path_bytes.as_slice(), entry))
+        .collect();
+    let raw_by_path: HashMap<&[u8], &RawModeEntry> = raw_mode
         .iter()
         .map(|entry| (entry.path_bytes.as_slice(), entry))
         .collect();
@@ -339,7 +353,8 @@ pub fn merge_changed_files(
         .iter()
         .map(|entry| {
             let stat = stats_by_path.get(entry.path_bytes.as_slice()).copied();
-            build_changed_file(entry, stat, staged)
+            let raw = raw_by_path.get(entry.path_bytes.as_slice()).copied();
+            build_changed_file(entry, stat, raw, staged)
         })
         .collect()
 }
@@ -347,6 +362,7 @@ pub fn merge_changed_files(
 fn build_changed_file(
     entry: &NameStatusEntry,
     stat: Option<&DiffStatEntry>,
+    raw: Option<&RawModeEntry>,
     staged: bool,
 ) -> ChangedFile {
     let binary = stat.is_some_and(|s| s.binary);
@@ -357,6 +373,13 @@ fn build_changed_file(
         binary,
         truncated,
     );
+    // No matching `--raw` entry (should not happen — that call covers the
+    // same diff range as the other two — but defensive, e.g. an untracked
+    // path which never appears in ANY `git diff` output) keeps the honest
+    // "can't tell" default rather than guessing.
+    let kind = raw
+        .map(|r| classify_change_file_kind(r, additions, deletions))
+        .unwrap_or(ChangeFileKind::Regular);
     ChangedFile {
         path: entry.path.clone(),
         old_path: entry
@@ -371,7 +394,162 @@ fn build_changed_file(
         binary,
         truncated,
         diff_available: true,
+        kind,
     }
+}
+
+/// One `git diff --raw -z` record: old/new file mode bits plus blob shas,
+/// joined by path onto the `--numstat`/`--name-status` rows
+/// [`merge_changed_files`] already built (#231 PR5). `--numstat`/
+/// `--name-status` alone can't tell a submodule pointer bump, a symlink
+/// change, or a permissions-only change apart from an ordinary content
+/// change — mode `160000` is Git's own gitlink (submodule) marker and
+/// `120000` is a symlink; both are read straight off `old_mode`/`new_mode`,
+/// which come from a real `lstat()` on the working tree (or the index) and
+/// so are always trustworthy. `old_sha`/`new_sha` are carried through too but
+/// are NOT used to detect a mode-only change: for an UNSTAGED diff git never
+/// hashes the working-tree blob (there's no reason to — it only diffs
+/// content, it doesn't store it), so `new_sha` is a constant
+/// all-zero placeholder for EVERY unstaged row regardless of whether content
+/// actually changed. [`classify_change_file_kind`] instead uses the
+/// numstat-derived `additions`/`deletions` PR1 already computed exactly
+/// (`0`/`0` for real content, byte-for-byte identical — see
+/// `numstat_parses_mode_only_change_as_zero_zero`) — reliable for both staged
+/// and unstaged alike.
+///
+/// Verified against git 2.50's actual `--raw -z` record shape: a
+/// `:<old_mode> <new_mode> <old_sha> <new_sha> <status>` header token (ASCII,
+/// space-separated, no leading/trailing NUL of its own), then a NUL, then the
+/// path (old path then new path for a rename/copy, matching
+/// `--name-status`'s own two-path shape); NOT the pre-`-z` tab/newline
+/// layout the classic `git diff --raw` porcelain output uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawModeEntry {
+    pub path: String,
+    /// See [`DiffStatEntry::path_bytes`] — same rationale, same join use.
+    pub path_bytes: Vec<u8>,
+    pub old_mode: String,
+    pub new_mode: String,
+    pub old_sha: String,
+    pub new_sha: String,
+}
+
+/// Result of a bounded `--raw -z` parse.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RawModeParse {
+    pub entries: Vec<RawModeEntry>,
+    pub truncated: bool,
+}
+
+/// Parses `git diff --raw -z --full-index [--find-renames]` output into
+/// [`RawModeEntry`] rows, bounded the same way [`parse_numstat_z`]/
+/// [`parse_name_status_z`] are (same entry-count/byte caps — one number
+/// governing every `-z` parser in this module, not three independently
+/// drifting ones).
+pub fn parse_raw_z(raw: &[u8]) -> RawModeParse {
+    let (bytes, mut truncated) = bound_bytes(raw);
+    let mut tokens = bytes.split(|&b| b == 0).filter(|t| !t.is_empty());
+    let mut entries = Vec::new();
+
+    while let Some(header) = tokens.next() {
+        if entries.len() >= MAX_DIFF_STAT_ENTRIES {
+            truncated = true;
+            break;
+        }
+        let Some(entry) = parse_raw_record(header, &mut tokens) else {
+            truncated = true;
+            break;
+        };
+        entries.push(entry);
+    }
+
+    RawModeParse { entries, truncated }
+}
+
+fn parse_raw_record<'a>(
+    header: &[u8],
+    tokens: &mut impl Iterator<Item = &'a [u8]>,
+) -> Option<RawModeEntry> {
+    // The header token is pure ASCII (mode digits, hex shas, a status
+    // letter) — never a path — so a plain UTF-8 parse is safe here, unlike
+    // the path tokens below.
+    let header_str = std::str::from_utf8(header).ok()?;
+    let header_str = header_str.strip_prefix(':')?;
+    let mut fields = header_str.split(' ');
+    let old_mode = fields.next()?.to_string();
+    let new_mode = fields.next()?.to_string();
+    let old_sha = fields.next()?.to_string();
+    let new_sha = fields.next()?.to_string();
+    let status = fields.next()?;
+    let renamed_or_copied = status.starts_with('R') || status.starts_with('C');
+
+    if renamed_or_copied {
+        let _old_tok = tokens.next()?;
+        let new_tok = tokens.next()?;
+        return Some(RawModeEntry {
+            path: lossy_path(new_tok),
+            path_bytes: new_tok.to_vec(),
+            old_mode,
+            new_mode,
+            old_sha,
+            new_sha,
+        });
+    }
+
+    let path_tok = tokens.next()?;
+    Some(RawModeEntry {
+        path: lossy_path(path_tok),
+        path_bytes: path_tok.to_vec(),
+        old_mode,
+        new_mode,
+        old_sha,
+        new_sha,
+    })
+}
+
+/// Git's gitlink (submodule) mode bit.
+const SUBMODULE_MODE: &str = "160000";
+/// Git's symlink mode bit.
+const SYMLINK_MODE: &str = "120000";
+/// Git's "this side doesn't exist" mode (a pure add has `old_mode ==
+/// MISSING_MODE`; a pure delete has `new_mode == MISSING_MODE`).
+const MISSING_MODE: &str = "000000";
+
+/// Classifies one [`RawModeEntry`] into the [`ChangeFileKind`] vocabulary
+/// (#231 PR5), given the SAME row's numstat-derived `additions`/`deletions`
+/// (already computed by [`merge_changed_files`] from the paired `--numstat`
+/// call — see [`RawModeEntry`]'s doc comment for why sha comparison isn't
+/// used here instead). Pure and total — every input shape maps to exactly
+/// one variant:
+///
+/// - either side's mode is the submodule gitlink mode -> [`ChangeFileKind::Submodule`];
+/// - else either side's mode is the symlink mode -> [`ChangeFileKind::Symlink`];
+/// - else both sides EXIST (neither mode is [`MISSING_MODE`] — a pure
+///   add/delete has nothing to call "mode-only", there being no prior/no
+///   surviving mode to compare against), the modes differ, and the numstat
+///   counts are the EXACT (not unknown/binary — a `None` never counts as
+///   "zero") `Some(0)`/`Some(0)` -> [`ChangeFileKind::ModeOnly`];
+/// - otherwise -> [`ChangeFileKind::Regular`].
+pub fn classify_change_file_kind(
+    entry: &RawModeEntry,
+    additions: Option<u64>,
+    deletions: Option<u64>,
+) -> ChangeFileKind {
+    if entry.old_mode == SUBMODULE_MODE || entry.new_mode == SUBMODULE_MODE {
+        return ChangeFileKind::Submodule;
+    }
+    if entry.old_mode == SYMLINK_MODE || entry.new_mode == SYMLINK_MODE {
+        return ChangeFileKind::Symlink;
+    }
+    if entry.old_mode != MISSING_MODE
+        && entry.new_mode != MISSING_MODE
+        && entry.old_mode != entry.new_mode
+        && additions == Some(0)
+        && deletions == Some(0)
+    {
+        return ChangeFileKind::ModeOnly;
+    }
+    ChangeFileKind::Regular
 }
 
 /// Additions/deletions hand-counted from a full unified-diff body (as
@@ -480,15 +658,31 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
 
 /// Bounds a unified-diff body being returned to the renderer for DISPLAY —
 /// distinct from [`count_unified_diff_stat`], which bounds a body being
-/// scanned for STATS. Used by the lazy per-file diff fetch (#231 PR2, both
-/// the git-live and turn-snapshot sources): a diff big enough to blow the
-/// stat-counting bound is also too big to hand to the renderer whole.
+/// scanned for STATS. Used by the lazy per-file diff fetch (#231 PR2/PR5,
+/// both the git-live and turn-snapshot sources): a diff big enough to blow
+/// the stat-counting bound is also too big to hand to the renderer whole.
 ///
 /// Cuts at [`MAX_DIFF_BODY_BYTES`] first, walking back to the nearest UTF-8
-/// character boundary so the cut never splits a multi-byte character, then at
-/// [`MAX_DIFF_BODY_LINES`] lines (kept together with their trailing `\n` via
-/// `split_inclusive`, so re-joining the returned lines reproduces valid diff
-/// text). Either bound tripping sets the returned flag; neither ever panics
+/// character boundary so the cut never splits a multi-byte character, THEN
+/// walking back further to the last `'\n'` so the returned text never ends
+/// mid-line — critical for #231 PR5's "load more": that affordance re-fetches
+/// the FULL text and skips whole lines via [`skip_diff_lines`], so "how many
+/// lines this bounded prefix covers" and "how many whole lines to skip on the
+/// next fetch" must always agree. A mid-line byte cut would desync them —
+/// the cut line's suffix is silently dropped (skipped as part of "that
+/// line") and, when nothing textual remains after the skip, the next fetch
+/// would wrongly report `truncated: false`, making a genuinely lossy prefix
+/// look complete. The ONLY exception is a single line, on its own, already
+/// longer than [`MAX_DIFF_BODY_BYTES`] — there is no earlier line boundary to
+/// walk back to, so that one pathological case keeps a mid-line cut (a
+/// vanishingly rare shape: one diff line over 8MiB) rather than returning
+/// nothing at all.
+///
+/// After the byte cut, also bounds to [`MAX_DIFF_BODY_LINES`] lines (kept
+/// together with their trailing `\n` via `split_inclusive`, so re-joining the
+/// returned lines reproduces valid diff text — this pass never itself
+/// produces a mid-line cut, since `split_inclusive` never splits a line's own
+/// bytes). Either bound tripping sets the returned flag; neither ever panics
 /// on a pathological input (empty text, a single line longer than the byte
 /// bound, text with no trailing newline).
 pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
@@ -498,6 +692,13 @@ pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
         let mut end = MAX_DIFF_BODY_BYTES;
         while end > 0 && !text.is_char_boundary(end) {
             end -= 1;
+        }
+        // Walk back to the last line boundary within the byte-bounded
+        // prefix, keeping the newline itself — see the doc comment above.
+        // `rfind` on a `&str` searches by byte offset and is UTF-8-boundary
+        // safe regardless of where `end` landed.
+        if let Some(last_newline) = text[..end].rfind('\n') {
+            end = last_newline + 1;
         }
         &text[..end]
     } else {
@@ -513,6 +714,27 @@ pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
         out.push_str(line);
     }
     (out, truncated)
+}
+
+/// Slices off the first `skip` LINES of `text` (#231 PR5's "load more"
+/// affordance — see `crate::changes::finish_change_diff_from`), each line
+/// delimited the same way [`bound_diff_display`] builds one
+/// (`split_inclusive('\n')`, so a final line with no trailing newline still
+/// counts as one line). `skip` at or beyond the true line count returns an
+/// empty slice, never panics. `skip: 0` returns `text` unchanged (no
+/// allocation, no scan).
+pub(crate) fn skip_diff_lines(text: &str, skip: usize) -> &str {
+    if skip == 0 {
+        return text;
+    }
+    let mut consumed = 0usize;
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        if i >= skip {
+            break;
+        }
+        consumed += line.len();
+    }
+    &text[consumed..]
 }
 
 /// Recognizes both binary shapes Git's diff output can contain: the plain
@@ -793,7 +1015,7 @@ mod tests {
             binary: false,
             truncated: false,
         }];
-        let files = merge_changed_files(&statuses, &stats, true);
+        let files = merge_changed_files(&statuses, &stats, &[], true);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].additions, Some(4));
         assert_eq!(files[0].deletions, Some(1));
@@ -809,7 +1031,7 @@ mod tests {
             old_path: Some("old.txt".into()),
             status: ChangeFileStatus::Rename,
         }];
-        let files = merge_changed_files(&statuses, &[], false);
+        let files = merge_changed_files(&statuses, &[], &[], false);
         assert_eq!(files[0].old_path.as_deref(), Some("old.txt"));
         assert_eq!(files[0].unstaged, Some(true));
         assert_eq!(files[0].staged, None);
@@ -867,7 +1089,7 @@ mod tests {
             },
         ];
 
-        let files = merge_changed_files(&statuses, &stats, true);
+        let files = merge_changed_files(&statuses, &stats, &[], true);
         assert_eq!(files.len(), 2);
         assert_eq!(
             files[0].additions,
@@ -878,6 +1100,73 @@ mod tests {
             files[1].additions,
             Some(9),
             "second path keeps its own stats, not the first's"
+        );
+    }
+
+    #[test]
+    fn merge_keys_raw_mode_on_raw_bytes_too_a_non_utf8_submodule_path_gets_the_right_kind() {
+        // Same collision fixture as the stats test above, but exercising the
+        // THIRD (`--raw`) join (#231 PR5 review finding P2-1): an EARLIER
+        // version of this code joined raw-mode entries in a separate pass
+        // keyed off the already-lossy `ChangedFile::path`, which silently
+        // missed the join entirely for a non-UTF-8 path (both of these
+        // decode to the identical replacement-character string) — a
+        // submodule/symlink/mode-only path with invalid UTF-8 bytes would
+        // never resolve past `Regular`. Joining inside `merge_changed_files`
+        // itself, on the still-exact `path_bytes`, must get both right.
+        let path_a_bytes = [&[0xFFu8][..], b"file.txt"].concat();
+        let path_b_bytes = [&[0xFEu8][..], b"file.txt"].concat();
+        let lossy_a = String::from_utf8_lossy(&path_a_bytes).into_owned();
+        let lossy_b = String::from_utf8_lossy(&path_b_bytes).into_owned();
+        assert_eq!(
+            lossy_a, lossy_b,
+            "fixture must actually collide under lossy decoding"
+        );
+
+        let statuses = vec![
+            NameStatusEntry {
+                path: lossy_a.clone(),
+                path_bytes: path_a_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+            NameStatusEntry {
+                path: lossy_b.clone(),
+                path_bytes: path_b_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+        ];
+        let raw = vec![
+            RawModeEntry {
+                path: lossy_a.clone(),
+                path_bytes: path_a_bytes,
+                old_mode: "000000".into(),
+                new_mode: "160000".into(),
+                old_sha: "0".into(),
+                new_sha: "abc".into(),
+            },
+            RawModeEntry {
+                path: lossy_b,
+                path_bytes: path_b_bytes,
+                old_mode: "000000".into(),
+                new_mode: "120000".into(),
+                old_sha: "0".into(),
+                new_sha: "def".into(),
+            },
+        ];
+
+        let files = merge_changed_files(&statuses, &[], &raw, true);
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files[0].kind,
+            ChangeFileKind::Submodule,
+            "first path keeps its own raw-mode classification"
+        );
+        assert_eq!(
+            files[1].kind,
+            ChangeFileKind::Symlink,
+            "second path keeps its own, not the first's"
         );
     }
 
@@ -1091,5 +1380,239 @@ deadbeefdata\n";
         let (text, truncated) = bound_diff_display("");
         assert_eq!(text, "");
         assert!(!truncated);
+    }
+
+    #[test]
+    fn bound_diff_display_byte_cut_never_lands_mid_line() {
+        // Fixed 1000-byte lines: MAX_DIFF_BODY_BYTES (8*1024*1024) is not a
+        // multiple of 1000, so the raw byte cut lands mid-line unless walked
+        // back — and few enough lines (~8398) to stay well under
+        // MAX_DIFF_BODY_LINES, isolating the byte-bound path from the
+        // line-count bound.
+        let line = format!("{}\n", "x".repeat(999));
+        let lines_needed = MAX_DIFF_BODY_BYTES / line.len() + 10;
+        let mut diff = line.repeat(lines_needed);
+        diff.push_str("TAIL LINE AFTER THE CUT\n");
+
+        let (first_chunk, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(first_chunk.len() <= MAX_DIFF_BODY_BYTES);
+        assert!(
+            first_chunk.ends_with('\n'),
+            "the returned prefix must always end on a line boundary, never mid-line"
+        );
+    }
+
+    #[test]
+    fn load_more_seam_reconstructs_the_original_with_no_glued_or_dropped_line() {
+        // The full load-more round trip: bound the first chunk, count its
+        // lines the same way the client's `countDiffLines` would, skip that
+        // many lines in the FULL text (what a re-fetch does server-side),
+        // and verify concatenating the two reproduces the original text
+        // exactly — no content glued together mid-line, none silently
+        // dropped at the seam.
+        let line = format!("{}\n", "y".repeat(777));
+        let lines_needed = MAX_DIFF_BODY_BYTES / line.len() + 25;
+        let mut diff = line.repeat(lines_needed);
+        diff.push_str("+final marker line\n");
+
+        let (first_chunk, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(first_chunk.ends_with('\n'));
+
+        let already = first_chunk.matches('\n').count();
+        let remainder = skip_diff_lines(&diff, already);
+        assert_eq!(
+            format!("{first_chunk}{remainder}"),
+            diff,
+            "first chunk + remainder must reconstruct the original byte-for-byte"
+        );
+
+        // Once the remainder itself fits under the bound, a second
+        // `bound_diff_display` pass reports NOT truncated — and that claim
+        // is now honest, since nothing was lost getting here.
+        let (second_chunk, second_truncated) = bound_diff_display(remainder);
+        assert!(!second_truncated);
+        assert_eq!(second_chunk, remainder);
+    }
+
+    #[test]
+    fn bound_diff_display_keeps_a_partial_line_only_when_the_first_line_alone_exceeds_the_cap() {
+        // No newline anywhere within the byte-bounded prefix: the single
+        // pathological exception where there is no earlier line boundary to
+        // walk back to.
+        let mut diff = "x".repeat(MAX_DIFF_BODY_BYTES + 10);
+        diff.push('\n');
+        let (text, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(!text.ends_with('\n'), "the single oversized line has no boundary to cut back to");
+        assert!(text.len() <= MAX_DIFF_BODY_BYTES);
+    }
+
+    // ---- skip_diff_lines (#231 PR5 load-more) ----
+
+    #[test]
+    fn skip_diff_lines_zero_returns_input_unchanged() {
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 0), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn skip_diff_lines_skips_whole_lines_including_trailing_newline() {
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 1), "b\nc\n");
+        assert_eq!(skip_diff_lines("a\nb\nc\n", 2), "c\n");
+    }
+
+    #[test]
+    fn skip_diff_lines_beyond_the_end_returns_empty_not_a_panic() {
+        assert_eq!(skip_diff_lines("a\nb\n", 10), "");
+    }
+
+    #[test]
+    fn skip_diff_lines_handles_a_final_line_with_no_trailing_newline() {
+        assert_eq!(skip_diff_lines("a\nb", 1), "b");
+    }
+
+    // ---- parse_raw_z / classify_change_file_kind (#231 PR5) ----
+
+    fn raw_joined(records: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for record in records {
+            out.extend_from_slice(record);
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_raw_z_parses_a_plain_modify_record() {
+        let raw = raw_joined(&[b":100644 100644 abc123 def456 M", b"file.rs"]);
+        let parse = parse_raw_z(&raw);
+        assert!(!parse.truncated);
+        assert_eq!(parse.entries.len(), 1);
+        let e = &parse.entries[0];
+        assert_eq!(e.path, "file.rs");
+        assert_eq!(e.old_mode, "100644");
+        assert_eq!(e.new_mode, "100644");
+        assert_eq!(e.old_sha, "abc123");
+        assert_eq!(e.new_sha, "def456");
+    }
+
+    #[test]
+    fn parse_raw_z_parses_a_rename_old_then_new_path_order() {
+        let raw = raw_joined(&[b":100644 100644 abc abc R100", b"old.txt", b"new.txt"]);
+        let parse = parse_raw_z(&raw);
+        assert_eq!(parse.entries[0].path, "new.txt");
+    }
+
+    #[test]
+    fn parse_raw_z_empty_input_yields_no_entries() {
+        let parse = parse_raw_z(b"");
+        assert!(parse.entries.is_empty());
+        assert!(!parse.truncated);
+    }
+
+    fn mode_entry(old_mode: &str, new_mode: &str, old_sha: &str, new_sha: &str) -> RawModeEntry {
+        RawModeEntry {
+            path: "f".into(),
+            path_bytes: b"f".to_vec(),
+            old_mode: old_mode.into(),
+            new_mode: new_mode.into(),
+            old_sha: old_sha.into(),
+            new_sha: new_sha.into(),
+        }
+    }
+
+    #[test]
+    fn classify_detects_a_submodule_on_either_side() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "160000", "0", "abc"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule added"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("160000", "160000", "abc", "def"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule pointer bumped"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("160000", "000000", "abc", "0"), None, None),
+            ChangeFileKind::Submodule,
+            "submodule removed"
+        );
+    }
+
+    #[test]
+    fn classify_detects_a_symlink_on_either_side() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "120000", "0", "abc"), None, None),
+            ChangeFileKind::Symlink,
+            "symlink added"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("120000", "120000", "abc", "def"), None, None),
+            ChangeFileKind::Symlink,
+            "symlink target changed"
+        );
+    }
+
+    #[test]
+    fn classify_detects_a_mode_only_change_via_zero_zero_numstat() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), Some(0), Some(0)),
+            ChangeFileKind::ModeOnly,
+            "the unstaged case: new_sha is a placeholder, so classification must not depend on it"
+        );
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "abc"), Some(0), Some(0)),
+            ChangeFileKind::ModeOnly,
+            "the staged case, where sha happens to be reliable too"
+        );
+    }
+
+    #[test]
+    fn classify_a_mode_difference_with_unknown_or_nonzero_stats_is_not_mode_only() {
+        // Binary content (stats unknown, never a fabricated zero) must not be
+        // misreported as mode-only just because the mode also differs.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), None, None),
+            ChangeFileKind::Regular
+        );
+        // A real content change that ALSO happens to change mode is still a
+        // content change, not mode-only.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100755", "abc", "0000000"), Some(3), Some(1)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_a_pure_add_is_never_mode_only_even_with_zero_zero_stats() {
+        // old_mode == new_mode is false here (000000 vs 100644), but the
+        // MISSING_MODE guard must reject a pure add as "mode-only" on its
+        // own terms — there is no PRIOR mode to have changed from.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("000000", "100644", "0000000", "0000000"), Some(0), Some(0)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_an_ordinary_content_change_is_regular() {
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100644", "abc", "def"), Some(2), Some(1)),
+            ChangeFileKind::Regular
+        );
+    }
+
+    #[test]
+    fn classify_unchanged_mode_with_zero_zero_stats_is_regular_not_mode_only() {
+        // Same mode: nothing about the mode changed, so even a zero/zero
+        // numstat result (a defensive shape; git wouldn't normally emit a
+        // diff record for a truly no-op change) must not be misreported as
+        // mode-only.
+        assert_eq!(
+            classify_change_file_kind(&mode_entry("100644", "100644", "abc", "abc"), Some(0), Some(0)),
+            ChangeFileKind::Regular
+        );
     }
 }

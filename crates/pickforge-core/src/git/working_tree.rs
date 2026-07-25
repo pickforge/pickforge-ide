@@ -31,13 +31,36 @@
 //! flag `None` (PR1's "not meaningful for this source" case); this module
 //! tightens that to `Some(false)` on assembly, since for a git-live row the
 //! opposite flag IS a known fact, not an inapplicable concept — see
-//! `ChangedFile::staged`'s doc comment.
+//! `ChangedFile::staged`'s doc comment. The final listing is sorted by path
+//! (staged before unstaged within a path) so a file with both kinds of row
+//! renders them adjacent — legible pairing rather than two unrelated-looking
+//! rows separated by every other staged/unstaged file (#231 PR5).
+//!
+//! A THIRD invocation shape, staged and unstaged (#231 PR5): `git diff --raw
+//! -z --full-index`, giving old/new file MODE bits and blob shas that
+//! `--numstat`/`--name-status` don't carry at all. This is the added,
+//! bounded call the issue's PR5 slice calls for to distinguish a submodule
+//! gitlink, a symlink, and a permissions-only change from an ordinary
+//! content change — none of those are recoverable from the two calls PR1/PR2
+//! already run. Parsed by [`diff_stat::parse_raw_z`] and joined by
+//! [`diff_stat::merge_changed_files`] IN THE SAME PASS as the numstat/
+//! name-status join (not a separate post-hoc overlay keyed off the
+//! already-lossy `ChangedFile::path` — an earlier version of this code did
+//! that and silently missed the join for any non-UTF-8 path, since two
+//! distinct invalid-UTF-8 paths can collide once lossily decoded; see
+//! `merge_changed_files`'s doc comment). An untracked path has no `git diff`
+//! output at all (same reasoning as the untracked block below), so its kind
+//! is read straight off the filesystem instead via a plain
+//! `fs::symlink_metadata` call — cheap, bounded, and reads no file content,
+//! same spirit as the rest of this module's "listing must not read file
+//! bodies" discipline.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use crate::changes::{
-    ChangeDiff, ChangeFileStatus, ChangeScope, ChangeSet, ChangeSource, ChangeTotals, ChangedFile,
+    ChangeDiff, ChangeFileKind, ChangeFileStatus, ChangeScope, ChangeSet, ChangeSource,
+    ChangeTotals, ChangedFile,
 };
 use crate::process::run_timeout_capped;
 
@@ -83,53 +106,8 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
         return None;
     }
 
-    // `--find-renames` is explicit rather than relying on the user's
-    // `diff.renames` git config, so rename detection behaves the same on
-    // every install regardless of that config's value.
-    let (staged_name_raw, staged_name_cap_truncated) =
-        git_capped(&top, &["diff", "--cached", "--find-renames", "--name-status", "-z"]);
-    let (staged_num_raw, staged_num_cap_truncated) =
-        git_capped(&top, &["diff", "--cached", "--find-renames", "--numstat", "-z"]);
-    let (unstaged_name_raw, unstaged_name_cap_truncated) =
-        git_capped(&top, &["diff", "--find-renames", "--name-status", "-z"]);
-    let (unstaged_num_raw, unstaged_num_cap_truncated) =
-        git_capped(&top, &["diff", "--find-renames", "--numstat", "-z"]);
-
-    let staged_name_parse = diff_stat::parse_name_status_z(&staged_name_raw);
-    let staged_num_parse = diff_stat::parse_numstat_z(&staged_num_raw);
-    let unstaged_name_parse = diff_stat::parse_name_status_z(&unstaged_name_raw);
-    let unstaged_num_parse = diff_stat::parse_numstat_z(&unstaged_num_raw);
-
-    // (P2-2) An over-cap listing — either the process-capture byte cap or
-    // the parsers' own entry-count/byte cap tripping — must never silently
-    // return a prefix with no signal; OR every truncation source into the
-    // change-set's honest `truncated` flag.
-    let truncated = status_truncated
-        || staged_name_cap_truncated
-        || staged_num_cap_truncated
-        || unstaged_name_cap_truncated
-        || unstaged_num_cap_truncated
-        || staged_name_parse.truncated
-        || staged_num_parse.truncated
-        || unstaged_name_parse.truncated
-        || unstaged_num_parse.truncated;
-
-    let mut files =
-        diff_stat::merge_changed_files(&staged_name_parse.entries, &staged_num_parse.entries, true);
-    // A row from the staged merge is never itself an unstaged row — that's a
-    // known `false`, not an inapplicable concept, for a git-live source (P3).
-    for file in files.iter_mut() {
-        file.unstaged = Some(false);
-    }
-    let mut unstaged_files = diff_stat::merge_changed_files(
-        &unstaged_name_parse.entries,
-        &unstaged_num_parse.entries,
-        false,
-    );
-    for file in unstaged_files.iter_mut() {
-        file.staged = Some(false);
-    }
-    files.extend(unstaged_files);
+    let (mut files, diff_truncated) = staged_and_unstaged_files(&top);
+    let truncated = status_truncated || diff_truncated;
 
     for entry in status.files.iter().filter(|f| f.untracked) {
         files.push(ChangedFile {
@@ -143,14 +121,133 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
             binary: false,
             truncated: false,
             diff_available: true,
+            // An untracked path never appears in `git diff --raw` output
+            // (nothing to diff against), so its kind is read straight off
+            // the filesystem instead — a symlink_metadata stat, never a
+            // content read (see this module's doc comment).
+            kind: untracked_kind(&top, &entry.path),
         });
     }
 
-    // Conflicts are a Git-live-only concept `git diff --name-status` doesn't
-    // cleanly represent; overlay the porcelain-derived truth onto whatever
-    // row(s) the diff calls produced for that path, and synthesize a row for
-    // any unmerged path that produced none at all (defensive — every
-    // unmerged path is expected to appear in at least the unstaged diff).
+    overlay_conflicts(&mut files, &status);
+
+    // Legible pairing (#231 PR5): a file with both a staged and an unstaged
+    // row is otherwise split across two unrelated-looking positions (every
+    // staged row, then every unstaged row, added far apart above) — sort by
+    // path so its two rows sit next to each other, staged first (matches the
+    // badge order a reader scans top-to-bottom). `sort_by` is stable, so
+    // rows that tie on path/staged-order keep their original relative order.
+    files.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| b.staged.unwrap_or(false).cmp(&a.staged.unwrap_or(false)))
+    });
+
+    let totals = ChangeTotals::from_files(&files);
+    Some(ChangeSet {
+        id: format!("workingTree:{top}"),
+        scope: ChangeScope::WorkingTree,
+        source: ChangeSource::GitLive,
+        chat_id: None,
+        turn_seq: None,
+        repo_root: top,
+        captured_at: now_millis(),
+        // Fresh at the moment of this live read by construction — this is
+        // not a cached copy going stale later. A caller layer (the store,
+        // #231 PR2 TS side) tracks ITS OWN freshness against this capture,
+        // independent of this field.
+        stale: false,
+        truncated,
+        files,
+        totals,
+    })
+}
+
+/// Runs and merges the three staged + three unstaged `git diff` invocation
+/// shapes (`--name-status`/`--numstat`/`--raw`, see this module's doc
+/// comment) into one flat `Vec<ChangedFile>`, kind-classified, `staged`/
+/// `unstaged` fully known-`Some` per row (P3). Split out of
+/// [`working_tree_change_set`] purely to keep that function short — this is
+/// still "assembly", not parsing (parsing stays in `diff_stat`).
+fn staged_and_unstaged_files(top: &str) -> (Vec<ChangedFile>, bool) {
+    // `--find-renames` is explicit rather than relying on the user's
+    // `diff.renames` git config, so rename detection behaves the same on
+    // every install regardless of that config's value.
+    let (staged_name_raw, staged_name_cap_truncated) =
+        git_capped(top, &["diff", "--cached", "--find-renames", "--name-status", "-z"]);
+    let (staged_num_raw, staged_num_cap_truncated) =
+        git_capped(top, &["diff", "--cached", "--find-renames", "--numstat", "-z"]);
+    let (unstaged_name_raw, unstaged_name_cap_truncated) =
+        git_capped(top, &["diff", "--find-renames", "--name-status", "-z"]);
+    let (unstaged_num_raw, unstaged_num_cap_truncated) =
+        git_capped(top, &["diff", "--find-renames", "--numstat", "-z"]);
+    // Third invocation shape (#231 PR5): file MODE bits + blob shas, the
+    // only way to tell a submodule/symlink/mode-only change apart from an
+    // ordinary one — see this module's doc comment.
+    let (staged_raw_raw, staged_raw_cap_truncated) = git_capped(
+        top,
+        &["diff", "--cached", "--find-renames", "--raw", "-z", "--full-index"],
+    );
+    let (unstaged_raw_raw, unstaged_raw_cap_truncated) =
+        git_capped(top, &["diff", "--find-renames", "--raw", "-z", "--full-index"]);
+
+    let staged_name_parse = diff_stat::parse_name_status_z(&staged_name_raw);
+    let staged_num_parse = diff_stat::parse_numstat_z(&staged_num_raw);
+    let unstaged_name_parse = diff_stat::parse_name_status_z(&unstaged_name_raw);
+    let unstaged_num_parse = diff_stat::parse_numstat_z(&unstaged_num_raw);
+    let staged_raw_parse = diff_stat::parse_raw_z(&staged_raw_raw);
+    let unstaged_raw_parse = diff_stat::parse_raw_z(&unstaged_raw_raw);
+
+    // (P2-2) An over-cap listing — either the process-capture byte cap or
+    // the parsers' own entry-count/byte cap tripping — must never silently
+    // return a prefix with no signal; OR every truncation source into the
+    // change-set's honest `truncated` flag.
+    let truncated = staged_name_cap_truncated
+        || staged_num_cap_truncated
+        || unstaged_name_cap_truncated
+        || unstaged_num_cap_truncated
+        || staged_raw_cap_truncated
+        || unstaged_raw_cap_truncated
+        || staged_name_parse.truncated
+        || staged_num_parse.truncated
+        || unstaged_name_parse.truncated
+        || unstaged_num_parse.truncated
+        || staged_raw_parse.truncated
+        || unstaged_raw_parse.truncated;
+
+    let mut files = diff_stat::merge_changed_files(
+        &staged_name_parse.entries,
+        &staged_num_parse.entries,
+        &staged_raw_parse.entries,
+        true,
+    );
+    // A row from the staged merge is never itself an unstaged row — that's a
+    // known `false`, not an inapplicable concept, for a git-live source (P3).
+    for file in files.iter_mut() {
+        file.unstaged = Some(false);
+    }
+
+    let mut unstaged_files = diff_stat::merge_changed_files(
+        &unstaged_name_parse.entries,
+        &unstaged_num_parse.entries,
+        &unstaged_raw_parse.entries,
+        false,
+    );
+    for file in unstaged_files.iter_mut() {
+        file.staged = Some(false);
+    }
+
+    files.extend(unstaged_files);
+    (files, truncated)
+}
+
+/// Conflicts are a Git-live-only concept `git diff --name-status` doesn't
+/// cleanly represent; overlay the porcelain-derived truth from `status` onto
+/// whatever row(s) [`staged_and_unstaged_files`] already produced for that
+/// path, and synthesize a row for any unmerged path that produced none at
+/// all (defensive — every unmerged path is expected to appear in at least
+/// the unstaged diff).
+fn overlay_conflicts(files: &mut Vec<ChangedFile>, status: &super::GitStatus) {
     let porcelain_by_path: HashMap<&str, &str> = status
         .files
         .iter()
@@ -183,27 +280,84 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
             binary: false,
             truncated: false,
             diff_available: true,
+            // A conflicted path's kind is left at the honest default — its
+            // status already distinguishes it, and its mode isn't cleanly
+            // classifiable mid-merge (multiple index stages, not a single
+            // old/new mode pair).
+            kind: ChangeFileKind::Regular,
         });
     }
+}
 
-    let totals = ChangeTotals::from_files(&files);
-    Some(ChangeSet {
-        id: format!("workingTree:{top}"),
-        scope: ChangeScope::WorkingTree,
-        source: ChangeSource::GitLive,
-        chat_id: None,
-        turn_seq: None,
-        repo_root: top,
-        captured_at: now_millis(),
-        // Fresh at the moment of this live read by construction — this is
-        // not a cached copy going stale later. A caller layer (the store,
-        // #231 PR2 TS side) tracks ITS OWN freshness against this capture,
-        // independent of this field.
-        stale: false,
-        truncated,
-        files,
-        totals,
-    })
+/// Reads an untracked path's [`ChangeFileKind`] straight off the filesystem
+/// (#231 PR5) — `git diff` never emits anything for an untracked path (see
+/// this module's doc comment), so there's no raw-mode record to classify
+/// from. `symlink_metadata` (not `metadata`, which follows the link) so a
+/// symlink is detected as itself rather than resolved through to whatever it
+/// points at; a stat call, never a content read. Falls back to
+/// [`ChangeFileKind::Regular`] on any I/O error (permissions, a race where
+/// the path vanished between `git status` and this read) — an honest "can't
+/// tell" default, not a guess.
+///
+/// `repo_relative_path` is resolved through [`resolve_repo_relative_leaf`]
+/// first — the same containment discipline [`file_diff`] gets from
+/// [`resolve_repo_relative`], adapted so it never follows the leaf itself if
+/// the leaf is a symlink (see that function's doc comment for why plain
+/// `resolve_repo_relative` can't be reused as-is here) — rather than a naive
+/// `Path::join`, even though `repo_relative_path` comes from `git status`'s
+/// own porcelain listing and so should already be repo-relative in practice
+/// (#231 PR5 review finding P2-2: this module must not have a
+/// filesystem-touching path anywhere that skips containment validation,
+/// git-sourced input or not). A rejected candidate (traversal, escape, an
+/// absolute path) falls back to the same honest `Regular` default as any
+/// other I/O failure here, never a leaked read outside the repo root.
+fn untracked_kind(repo_root: &str, repo_relative_path: &str) -> ChangeFileKind {
+    let resolved = match resolve_repo_relative_leaf(Path::new(repo_root), repo_relative_path) {
+        Ok(path) => path,
+        Err(_) => return ChangeFileKind::Regular,
+    };
+    match std::fs::symlink_metadata(resolved) {
+        Ok(meta) if meta.file_type().is_symlink() => ChangeFileKind::Symlink,
+        _ => ChangeFileKind::Regular,
+    }
+}
+
+/// Same containment guarantee as [`resolve_repo_relative`] — no absolute
+/// path, no `..`, no escape via a symlinked ancestor DIRECTORY — but for a
+/// caller whose LEAF might itself be a symlink it wants to OBSERVE rather
+/// than follow (#231 PR5 review finding P2-2's fix). `resolve_repo_relative`
+/// canonicalizes the FULL path, which follows any symlink including the
+/// leaf's own — exactly right for a content-reading caller like [`file_diff`]
+/// (it needs the real backing location), but wrong for [`untracked_kind`]:
+/// canonicalizing a symlink leaf away resolves it to whatever it points AT,
+/// so a subsequent `symlink_metadata` call would inspect the TARGET instead
+/// of the link, and always report "not a symlink".
+///
+/// Resolves and validates only the PARENT directory chain through
+/// [`resolve_repo_relative`] (rejecting a traversal/escape/absolute
+/// candidate exactly as it does — the parent is still expected to follow
+/// directory symlinks for containment purposes, only the leaf itself is
+/// exempt), then joins the leaf's own file name onto that WITHOUT
+/// canonicalizing it.
+fn resolve_repo_relative_leaf(repo_root: &Path, candidate: &str) -> Result<PathBuf, String> {
+    if candidate.is_empty() {
+        return Err("path must not be empty".to_string());
+    }
+    let candidate_path = Path::new(candidate);
+    let file_name = candidate_path
+        .file_name()
+        .ok_or_else(|| "path has no file name component".to_string())?;
+    match candidate_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => {
+            let resolved_parent =
+                resolve_repo_relative(repo_root, &parent.to_string_lossy())?;
+            Ok(resolved_parent.join(file_name))
+        }
+        // A bare filename with no directory prefix at all — nothing to
+        // resolve above it, `repo_root` (already canonical by this
+        // function's own precondition) is the parent.
+        _ => Ok(repo_root.join(file_name)),
+    }
 }
 
 /// Resolves a repo-relative `candidate` against an already-canonical
@@ -241,7 +395,23 @@ fn resolve_repo_relative(repo_root: &Path, candidate: &str) -> Result<PathBuf, S
     if !canon_existing.starts_with(repo_root) {
         return Err("path escapes the repository root".to_string());
     }
-    Ok(canon_existing.join(remainder))
+    // `PathBuf::join` with an EMPTY `remainder` (the common case: `candidate`
+    // itself already exists, so `deepest_existing_ancestor` walked zero
+    // steps) still appends a trailing separator (`.../a.bin` ->
+    // `.../a.bin/`) — a real `Path::join` quirk, not a no-op, confirmed
+    // against this toolchain. That silently breaks any caller doing raw
+    // filesystem I/O on the result (`fs::metadata` on a trailing-slash path
+    // to a regular file fails with ENOTDIR/NotADirectory on macOS/Linux),
+    // even though it happened to be harmless for the ORIGINAL caller here
+    // (only ever turned into a `git diff -- <path>` pathspec string, and
+    // git's own pathspec matching tolerates a trailing slash). Skip the
+    // no-op join entirely rather than rely on every future caller's
+    // downstream use happening to absorb it.
+    if remainder.as_os_str().is_empty() {
+        Ok(canon_existing)
+    } else {
+        Ok(canon_existing.join(remainder))
+    }
 }
 
 /// Walks `path` up to the deepest ancestor that exists on disk, returning
@@ -268,14 +438,28 @@ fn deepest_existing_ancestor(path: &Path) -> (PathBuf, PathBuf) {
 }
 
 /// The live unified diff for one repo-relative `path` (#231 PR2 lazy
-/// per-file fetch), staged or unstaged. `root` is any directory at or inside
-/// the repo (resolved to the toplevel the same as [`working_tree_change_set`]);
-/// `path` is validated safe via [`resolve_repo_relative`] before ever
-/// reaching a `git` invocation — traversal or a symlinked escape is rejected
-/// with an error, never silently clamped. An untracked file (no staged
-/// counterpart) falls back to `git diff --no-index` against the empty file,
-/// same as `crate::git::diff`.
-pub fn file_diff(root: &str, path: &str, staged: bool) -> Result<ChangeDiff, String> {
+/// per-file fetch, extended #231 PR5), staged or unstaged. `root` is any
+/// directory at or inside the repo (resolved to the toplevel the same as
+/// [`working_tree_change_set`]); `path` is validated safe via
+/// [`resolve_repo_relative`] before ever reaching a `git` invocation —
+/// traversal or a symlinked escape is rejected with an error, never silently
+/// clamped. An untracked file (no staged counterpart) falls back to `git
+/// diff --no-index` against the empty file, same as `crate::git::diff`.
+///
+/// `skip_lines` is the "load more" affordance for a truncated diff (#231
+/// PR5): `0` for the initial fetch; a caller that already has N lines of a
+/// `truncated: true` result passes N to get the NEXT bounded chunk. Cheap by
+/// this crate's existing convention (re-runs `git diff` fresh rather than
+/// caching anything server-side — the same choice
+/// `changes_turn_file_diff`'s doc comment makes for the turn-snapshot side).
+///
+/// Two honesty signals a caller can't get any other way (#231 PR5): when the
+/// raw captured bytes were not valid UTF-8, the returned diff's
+/// `invalid_utf8` is `true` (the text still renders, lossily decoded, rather
+/// than failing); when the diff is `binary`, `size_bytes` is filled from a
+/// plain `fs::metadata` stat of the still-existing working-tree file (never
+/// a content read, and never attempted for a file that no longer exists).
+pub fn file_diff(root: &str, path: &str, staged: bool, skip_lines: u32) -> Result<ChangeDiff, String> {
     let top = super::toplevel(root).ok_or_else(|| "not a git repository".to_string())?;
     let top_path = Path::new(&top);
     let resolved = resolve_repo_relative(top_path, path)?;
@@ -287,6 +471,7 @@ pub fn file_diff(root: &str, path: &str, staged: bool) -> Result<ChangeDiff, Str
     if repo_relative.is_empty() {
         return Err("path must not be empty".to_string());
     }
+    let skip_lines = skip_lines as usize;
 
     let args: Vec<&str> = if staged {
         vec!["diff", "--cached", "--", &repo_relative]
@@ -294,15 +479,28 @@ pub fn file_diff(root: &str, path: &str, staged: bool) -> Result<ChangeDiff, Str
         vec!["diff", "--", &repo_relative]
     };
     let (raw, out_truncated) = git_capped(&top, &args);
+    let invalid_utf8 = std::str::from_utf8(&raw).is_err();
     let text = String::from_utf8_lossy(&raw).into_owned();
 
-    if !staged && text.trim().is_empty() && !super::is_tracked(&top, &repo_relative) {
+    let mut result = if !staged && text.trim().is_empty() && !super::is_tracked(&top, &repo_relative) {
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         let (raw2, t2) = git_capped(&top, &["diff", "--no-index", "--", null, &repo_relative]);
-        let text = String::from_utf8_lossy(&raw2).into_owned();
-        return Ok(crate::changes::finish_change_diff(&text, out_truncated || t2));
+        let invalid_utf8_2 = std::str::from_utf8(&raw2).is_err();
+        let text2 = String::from_utf8_lossy(&raw2).into_owned();
+        let mut result =
+            crate::changes::finish_change_diff_from(&text2, out_truncated || t2, skip_lines);
+        result.invalid_utf8 = invalid_utf8 || invalid_utf8_2;
+        result
+    } else {
+        let mut result = crate::changes::finish_change_diff_from(&text, out_truncated, skip_lines);
+        result.invalid_utf8 = invalid_utf8;
+        result
+    };
+
+    if result.binary {
+        result.size_bytes = std::fs::metadata(&resolved).ok().map(|m| m.len());
     }
-    Ok(crate::changes::finish_change_diff(&text, out_truncated))
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -336,6 +534,15 @@ mod tests {
     fn commit_all(dir: &Path, message: &str) {
         run_git(dir, &["add", "-A"]);
         run_git(dir, &["commit", "-q", "-m", message]);
+    }
+
+    fn head_sha(dir: &Path) -> String {
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(dir)
+            .output()
+            .expect("git rev-parse HEAD");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
     /// The branch `git init` created — depends on the test machine's
@@ -397,6 +604,17 @@ mod tests {
         // staged row is definitively not itself an unstaged row (P3).
         assert!(rows.iter().any(|f| f.staged == Some(true) && f.unstaged == Some(false)));
         assert!(rows.iter().any(|f| f.unstaged == Some(true) && f.staged == Some(false)));
+
+        // Legible pairing (#231 PR5): the two rows for one path sit ADJACENT
+        // in the listing, staged first — not split apart by every other
+        // staged/unstaged file in the change-set.
+        let idx = cs
+            .files
+            .iter()
+            .position(|f| f.path == "a.txt" && f.staged == Some(true))
+            .expect("staged row");
+        assert_eq!(cs.files[idx + 1].path, "a.txt");
+        assert_eq!(cs.files[idx + 1].unstaged, Some(true));
     }
 
     #[test]
@@ -476,7 +694,7 @@ mod tests {
         commit_all(&repo, "init");
         std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
 
-        let result = file_diff(repo.to_str().unwrap(), "a.txt", false).expect("diff ok");
+        let result = file_diff(repo.to_str().unwrap(), "a.txt", false, 0).expect("diff ok");
         assert!(result.available);
         assert!(!result.binary);
         assert!(!result.truncated);
@@ -490,7 +708,7 @@ mod tests {
         commit_all(&repo, "init");
         std::fs::write(repo.join("new.txt"), "hello\n").unwrap();
 
-        let result = file_diff(repo.to_str().unwrap(), "new.txt", false).expect("diff ok");
+        let result = file_diff(repo.to_str().unwrap(), "new.txt", false, 0).expect("diff ok");
         assert!(result.diff.unwrap().contains("+hello"));
     }
 
@@ -501,7 +719,7 @@ mod tests {
         commit_all(&repo, "init");
         std::fs::write(repo.join("a.bin"), [4u8, 5, 6, 7, 8]).unwrap();
 
-        let result = file_diff(repo.to_str().unwrap(), "a.bin", false).expect("diff ok");
+        let result = file_diff(repo.to_str().unwrap(), "a.bin", false, 0).expect("diff ok");
         assert!(result.binary);
         assert!(result.diff.is_none());
     }
@@ -515,7 +733,7 @@ mod tests {
         let secret = std::env::temp_dir().join(format!("pf-workingtree-secret-{}.txt", std::process::id()));
         std::fs::write(&secret, "top secret").unwrap();
 
-        let err = file_diff(repo.to_str().unwrap(), "../../../etc/passwd", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), "../../../etc/passwd", false, 0).unwrap_err();
         assert!(err.contains("traversal"));
         let _ = std::fs::remove_file(&secret);
     }
@@ -526,7 +744,7 @@ mod tests {
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
         commit_all(&repo, "init");
 
-        let err = file_diff(repo.to_str().unwrap(), "/etc/passwd", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), "/etc/passwd", false, 0).unwrap_err();
         assert!(err.contains("repo-relative"));
     }
 
@@ -546,7 +764,7 @@ mod tests {
         let _ = std::fs::remove_file(&link);
         symlink(&outside, &link).unwrap();
 
-        let err = file_diff(repo.to_str().unwrap(), "escape/secret.txt", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), "escape/secret.txt", false, 0).unwrap_err();
         assert!(err.contains("escapes"));
         let _ = std::fs::remove_dir_all(&outside);
     }
@@ -560,7 +778,7 @@ mod tests {
         commit_all(&repo, "init");
         std::fs::remove_file(repo.join("gone.txt")).unwrap();
 
-        let result = file_diff(repo.to_str().unwrap(), "gone.txt", false).expect("diff ok");
+        let result = file_diff(repo.to_str().unwrap(), "gone.txt", false, 0).expect("diff ok");
         assert!(result.available);
         assert!(result.diff.unwrap().contains("-will be deleted"));
     }
@@ -569,6 +787,27 @@ mod tests {
     fn resolve_repo_relative_rejects_empty_path() {
         let repo = init_repo("resolve-empty");
         assert!(resolve_repo_relative(&repo, "").is_err());
+    }
+
+    #[test]
+    fn resolve_repo_relative_never_appends_a_trailing_separator_for_an_existing_leaf() {
+        // `PathBuf::join` with an EMPTY remainder still appends a trailing
+        // separator (confirmed against this toolchain) — harmless for the
+        // ORIGINAL caller (only ever turned into a `git diff -- <path>`
+        // pathspec string), but breaks a raw `fs::metadata`/`fs::symlink_metadata`
+        // call on the result (`ENOTDIR` on macOS/Linux for a regular file).
+        // #231 PR5 adds exactly that kind of caller (`file_diff`'s binary
+        // size stat), so this is a real regression guard, not a hypothetical.
+        let repo = init_repo("resolve-no-trailing-slash");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        let resolved = resolve_repo_relative(&repo, "a.txt").expect("resolves");
+        assert!(
+            !resolved.to_string_lossy().ends_with('/'),
+            "resolved path must not carry a trailing separator: {resolved:?}"
+        );
+        assert!(std::fs::metadata(&resolved).is_ok());
     }
 
     #[cfg(unix)]
@@ -592,7 +831,7 @@ mod tests {
         // symlink resolving outside the repo. The deepest-existing-ancestor
         // walk must still find that symlinked dir (which DOES exist) and
         // reject on its resolved, out-of-root target.
-        let err = file_diff(repo.to_str().unwrap(), "escape2/gone.txt", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), "escape2/gone.txt", false, 0).unwrap_err();
         assert!(err.contains("escapes"));
         let _ = std::fs::remove_dir_all(&outside);
     }
@@ -607,7 +846,7 @@ mod tests {
         // it passes the component check, but it resolves to the repo root
         // itself — an empty repo-relative string once the root prefix is
         // stripped, which is not a file `git diff -- <path>` can target.
-        let err = file_diff(repo.to_str().unwrap(), ".", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), ".", false, 0).unwrap_err();
         assert!(err.contains("empty"));
     }
 
@@ -625,7 +864,7 @@ mod tests {
         // content from outside the repo — either an explicit rejection, or
         // a diff whose text (if any) never contains the outside secret.
         let candidate = "a.txt\0../../../../../../etc/passwd";
-        let result = file_diff(repo.to_str().unwrap(), candidate, false);
+        let result = file_diff(repo.to_str().unwrap(), candidate, false, 0);
         if let Ok(diff) = result {
             let text = diff.diff.unwrap_or_default();
             assert!(
@@ -647,7 +886,7 @@ mod tests {
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
         commit_all(&repo, "init");
 
-        let err = file_diff(repo.to_str().unwrap(), "C:a.txt", false).unwrap_err();
+        let err = file_diff(repo.to_str().unwrap(), "C:a.txt", false, 0).unwrap_err();
         assert!(err.contains("drive") || err.contains("root"));
     }
 
@@ -667,6 +906,203 @@ mod tests {
         assert!(
             cs.truncated,
             "an over-cap listing must surface truncated=true, never a silent prefix"
+        );
+    }
+
+    // ---- ChangeFileKind classification (#231 PR5) ----
+
+    #[test]
+    fn reports_a_submodule_addition_as_submodule_kind() {
+        let repo = init_repo("submodule-add");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        let head = head_sha(&repo);
+        run_git(
+            &repo,
+            &["update-index", "--add", "--cacheinfo", &format!("160000,{head},subrepo")],
+        );
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        let file = cs.files.iter().find(|f| f.path == "subrepo").expect("subrepo row");
+        assert_eq!(file.kind, ChangeFileKind::Submodule);
+        assert_eq!(file.staged, Some(true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_a_tracked_symlink_target_change_as_symlink_kind() {
+        use std::os::unix::fs::symlink;
+        let repo = init_repo("symlink-kind");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "two\n").unwrap();
+        symlink("a.txt", repo.join("link.txt")).unwrap();
+        commit_all(&repo, "init");
+        std::fs::remove_file(repo.join("link.txt")).unwrap();
+        symlink("b.txt", repo.join("link.txt")).unwrap();
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        let file = cs.files.iter().find(|f| f.path == "link.txt").expect("link.txt row");
+        assert_eq!(file.kind, ChangeFileKind::Symlink);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_an_untracked_symlink_as_symlink_kind_via_filesystem_stat() {
+        use std::os::unix::fs::symlink;
+        let repo = init_repo("untracked-symlink-kind");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        symlink("a.txt", repo.join("newlink.txt")).unwrap();
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        let file = cs.files.iter().find(|f| f.path == "newlink.txt").expect("row");
+        assert_eq!(file.status, ChangeFileStatus::Add);
+        assert_eq!(file.kind, ChangeFileKind::Symlink);
+    }
+
+    #[test]
+    fn untracked_kind_rejects_a_traversal_shaped_path_and_never_touches_outside_the_repo() {
+        // Defensive (#231 PR5 review finding P2-2): `git status`'s own
+        // porcelain listing should never emit a `..`-shaped untracked path,
+        // but `untracked_kind` must not trust that — it goes through the
+        // same containment discipline `file_diff` uses (via
+        // `resolve_repo_relative_leaf`), not a naive `Path::join`. A secret file placed just outside the
+        // repo proves nothing outside the root is ever touched: a bug here
+        // would show up as `Symlink` if it followed the traversal to a real
+        // path, `Regular` is the only honest outcome for a rejected one.
+        let repo = init_repo("untracked-kind-traversal");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        let kind = untracked_kind(repo.to_str().unwrap(), "../../../../../../etc/passwd");
+        assert_eq!(kind, ChangeFileKind::Regular);
+    }
+
+    #[test]
+    fn untracked_kind_rejects_an_absolute_path() {
+        let repo = init_repo("untracked-kind-absolute");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        assert_eq!(untracked_kind(repo.to_str().unwrap(), "/etc/passwd"), ChangeFileKind::Regular);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_a_permissions_only_change_as_mode_only_kind() {
+        use std::os::unix::fs::PermissionsExt;
+        let repo = init_repo("mode-only-kind");
+        std::fs::write(repo.join("run.sh"), "echo hi\n").unwrap();
+        commit_all(&repo, "init");
+        let mut perms = std::fs::metadata(repo.join("run.sh")).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(repo.join("run.sh"), perms).unwrap();
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        let file = cs.files.iter().find(|f| f.path == "run.sh").expect("row");
+        assert_eq!(file.status, ChangeFileStatus::Modify);
+        assert_eq!(file.kind, ChangeFileKind::ModeOnly);
+    }
+
+    #[test]
+    fn reports_an_ordinary_content_change_as_regular_kind() {
+        let repo = init_repo("regular-kind");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        let file = cs.files.iter().find(|f| f.path == "a.txt").expect("a.txt row");
+        assert_eq!(file.kind, ChangeFileKind::Regular);
+    }
+
+    // ---- file_diff: load-more (skip_lines), invalid UTF-8, binary size ----
+
+    #[test]
+    fn file_diff_load_more_returns_the_remaining_lines_after_skip() {
+        let repo = init_repo("diff-load-more");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+
+        let full = file_diff(repo.to_str().unwrap(), "a.txt", false, 0)
+            .expect("diff ok")
+            .diff
+            .unwrap();
+        let full_lines: Vec<&str> = full.lines().collect();
+        assert!(full_lines.len() >= 2, "fixture must produce at least two diff lines");
+
+        let rest = file_diff(repo.to_str().unwrap(), "a.txt", false, 1)
+            .expect("diff ok")
+            .diff
+            .unwrap();
+        let rest_lines: Vec<&str> = rest.lines().collect();
+        assert_eq!(rest_lines, full_lines[1..], "skip_lines=1 drops exactly the first line");
+    }
+
+    #[test]
+    fn file_diff_load_more_past_the_end_returns_empty_not_an_error() {
+        let repo = init_repo("diff-load-more-past-end");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+
+        let result = file_diff(repo.to_str().unwrap(), "a.txt", false, 10_000).expect("diff ok");
+        assert_eq!(result.diff.as_deref(), Some(""));
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn file_diff_flags_invalid_utf8_content_without_failing() {
+        let repo = init_repo("diff-invalid-utf8");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        // Invalid UTF-8 bytes with no NUL byte: git's own binary heuristic
+        // doesn't trip, so this diffs as text with a lossily-decoded body.
+        std::fs::write(repo.join("a.txt"), [b'o', b'n', b'e', b'\n', 0xFFu8, 0xFE, b'\n']).unwrap();
+
+        let result = file_diff(repo.to_str().unwrap(), "a.txt", false, 0).expect("diff ok");
+        assert!(!result.binary, "no NUL byte, so git treats this as text");
+        assert!(result.invalid_utf8);
+        assert!(result.diff.unwrap().contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn file_diff_does_not_flag_invalid_utf8_for_ordinary_text() {
+        let repo = init_repo("diff-valid-utf8");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+
+        let result = file_diff(repo.to_str().unwrap(), "a.txt", false, 0).expect("diff ok");
+        assert!(!result.invalid_utf8);
+    }
+
+    #[test]
+    fn file_diff_reports_size_bytes_for_a_binary_file_still_on_disk() {
+        let repo = init_repo("diff-binary-size");
+        std::fs::write(repo.join("a.bin"), [0u8, 1, 2, 3]).unwrap();
+        commit_all(&repo, "init");
+        let new_content = [4u8, 5, 6, 7, 8, 9, 10];
+        std::fs::write(repo.join("a.bin"), new_content).unwrap();
+
+        let result = file_diff(repo.to_str().unwrap(), "a.bin", false, 0).expect("diff ok");
+        assert!(result.binary);
+        assert_eq!(result.size_bytes, Some(new_content.len() as u64));
+    }
+
+    #[test]
+    fn file_diff_leaves_size_bytes_unknown_for_a_deleted_binary_file() {
+        let repo = init_repo("diff-binary-deleted-size");
+        std::fs::write(repo.join("a.bin"), [0u8, 1, 2, 3]).unwrap();
+        commit_all(&repo, "init");
+        std::fs::remove_file(repo.join("a.bin")).unwrap();
+
+        let result = file_diff(repo.to_str().unwrap(), "a.bin", false, 0).expect("diff ok");
+        assert!(result.binary);
+        assert_eq!(
+            result.size_bytes, None,
+            "no live file to stat — never guess a stale size"
         );
     }
 }

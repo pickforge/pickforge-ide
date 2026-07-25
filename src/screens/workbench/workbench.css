@@ -686,6 +686,15 @@ body.pf-resizing .pf-dock-panel {
   box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-ember);
   color: var(--pf-text-hi);
 }
+/* Legible staged/unstaged pairing (#231 PR5): a row whose path matches the
+ * one immediately above it (the Rust side already sorts these adjacent) gets
+ * a tighter top gap and a quiet connecting hairline, reading as "the same
+ * file's other row" rather than an unrelated file a few pixels down. */
+.pf-crs-navrow--paired {
+  padding-top: 1px;
+  margin-top: -2px;
+  border-top: var(--pf-hairline-width) dashed var(--pf-hairline);
+}
 .pf-crs-letter {
   font-family: var(--pf-font-mono);
   font-weight: var(--pf-weight-semibold);
@@ -822,6 +831,111 @@ body.pf-resizing .pf-dock-panel {
 }
 .pf-crs-difftext {
   padding-right: var(--pf-space-md);
+}
+
+/* view toggle (#231 PR5): unified/split, rendered only at
+   `SPLIT_VIEW_MIN_WIDTH`+ (see `ChangesReviewSurface.tsx`'s `canSplit`).
+   Deliberately its own class, not `.pf-sc-viewtoggle` — see
+   `ViewModeToggle`'s doc comment. */
+.pf-crs-viewtoggle {
+  display: inline-flex;
+  gap: 0;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+}
+.pf-crs-viewtoggle button {
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  padding: 2px var(--pf-space-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-crs-viewtoggle button:hover {
+  color: var(--pf-text-hi);
+}
+.pf-crs-view--on {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+
+/* truncated-diff notice: honest limit message + explicit load-more/
+   open-externally actions (#231 PR5) — never silent truncation. */
+.pf-crs-diffnotice--actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-crs-diffnotice--error {
+  color: var(--pf-error);
+}
+.pf-crs-diffaction {
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  padding: 1px var(--pf-space-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-crs-diffaction:hover:not(:disabled) {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-text-low);
+}
+.pf-crs-diffaction:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* split view (#231 PR5): the same gutter/marker/text language as unified
+   (`.pf-crs-gutter`/`.pf-crs-diffmarker`/`.pf-crs-difftext`,
+   `.pf-diff-add`/`.pf-diff-del` tints), laid out as two aligned columns
+   instead of one. */
+.pf-crs-splithunkhead {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--pf-space-sm);
+}
+.pf-crs-splitrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: baseline;
+}
+.pf-crs-splitcell {
+  display: grid;
+  grid-template-columns: 3ch 1.2ch 1fr;
+  align-items: baseline;
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+  white-space: pre;
+}
+.pf-crs-splitrow > .pf-crs-splitcell:first-child {
+  border-right: var(--pf-hairline-width) solid var(--pf-hairline);
+  padding-right: var(--pf-space-xs);
+}
+/* The missing half of an unbalanced del/add run — a quiet tint marks "no
+   line here" rather than leaving an unexplained blank gap. */
+.pf-crs-splitcell--empty {
+  background: color-mix(in srgb, var(--pf-text-low) 6%, transparent);
+}
+/* A `noNewline` marker spans both columns (it annotates whichever line
+   preceded it, not a left/right pair of its own) — override the inherited
+   `.pf-crs-diffline` 4-column gutter grid down to one column. */
+.pf-crs-splitnote {
+  grid-template-columns: 1fr;
+  padding-left: 3ch;
 }
 
 /* ---- left rail ---- */

@@ -227,6 +227,24 @@ export function loadChangeDiff(path: string, staged = false): Promise<ChangeDiff
   return promise;
 }
 
+/** Fetches the NEXT bounded chunk of `path`'s diff past `skipLines` already-held
+ *  lines (#231 PR5's "load more" affordance for a `truncated: true` result),
+ *  in the ACTIVE scope's current target — same target resolution as
+ *  [`loadChangeDiff`], but never cached: each chunk is a one-off fetch the
+ *  caller (`ChangesReviewSurface`'s accumulation logic) already holds the
+ *  result of, not something a later caller would ever ask for again by the
+ *  same key. */
+export function loadChangeDiffChunk(path: string, staged: boolean, skipLines: number): Promise<ChangeDiff> {
+  if (scope() === "thisTurn") {
+    const target = turnTarget();
+    if (!target) return Promise.reject(new Error("no active this-turn changes-review target"));
+    return changesTurnFileDiff(target.chatId, target.projectRoot, target.turnSeq, path, skipLines);
+  }
+  const target = workingTreeTarget();
+  if (!target) return Promise.reject(new Error("no active working-tree changes-review target"));
+  return changesWorkingTreeFileDiff(target.projectRoot, path, staged, skipLines);
+}
+
 // ---- refresh triggers: relevant agent turn completion, project change,
 // window refocus (while the surface is mounted — see
 // `startChangesReviewFocusRefresh` below). No permanent polling — every

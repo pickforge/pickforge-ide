@@ -869,6 +869,59 @@ function reduceApprovalRequest(
   return { ...chat, approvals: [...chat.approvals, approvalFromEvent(event)] };
 }
 
+function reduceFileChange(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "fileChange" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  // Flag off (#231 `changesReview`, default off): keep pushing one raw
+  // item per event, exactly the pre-#231-PR3 behavior — no folding, no
+  // ordinal/turnComplete tracking, so `ChatTimeline` keeps rendering the
+  // legacy per-event `FileChangeCard` unchanged.
+  if (!flagEnabled("changesReview")) {
+    return withTimeline(chat, [
+      ...chat.timeline,
+      {
+        type: "fileChange",
+        seq: nextSeq(),
+        itemId: event.itemId,
+        changes: event.changes.map((change) => ({ ...change })),
+        ordinal: chat.nextChangesReceiptOrdinal,
+        turnComplete: false,
+      },
+    ]);
+  }
+  // Fold every FileChange event within one open turn into a SINGLE
+  // timeline item (#231 PR3) — the chat receipt is one card per completed
+  // turn, not one per event. Matches `group_turn_change_sets`'s implicit
+  // turn-open rule (opens on the first FileChange since the last close);
+  // `seq`/`itemId` stay pinned to the opening event so the virtualized
+  // row key never drifts while the group keeps accumulating.
+  const openId = chat.openChangesReceiptItemId;
+  if (openId) {
+    const timeline = chat.timeline.map((item) =>
+      item.type === "fileChange" && item.itemId === openId
+        ? { ...item, changes: [...item.changes, ...event.changes.map((change) => ({ ...change }))] }
+        : item,
+    );
+    return withTimeline(chat, timeline);
+  }
+  return {
+    ...withTimeline(chat, [
+      ...chat.timeline,
+      {
+        type: "fileChange",
+        seq: nextSeq(),
+        itemId: event.itemId,
+        changes: event.changes.map((change) => ({ ...change })),
+        ordinal: chat.nextChangesReceiptOrdinal,
+        turnComplete: false,
+      },
+    ]),
+    openChangesReceiptItemId: event.itemId,
+  };
+}
+
 // AgentEvent's discriminated union has 24 "kind" variants; a switch is the standard
 // exhaustiveness-checked way to dispatch one in TypeScript (each case adds +1 to ESLint's
 // cyclomatic count regardless of body size), and every case body with real branching is already
@@ -915,54 +968,8 @@ function reduceAgentEvent(
       ]);
     case "commandDone":
       return reduceCommandDone(chat, event, nextSeq);
-    case "fileChange": {
-      // Flag off (#231 `changesReview`, default off): keep pushing one raw
-      // item per event, exactly the pre-#231-PR3 behavior — no folding, no
-      // ordinal/turnComplete tracking, so `ChatTimeline` keeps rendering the
-      // legacy per-event `FileChangeCard` unchanged.
-      if (!flagEnabled("changesReview")) {
-        return withTimeline(chat, [
-          ...chat.timeline,
-          {
-            type: "fileChange",
-            seq: nextSeq(),
-            itemId: event.itemId,
-            changes: event.changes.map((change) => ({ ...change })),
-            ordinal: chat.nextChangesReceiptOrdinal,
-            turnComplete: false,
-          },
-        ]);
-      }
-      // Fold every FileChange event within one open turn into a SINGLE
-      // timeline item (#231 PR3) — the chat receipt is one card per completed
-      // turn, not one per event. Matches `group_turn_change_sets`'s implicit
-      // turn-open rule (opens on the first FileChange since the last close);
-      // `seq`/`itemId` stay pinned to the opening event so the virtualized
-      // row key never drifts while the group keeps accumulating.
-      const openId = chat.openChangesReceiptItemId;
-      if (openId) {
-        const timeline = chat.timeline.map((item) =>
-          item.type === "fileChange" && item.itemId === openId
-            ? { ...item, changes: [...item.changes, ...event.changes.map((change) => ({ ...change }))] }
-            : item,
-        );
-        return withTimeline(chat, timeline);
-      }
-      return {
-        ...withTimeline(chat, [
-          ...chat.timeline,
-          {
-            type: "fileChange",
-            seq: nextSeq(),
-            itemId: event.itemId,
-            changes: event.changes.map((change) => ({ ...change })),
-            ordinal: chat.nextChangesReceiptOrdinal,
-            turnComplete: false,
-          },
-        ]),
-        openChangesReceiptItemId: event.itemId,
-      };
-    }
+    case "fileChange":
+      return reduceFileChange(chat, event, nextSeq);
     case "toolUse":
       return reduceToolUse(chat, event, nextSeq);
     case "mcpToolCall":

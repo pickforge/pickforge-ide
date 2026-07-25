@@ -1390,7 +1390,20 @@ export function Composer(props: {
         {/* The frame (border, radius, fill) lives on this wrapper, not on the
           * editor, so the context/cost readout can sit inside it as a bottom
           * gutter without overlapping the editor's own scrolling content. */}
-        <div class="pf-chat-field">
+        <div
+          class="pf-chat-field"
+          onMouseDown={(event) => {
+            // The frame is wider than the editor now (it also holds the meter
+            // gutter), and a text field you can click without getting a caret
+            // reads as broken. Route clicks that land on the frame itself — the
+            // gutter, the readout, the padding — into the editor instead of
+            // letting them blur it.
+            if (preparing() || field.contains(event.target as Node)) return;
+            event.preventDefault();
+            field.focus();
+            placeCaret(text().length);
+          }}
+        >
           <div
             ref={field}
             class="pf-chat-textarea pf-chat-editor"

@@ -1238,22 +1238,22 @@
   font-size: var(--pf-size-label-sm);
   font-variant-numeric: tabular-nums;
   color: var(--pf-text-low);
-  /* A readout, not a target: clicks in the gutter must not swallow focus from
-   * the editor above it. The fraction opts back in for its overflow tooltip. */
+  /* A readout, not a target: clicks fall through to .pf-chat-field, which routes
+   * them into the editor. Only the overflow warning opts back in, for its
+   * hover tooltip. */
   pointer-events: none;
 }
 .pf-chat-context-frac {
   flex: none;
   white-space: nowrap;
-  pointer-events: auto;
 }
-/* Inset past the frame's corner radius: a low reading (a few % of a 1M window)
- * would otherwise land inside the curve and render as a clipped stub instead of
- * the start of a gauge. */
+/* Starts under the fraction text (same inset as this row's padding) and clears
+ * the frame's corner curve, which a low reading — a few % of a 1M window — would
+ * otherwise land inside and render as a clipped stub instead of a gauge. */
 .pf-chat-context-track {
   position: absolute;
-  left: var(--pf-radius-md);
-  right: var(--pf-radius-md);
+  left: var(--pf-space-md);
+  right: var(--pf-space-md);
   bottom: 0;
   height: var(--pf-bracket-width);
   background: var(--pf-hairline);
@@ -1282,6 +1282,9 @@
 .pf-chat-context--warn .pf-chat-context-frac {
   color: color-mix(in srgb, var(--pf-warning) 70%, var(--pf-text-low));
   cursor: help;
+  /* The only readout that is a hover target — it carries the explanatory
+   * tooltip for the inconsistent reading. */
+  pointer-events: auto;
 }
 .pf-chat-context--warn .pf-chat-context-fill {
   background: var(--pf-warning);
@@ -1605,6 +1608,9 @@
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-2);
   overflow: hidden;
+  /* The whole frame takes a click into the editor (see .pf-chat-field's
+   * onMouseDown), so the whole frame reads as typable. */
+  cursor: text;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-chat-field:focus-within {
@@ -1627,8 +1633,10 @@
 
 /* Contenteditable editor: same box metrics as the textarea it replaced, one row
  * tall by default and capped at the old 200px autosize ceiling. The frame's own
- * hairlines are excluded here — .pf-chat-field adds them, so the outer box still
- * matches .pf-chat-send's min-height formula and the two stay row-aligned. */
+ * hairlines are excluded here — .pf-chat-field adds them, so an empty composer
+ * with no meter is still exactly .pf-chat-send's min-height. With the meter's
+ * gutter the frame is taller, and the row's flex-end keeps the button flush with
+ * the frame's bottom edge. */
 .pf-chat-editor {
   box-sizing: border-box;
   min-height: calc(1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm));

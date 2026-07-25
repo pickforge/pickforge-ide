@@ -30,70 +30,99 @@ interface LayoutRow {
   segments: Segment[];
 }
 
+/** Mutable lane-assignment state threaded through `layout`'s per-commit
+ *  helpers: `lanes[i]` is the hash expected next at lane `i`. */
+interface LaneState {
+  lanes: (string | null)[];
+  laneColor: number[];
+  nextColor: number;
+}
+
+function freeLaneSlot(state: LaneState): number {
+  const i = state.lanes.indexOf(null);
+  if (i !== -1) return i;
+  state.lanes.push(null);
+  state.laneColor.push(0);
+  return state.lanes.length - 1;
+}
+
+/** Reuses the lane this commit's children were already waiting on, or claims
+ *  a fresh one. */
+function claimCommitLane(state: LaneState, hash: string): { lane: number; color: number } {
+  let lane = state.lanes.indexOf(hash);
+  if (lane === -1) {
+    lane = freeLaneSlot(state);
+    state.laneColor[lane] = state.nextColor++ % LANE_COLORS.length;
+  }
+  state.lanes[lane] = hash; // claim for the snapshot
+  return { lane, color: state.laneColor[lane] };
+}
+
+// Child lanes that were waiting for this commit merge into it.
+function releaseMergedLanes(state: LaneState, hash: string, myLane: number): void {
+  for (let i = 0; i < state.lanes.length; i++) {
+    if (state.lanes[i] === hash && i !== myLane) state.lanes[i] = null;
+  }
+}
+
+// First parent continues in this lane; extra parents branch into new lanes.
+function advanceLanesForParents(state: LaneState, parents: string[], myLane: number): void {
+  if (parents.length === 0) {
+    state.lanes[myLane] = null;
+    return;
+  }
+  state.lanes[myLane] = parents[0];
+  for (let pi = 1; pi < parents.length; pi++) {
+    const par = parents[pi];
+    if (state.lanes.indexOf(par) === -1) {
+      const slot = freeLaneSlot(state);
+      state.lanes[slot] = par;
+      state.laneColor[slot] = state.nextColor++ % LANE_COLORS.length;
+    }
+  }
+}
+
+function buildRowSegments(
+  topLanes: (string | null)[],
+  botLanes: (string | null)[],
+  laneColor: number[],
+  c: GraphCommit,
+  myLane: number,
+  color: number,
+): Segment[] {
+  const segments: Segment[] = [];
+  for (let i = 0; i < topLanes.length; i++) {
+    const h = topLanes[i];
+    if (!h) continue;
+    if (h === c.hash) {
+      if (c.parents.length > 0) segments.push({ x1: i, x2: myLane, color });
+    } else {
+      const bi = botLanes.indexOf(h);
+      if (bi !== -1) segments.push({ x1: i, x2: bi, color: laneColor[bi] ?? 0 });
+    }
+  }
+  for (let pi = 1; pi < c.parents.length; pi++) {
+    const bi = botLanes.indexOf(c.parents[pi]);
+    if (bi !== -1) segments.push({ x1: myLane, x2: bi, color: laneColor[bi] ?? color });
+  }
+  return segments;
+}
+
 /** Assign each commit a lane and the connectors between adjacent rows. Lane
  *  indices are stable (slots are reused, never compacted) so pass-through lanes
  *  draw as straight vertical lines. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function layout(commits: GraphCommit[]): { rows: LayoutRow[]; lanes: number } {
-  const lanes: (string | null)[] = []; // lanes[i] = hash expected next at lane i
-  const laneColor: number[] = [];
-  let nextColor = 0;
+  const state: LaneState = { lanes: [], laneColor: [], nextColor: 0 };
   let maxLanes = 1;
   const rows: LayoutRow[] = [];
 
-  const freeSlot = () => {
-    const i = lanes.indexOf(null);
-    if (i !== -1) return i;
-    lanes.push(null);
-    laneColor.push(0);
-    return lanes.length - 1;
-  };
-
   for (const c of commits) {
-    let myLane = lanes.indexOf(c.hash);
-    if (myLane === -1) {
-      myLane = freeSlot();
-      laneColor[myLane] = nextColor++ % LANE_COLORS.length;
-    }
-    lanes[myLane] = c.hash; // claim for the snapshot
-    const color = laneColor[myLane];
-    const topLanes = lanes.slice();
-
-    // Child lanes that were waiting for this commit merge into it.
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] === c.hash && i !== myLane) lanes[i] = null;
-    }
-    // First parent continues in this lane; extra parents branch into new lanes.
-    if (c.parents.length === 0) {
-      lanes[myLane] = null;
-    } else {
-      lanes[myLane] = c.parents[0];
-      for (let pi = 1; pi < c.parents.length; pi++) {
-        const par = c.parents[pi];
-        if (lanes.indexOf(par) === -1) {
-          const slot = freeSlot();
-          lanes[slot] = par;
-          laneColor[slot] = nextColor++ % LANE_COLORS.length;
-        }
-      }
-    }
-    const botLanes = lanes.slice();
-
-    const segments: Segment[] = [];
-    for (let i = 0; i < topLanes.length; i++) {
-      const h = topLanes[i];
-      if (!h) continue;
-      if (h === c.hash) {
-        if (c.parents.length > 0) segments.push({ x1: i, x2: myLane, color });
-      } else {
-        const bi = botLanes.indexOf(h);
-        if (bi !== -1) segments.push({ x1: i, x2: bi, color: laneColor[bi] ?? 0 });
-      }
-    }
-    for (let pi = 1; pi < c.parents.length; pi++) {
-      const bi = botLanes.indexOf(c.parents[pi]);
-      if (bi !== -1) segments.push({ x1: myLane, x2: bi, color: laneColor[bi] ?? color });
-    }
+    const { lane: myLane, color } = claimCommitLane(state, c.hash);
+    const topLanes = state.lanes.slice();
+    releaseMergedLanes(state, c.hash, myLane);
+    advanceLanesForParents(state, c.parents, myLane);
+    const botLanes = state.lanes.slice();
+    const segments = buildRowSegments(topLanes, botLanes, state.laneColor, c, myLane, color);
 
     maxLanes = Math.max(maxLanes, topLanes.length, botLanes.length);
     rows.push({ commit: c, nodeLane: myLane, color, segments });

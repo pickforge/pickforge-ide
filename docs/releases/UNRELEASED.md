@@ -27,6 +27,11 @@ reset this file.
 - Fixed macOS window rubber-banding and popover menus selecting a neighboring row near the bottom of the window.
 - Fixed bypass-permissions mode breaking agent SDK sessions and leaving later sends stuck as working.
 - The Source Control pane now has a single refresh button that refreshes both the repo status and the Changes review listing (the duplicate header button is gone).
+- The chat composer's context-window and session-cost readout moved into the
+  message box itself — tokens at its bottom-left, cost at its bottom-right, and
+  the box's bottom edge doubling as the usage bar. It no longer floats loose
+  beside the agent/model pickers or stack into three lines in a narrow pane, and
+  the wider bar makes a small fraction of a large context window visible.
 
 ## Internal/release changes (dark: no default-on behavior change)
 

@@ -1400,6 +1400,11 @@ body.pf-resizing .pf-dock-panel {
   transition: background var(--pf-dur-fast) var(--pf-ease-forge),
     color var(--pf-dur-fast) var(--pf-ease-forge);
 }
+.pf-menu-item--chat-kind {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
 .pf-menu-item:hover {
   background: var(--pf-surface-2);
   color: var(--pf-text-hi);

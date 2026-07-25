@@ -15,7 +15,7 @@ import type { PaneSpawnOptions, TerminalHostHandle } from "../components/Termina
 import { type PaneSpawnMode, remotePathFor } from "../lib/remoteContext";
 import { armChatAutoName } from "../lib/chatAutoName";
 import { openPathSystem } from "../lib/opener";
-import { editorCommand } from "./fileOpenSettings";
+import { editorCommand, type EditorLocation } from "./fileOpenSettings";
 import { noteFileOpened } from "./forgeContext";
 
 const hosts = new Map<string, TerminalHostHandle>();
@@ -85,11 +85,14 @@ export function launchAgentInSplit(
 /** Open a file for editing: resolves the chat's local/remote routing, types
  *  the configured editor command into a fresh split pane (never the primary),
  *  and falls back to the OS opener when no host is mounted or the file-open
- *  setting is "system". Non-agent — never attributed. */
+ *  setting is "system". Non-agent — never attributed. `location` (#234's
+ *  citation-open path) is best-effort: `editorCommand` ignores it for system
+ *  mode and for a custom template with no location placeholders. */
 export function openFileInChat(
   chatId: string | null | undefined,
   path: string,
   projectRoot: string | null | undefined,
+  location?: EditorLocation,
 ): void {
   // Path only, never contents — feeds the "last opened file" field the
   // forge-context writer reports when the (default-off) `pikitContext` flag
@@ -103,7 +106,7 @@ export function openFileInChat(
   }
   const remote = host.primaryRemotePty();
   const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
-  const cmd = editorCommand(remotePath ?? path);
+  const cmd = editorCommand(remotePath ?? path, location);
   if (cmd === null) {
     void openPathSystem(path).catch((e) => console.error("[pickforge] open_path failed", e));
     return;

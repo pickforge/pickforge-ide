@@ -8,12 +8,23 @@
 // a needs-you or working row — this seeds that state directly.
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "../stores/chatActivity";
 import { ensureAgentChat } from "../stores/agentChat";
+import { setSelectedLanes } from "../stores/orchestra";
+import { setOrchestraOpen } from "../stores/orchestraStage";
+import { selectChat } from "../stores/workspace";
 import {
   FLAT_CHAT_LIST_NEEDS_YOU_ID,
   FLAT_CHAT_LIST_NEEDS_YOU_ID_2,
   FLAT_CHAT_LIST_WORKING_ID,
   FLAT_CHAT_LIST_WORKING_ID_2,
 } from "./tauriMock";
+
+const NEEDS_YOU_PROJECT_ROOT = "/home/dev/widgets";
+// A stable, always-present widgets chat (SAMPLE_CHATS, not gated by any
+// fixture flag) to activate instead of the needs-you chat itself — keeps
+// `workspace.activeRoot` on widgets (so isChatStaged looks up the right
+// project) without making the needs-you chat the ACTIVE one, which would
+// collapse the staged-only scenario into the already-covered active one.
+const WIDGETS_QUIET_CHAT_ID = "chat-3";
 
 const FIXTURE_KEY = "pickforge.vrt.flatChatListFixture";
 const HEAVY_FIXTURE_KEY = "pickforge.vrt.flatChatListHeavyFixture";
@@ -44,6 +55,22 @@ export function installFlatChatListFixture() {
   // timer transition at install time. No-op (and unreachable) outside VRT.
   (window as unknown as { __PICKFORGE_VRT_FINISH_WORKING_TURN__?: () => void }).__PICKFORGE_VRT_FINISH_WORKING_TURN__ =
     () => agentTurnCleared(FLAT_CHAT_LIST_WORKING_ID);
+  // #306 PR2 P2 fix VRT hook: stages the needs-you chat as an orchestra lane
+  // on demand, so the bracket-rule spec can assert the L-corners survive a
+  // staged sub-state too (see FlatWorkCard's showBracket — state-only now,
+  // no active/staged exception). No-op (and unreachable) outside VRT.
+  (window as unknown as { __PICKFORGE_VRT_STAGE_NEEDS_YOU__?: () => void }).__PICKFORGE_VRT_STAGE_NEEDS_YOU__ =
+    () => {
+      // isChatStaged reads selectedLanes(workspace.activeRoot) — the needs-you
+      // chat's own project must actually be the active one for staging it to
+      // register. selectChat (not selectProject) sets activeRoot/activeChatId
+      // synchronously with no DB round-trip, and activating a DIFFERENT
+      // widgets chat first (rather than the needs-you chat itself) keeps this
+      // a genuinely staged-but-not-active scenario.
+      selectChat(WIDGETS_QUIET_CHAT_ID);
+      setOrchestraOpen(true);
+      setSelectedLanes(NEEDS_YOU_PROJECT_ROOT, [FLAT_CHAT_LIST_NEEDS_YOU_ID]);
+    };
 
   if (!enabled(HEAVY_FIXTURE_KEY)) return;
   agentTurnStarted(FLAT_CHAT_LIST_NEEDS_YOU_ID_2);

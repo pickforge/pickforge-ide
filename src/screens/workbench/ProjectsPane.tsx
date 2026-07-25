@@ -1399,9 +1399,11 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
   const root = props.chat.projectRoot;
   const project = () => workspace.projects.find((p) => p.projectRoot === root);
   const staged = () => isChatStaged(id);
-  // Matches FlatChatRow/ChatRow's existing precedent: no special attention
-  // treatment on a needs-you chat you're already looking at (active/staged).
-  const showBracket = () => props.state === "needsYou" && workspace.activeChatId !== id && !staged();
+  // LOCKED bracket rule: the four L-corners frame EVERY needs-you card, full
+  // stop — active/staged/focus never suppress it (P2 fix, review of #306
+  // PR2: this must not mirror FlatChatRow's active-chat attention
+  // suppression, which is a different, unrelated convention).
+  const showBracket = () => props.state === "needsYou";
   const lanes = () => cardLanes(cardSwarmRun(id, root, swarmRuns));
   const cost = () => cardCost(id, agentChat);
   const brief = () => cardBrief(props.chat);

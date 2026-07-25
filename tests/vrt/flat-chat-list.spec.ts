@@ -164,6 +164,68 @@ test("flatChatList: bracket L-corners appear only on the needs-you card", async 
   await expect(page.locator(".pf-flat-list .pf-pill")).toHaveCount(0);
 });
 
+// #306 PR2 review (P2): showBracket previously also depended on
+// active/staged, so a needs-you chat you'd just opened (or staged onto the
+// orchestra board) silently lost its L-corners — a needs-you card must
+// ALWAYS get the bracket, focus/stage never suppress it. Blurring the
+// window first keeps the fixture's chat genuinely needsYou (attention only
+// clears via markChatSeen while the window is focused — see
+// chatActivity.ts), so "active" here is a real reachable state, not a
+// contradiction.
+test("flatChatList: bracket L-corners survive on an ACTIVE needs-you card (P2 fix)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.locator(".pf-work-card--needsyou").click();
+
+  const activeNeedsYou = page.locator(".pf-work-card.active.pf-work-card--needsyou");
+  await expect(activeNeedsYou).toHaveCount(1);
+  await expect(activeNeedsYou.locator(".pf-work-card-corner")).toHaveCount(4);
+  await expect(activeNeedsYou.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
+  await expect(activeNeedsYou.locator(".pf-work-card-status")).toHaveText("needs you");
+});
+
+test("flatChatList: bracket L-corners survive on a STAGED needs-you card (P2 fix)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.evaluate(() => {
+    (window as unknown as { __PICKFORGE_VRT_STAGE_NEEDS_YOU__: () => void })
+      .__PICKFORGE_VRT_STAGE_NEEDS_YOU__();
+  });
+
+  const stagedNeedsYou = page.locator(".pf-work-card.active.pf-work-card--needsyou");
+  await expect(stagedNeedsYou).toHaveCount(1);
+  await expect(stagedNeedsYou.locator(".pf-work-card-corner")).toHaveCount(4);
+  await expect(stagedNeedsYou.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
+});
+
+test("flatChatList: a working card shows no bracket markup even when active", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  await page.locator(".pf-work-card--working").click();
+
+  const activeWorking = page.locator(".pf-work-card.active.pf-work-card--working");
+  await expect(activeWorking).toHaveCount(1);
+  await expect(activeWorking.locator(".pf-work-card-corner")).toHaveCount(0);
+  await expect(activeWorking.locator(".pf-work-card-status--needsyou")).toHaveCount(0);
+});
+
 // #306 PR2 — footer principle: every footer item is conditional on real
 // data. The working chat has real swarm lanes + cost (fixture-seeded);
 // the needs-you chat has neither, and branch/plan stay absent everywhere

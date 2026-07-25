@@ -2,6 +2,7 @@
 // `list_pi_kit_runs` / `abandon_pi_kit_lane` Tauri commands, which read only
 // pi-kit's redacted `<run>.status.json` files — never the raw journals.
 import { createSignal } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import { errorText } from "../lib/errors";
 import { abandonPiKitLane, listPiKitRuns, type PiKitRunEntry } from "../lib/process";
 
@@ -11,11 +12,27 @@ import { abandonPiKitLane, listPiKitRuns, type PiKitRunEntry } from "../lib/proc
 // tradeoff against constant background disk reads.
 const POLL_MS = 4000;
 
-const [runs, setRuns] = createSignal<PiKitRunEntry[]>([]);
+// A store rather than a signal so a poll can DIFF the run list instead of
+// replacing it (#363). Every poll deserializes fresh `PiKitRunEntry` objects,
+// so a plain signal handed `<For>` an array in which no entry was ever
+// reference-equal to the last one — `For` reconciles by identity, so it
+// disposed and recreated every row on a 4s cadence, resetting each card's
+// local expansion state and re-mounting lane rows that had only changed a
+// number. `reconcile` keyed by the run id keeps unchanged entries at their
+// existing reference and mutates changed ones in place, so rows survive the
+// poll and lane values update without a remount.
+//
+// The key applies to the WHOLE tree, and lanes carry no `run` property, so
+// nested lane items match by position rather than by lane id. Harmless today —
+// the final state always equals the payload, and pi-kit emits lanes in stable
+// order — but if lanes ever reorder mid-run, a row keeps its identity while its
+// contents become a different lane's. Anything that later attaches per-lane
+// local state (expansion, focus, animation) must key it explicitly.
+const [state, setState] = createStore<{ runs: PiKitRunEntry[] }>({ runs: [] });
 const [loading, setLoading] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
 
-export const pikitRuns = runs;
+export const pikitRuns = (): PiKitRunEntry[] => state.runs;
 export const pikitRunsLoading = loading;
 export const pikitRunsError = error;
 
@@ -23,7 +40,7 @@ export async function loadPiKitRuns(): Promise<void> {
   setLoading(true);
   try {
     const next = await listPiKitRuns();
-    setRuns(next);
+    setState("runs", reconcile(next, { key: "run" }));
     setError(null);
   } catch (err) {
     setError(errorText(err));

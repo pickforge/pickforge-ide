@@ -42,8 +42,13 @@ function openLane(chatId: string | null) {
   selectChat(chatId);
 }
 
-function SwarmRow(props: { run: SwarmRunSnapshot }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+function SwarmRow(props: {
+  run: SwarmRunSnapshot;
+  open: boolean;
+  onToggle: () => void;
+}): JSX.Element {
+  const open = () => props.open;
+  const setOpen = () => props.onToggle();
   const run = () => props.run;
   const modelLabel = () => run().model || "selected models";
   const synth = () => synthesisLabel(run());
@@ -54,7 +59,7 @@ function SwarmRow(props: { run: SwarmRunSnapshot }): JSX.Element {
         type="button"
         class="pf-chat-swarm-summary"
         aria-expanded={open()}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen()}
       >
         <span class="pf-chat-swarm-summary-chevron" aria-hidden="true">
           <Show when={open()} fallback={<IconChevronRight size={12} />}>
@@ -128,5 +133,26 @@ function SwarmRow(props: { run: SwarmRunSnapshot }): JSX.Element {
 
 export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
   const runs = () => props.runs.slice(0, 3);
-  return <For each={runs()}>{(run) => <SwarmRow run={run} />}</For>;
+  // Expansion is held here, keyed by run id, not inside `SwarmRow` (#363).
+  // `rememberRun` rebuilds the changed run as a new object on every lane
+  // update, so `For` disposes and recreates that run's row — a local signal
+  // reset the card to collapsed each time, which during an active swarm is
+  // continuous. Keying by `runId` means the toggle outlives the object.
+  const openRuns = new Map<string, boolean>();
+  const [openVersion, setOpenVersion] = createSignal(0);
+  const isOpen = (runId: string) => {
+    openVersion();
+    return openRuns.get(runId) ?? false;
+  };
+  const toggle = (runId: string) => {
+    openRuns.set(runId, !(openRuns.get(runId) ?? false));
+    setOpenVersion((version) => version + 1);
+  };
+  return (
+    <For each={runs()}>
+      {(run) => (
+        <SwarmRow run={run} open={isOpen(run.runId)} onToggle={() => toggle(run.runId)} />
+      )}
+    </For>
+  );
 }

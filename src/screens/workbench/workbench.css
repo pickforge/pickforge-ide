@@ -433,7 +433,10 @@ body.pf-resizing .pf-dock-panel {
 }
 .pf-sc-row {
   display: grid;
-  grid-template-columns: 16px auto 1fr;
+  /* #333: a 4th column for the right-aligned +adds/−dels stat, sized to its
+     own mono/tabular-nums content rather than sharing the flexible dir
+     column — a wide stat (e.g. "+128 −64") must never push the filename. */
+  grid-template-columns: 16px auto 1fr auto;
   align-items: baseline;
   gap: var(--pf-space-sm);
   padding: 3px var(--pf-space-sm);
@@ -443,6 +446,13 @@ body.pf-resizing .pf-dock-panel {
   color: var(--pf-text-med);
 }
 .pf-sc-row:hover {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+.pf-sc-row:focus-visible {
+  /* Outline itself comes from the app-wide `:focus-visible` rule
+     (`styles/global.css`) — this only adds the same hover background so a
+     keyboard-navigated row reads as clearly "current" as a hovered one. */
   background: var(--pf-item-fill);
   color: var(--pf-text-hi);
 }
@@ -468,6 +478,15 @@ body.pf-resizing .pf-dock-panel {
   color: var(--pf-text-low);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* #333: per-file +adds/−dels — reuses `.pf-crs-stat`'s mono/tabular-nums/
+   green-red styling (`ChangesReviewSurface`'s `FileStatsInline`) so the two
+   changed-file lists never drift into two different number treatments. */
+.pf-sc-stats {
+  display: inline-flex;
+  gap: var(--pf-space-xs);
+  flex: none;
   white-space: nowrap;
 }
 

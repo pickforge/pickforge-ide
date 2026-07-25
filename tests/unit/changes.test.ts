@@ -304,6 +304,51 @@ describe("changes store — refresh triggers", () => {
   });
 });
 
+// #333 review P2: `notifyProjectTurnCompleted`/`onProjectTurnCompleted` is a
+// plain EVENT (subscriber callbacks), not a signal/epoch a late subscriber
+// could replay — the legacy Source Control pane's auto-refresh trigger.
+describe("changes store — project-turn-completed event (#333)", () => {
+  it("delivers to a listener already subscribed when the event fires", async () => {
+    const store = await loadStore();
+    const seen: string[] = [];
+    const unsubscribe = store.onProjectTurnCompleted((root) => seen.push(root));
+
+    store.notifyProjectTurnCompleted("/repo");
+    expect(seen).toEqual(["/repo"]);
+
+    unsubscribe();
+    store.notifyProjectTurnCompleted("/repo");
+    expect(seen).toEqual(["/repo"]); // unsubscribed — no further delivery
+  });
+
+  it("never replays an event that already fired to a listener subscribing afterward", async () => {
+    const store = await loadStore();
+    store.notifyProjectTurnCompleted("/repo"); // fires before anyone is listening
+
+    const seen: string[] = [];
+    store.onProjectTurnCompleted((root) => seen.push(root));
+    // Subscribing after the fact must not immediately replay the prior event
+    // — an epoch/signal-based design would, incorrectly re-triggering a scan
+    // for a component that only just mounted.
+    expect(seen).toEqual([]);
+
+    store.notifyProjectTurnCompleted("/repo");
+    expect(seen).toEqual(["/repo"]); // only events from here on are delivered
+  });
+
+  it("delivers to multiple independent listeners", async () => {
+    const store = await loadStore();
+    const a: string[] = [];
+    const b: string[] = [];
+    store.onProjectTurnCompleted((root) => a.push(root));
+    store.onProjectTurnCompleted((root) => b.push(root));
+
+    store.notifyProjectTurnCompleted("/repo");
+    expect(a).toEqual(["/repo"]);
+    expect(b).toEqual(["/repo"]);
+  });
+});
+
 // A per-slice request generation guards every commit site (this-turn
 // listing, working-tree listing, and the lazy per-file diff cache's eviction
 // closure) against an older, slower request finishing after a newer one has

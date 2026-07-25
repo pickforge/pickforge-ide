@@ -36,7 +36,7 @@ import { loadAgentEngine } from "../lib/chatDefaults";
 import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
-import { notifyChangesReviewTurnCompleted } from "./changes";
+import { notifyChangesReviewTurnCompleted, notifyProjectTurnCompleted } from "./changes";
 import { flagEnabled, subscribeToFlagChanges } from "./flags";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
@@ -1038,6 +1038,27 @@ function trackPendingProviderTitle(
   }
 }
 
+/** A turn just closed for `chatId` — notify both Git-refresh targets a
+ *  completed turn can be relevant to. Split out of `trackTurnLifecycle`
+ *  itself purely to keep that function's branch count under the repo's
+ *  complexity gate; each notify below is its own independent, already
+ *  no-op-safe check (see each call's own doc comment). */
+function notifyGitRefreshTargetsOfTurnCompletion(chatId: string): void {
+  // #231 PR3: a live turn just closed — if this chat's changes-review store
+  // target is already pointed at it, refresh it. Live-only (not called from
+  // `stateFromHistory`'s replay), same as the activity-glow calls in
+  // `trackTurnLifecycle`. Gated: with `changesReview` off nothing ever sets
+  // a review target, so this would be a guaranteed no-op — skip it rather
+  // than call it anyway.
+  if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
+  // #333: the legacy Source Control pane's auto-refresh trigger — NOT
+  // flag-gated, unlike the line above, since it's the default UI with
+  // `changesReview` off. Scans by project root, not chat, so this passes
+  // the chat's project root rather than its id.
+  const turnProjectRoot = findChat(chatId)?.projectRoot;
+  if (turnProjectRoot) notifyProjectTurnCompleted(turnProjectRoot);
+}
+
 function trackTurnLifecycle(
   chatId: string,
   event: AgentEvent,
@@ -1056,12 +1077,7 @@ function trackTurnLifecycle(
   // terminal event above already closed the receipt group and set
   // `turnActive: false`, so it's now safe to run the deferred re-fold.
   if (pendingChangesReceiptReflow.delete(chatId)) void reflowChangesReceiptFold(chatId);
-  // #231 PR3: a live turn just closed — if this chat's changes-review store
-  // target is already pointed at it, refresh it. Live-only (not called from
-  // `stateFromHistory`'s replay), same as the activity-glow calls below.
-  // Gated: with `changesReview` off nothing ever sets a review target, so
-  // this would be a guaranteed no-op — skip it rather than call it anyway.
-  if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
+  notifyGitRefreshTargetsOfTurnCompletion(chatId);
   const titleEligible = event.kind === "turnDone" && event.status === "completed";
   if (titleEligible) {
     if (activeTitleTurn && !activeTitleTurn.hidden) {

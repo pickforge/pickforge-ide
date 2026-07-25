@@ -303,3 +303,39 @@ export function stopChangesReviewFocusRefresh(): void {
   window.removeEventListener("focus", onWindowFocus);
   focusListening = false;
 }
+
+// ---- #333: project-turn-completed EVENT, for the legacy Source Control
+// pane's auto-refresh. Folded in here (rather than kept as its own
+// one-producer/one-consumer module — #333 review's KISS finding) since it's
+// the same shape of "a turn completed, should something refresh" concern as
+// the rest of this file, just at project-root granularity instead of a
+// per-chat target: the legacy panel (`SourceControl.tsx`'s
+// `createRepoScanner`) scans by PROJECT ROOT, not by chat, so there's no
+// per-chat target here to match against the way `notifyChangesReviewTurnCompleted`
+// above does. NOT gated by the `changesReview` flag — the legacy panel is the
+// default UI with the flag off.
+//
+// Deliberately a plain subscriber-callback EVENT, not a signal/epoch a late
+// subscriber could "replay". An epoch counter is STATE: any effect that reads
+// it fires immediately on subscribe with whatever value already exists,
+// which — for a component that mounts AFTER a turn already completed for a
+// DIFFERENT, previously-active project — would incorrectly re-run an extra
+// scan the newly-mounted component never actually needed (#333 review P2).
+// Subscribing here only ever sees events fired from that point forward,
+// matching "turn completed" as the one-shot occurrence it actually is. ----
+type ProjectTurnListener = (projectRoot: string) => void;
+const projectTurnListeners = new Set<ProjectTurnListener>();
+
+/** Call when a chat turn completes, with the PROJECT ROOT that chat belongs
+ *  to (not the chat id — this event has no per-chat target to match). */
+export function notifyProjectTurnCompleted(projectRoot: string): void {
+  for (const listener of projectTurnListeners) listener(projectRoot);
+}
+
+/** Subscribe to `notifyProjectTurnCompleted` events fired from now on (an
+ *  event already fired before this call is never replayed). Returns an
+ *  unsubscribe function — call it from the subscriber's cleanup. */
+export function onProjectTurnCompleted(listener: ProjectTurnListener): () => void {
+  projectTurnListeners.add(listener);
+  return () => projectTurnListeners.delete(listener);
+}

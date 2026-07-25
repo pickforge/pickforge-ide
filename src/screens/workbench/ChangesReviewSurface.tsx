@@ -45,14 +45,20 @@ import { setDiffViewMode, workbenchPrefs } from "../../stores/workbenchPrefs";
 import { workspace } from "../../stores/workspace";
 import { openFileInChat } from "../../stores/terminalHosts";
 
-const STATUS_LETTER: Record<ChangeFileStatus, string> = {
+// `STATUS_LETTER`/`STATUS_TONE`/`FileStatsInline`/`fileKey` are exported for
+// reuse by the legacy Source Control pane's changed-file list (`#333`,
+// `SourceControl.tsx`'s `ChangesList`) — that list now renders the same
+// `ChangedFile` rows this surface does (status letter + per-file +adds/−dels
+// from the shared `changes`/numstat backend), so its row styling stays a
+// single source of truth rather than a second, drifting copy.
+export const STATUS_LETTER: Record<ChangeFileStatus, string> = {
   add: "A",
   modify: "M",
   delete: "D",
   rename: "R",
   conflict: "C",
 };
-const STATUS_TONE: Record<ChangeFileStatus, string> = {
+export const STATUS_TONE: Record<ChangeFileStatus, string> = {
   add: "pf-crs-a",
   modify: "pf-crs-m",
   delete: "pf-crs-d",
@@ -128,11 +134,11 @@ function hardStateMessage(file: ChangedFile): string | null {
  *  where the same path can appear twice (a staged row and an unstaged row).
  *  The NUL delimiter can't appear in either component (matches
  *  `stores/changes.ts`'s own diff-cache key, #311). */
-function fileKey(f: ChangedFile): string {
+export function fileKey(f: ChangedFile): string {
   return `${f.staged ? "staged" : "unstaged"}\u0000${f.path}`;
 }
 
-function FileStatsInline(props: { file: ChangedFile }) {
+export function FileStatsInline(props: { file: ChangedFile }) {
   return (
     <Show
       when={props.file.additions !== null || props.file.deletions !== null}

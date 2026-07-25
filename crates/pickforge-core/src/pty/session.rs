@@ -461,6 +461,9 @@ impl PtyManager {
 }
 
 #[cfg(unix)]
+/// Detects harnesses only for raw PTYs. Under dtach or tmux, the local
+/// foreground process group belongs to the attach client rather than the shell
+/// or harness; backend-aware dtach/tmux resolution is tracked separately.
 fn foreground_harness(session: &Session) -> Option<&'static str> {
     if session.remote {
         return None;
@@ -526,13 +529,10 @@ fn harness_for_arg(arg: &str) -> Option<&'static str> {
             let components = lower.split(['/', '\\']).collect::<Vec<_>>();
             if components
                 .iter()
-                .any(|part| *part == "omp" || part.contains("oh-my-pi"))
+                .any(|part| *part == "oh-my-pi" || *part == "@oh-my-pi")
             {
                 Some("omp")
-            } else if components
-                .iter()
-                .any(|part| *part == "pi" || *part == "pi-coding-agent")
-            {
+            } else if components.iter().any(|part| *part == "pi-coding-agent") {
                 Some("pi")
             } else {
                 None
@@ -1355,9 +1355,26 @@ mod tests {
         let cases: &[(&[&str], Option<&str>)] = &[
             (&["claude"], Some("claudeCode")),
             (&["/usr/local/bin/codex"], Some("codex")),
-            (&["node", "/usr/lib/pi/cli.js"], Some("pi")),
-            (&["bun", "/usr/lib/omp/cli.js"], Some("omp")),
-            (&["env", "node", "/usr/lib/pi/cli.mjs"], Some("pi")),
+            (
+                &[
+                    "bun",
+                    "/Users/me/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js",
+                ],
+                Some("omp"),
+            ),
+            (
+                &[
+                    "node",
+                    "/Users/me/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+                ],
+                Some("pi"),
+            ),
+            (&["node", "/Users/me/Projects/pi/server.js"], None),
+            (&["python3", "/Users/me/src/omp/train.py"], None),
+            (
+                &["node", "/Users/me/notes/oh-my-pi-guide/build.mjs"],
+                None,
+            ),
             (&["zsh"], None),
             (&["unknown-binary"], None),
             (&[], None),

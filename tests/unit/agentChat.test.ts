@@ -41,6 +41,7 @@ const changesReview = vi.hoisted(() => ({
 const flags = vi.hoisted(() => ({
   remoteProjects: false,
   ompAgents: false,
+  changesReview: false,
 }));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
@@ -109,7 +110,8 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "ompAgents" && flags.ompAgents),
+    (key === "ompAgents" && flags.ompAgents) ||
+    (key === "changesReview" && flags.changesReview),
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 
@@ -267,6 +269,7 @@ beforeEach(() => {
   workspace.projects = [];
   flags.remoteProjects = false;
   flags.ompAgents = false;
+  flags.changesReview = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -661,99 +664,140 @@ describe("agentChat store reducer", () => {
     expect(timeline(failedChat.chatId)).toEqual([]);
   });
 
-  it("folds repeated fileChange events within one turn into a single closed receipt item (#231 PR3)", async () => {
-    const { chatId, emit } = await startChat();
+  describe("changesReview flag off (default) — legacy per-event behavior (#231 PR3)", () => {
+    it("keeps pushing one raw item per fileChange event, exactly as before PR3", async () => {
+      const { chatId, emit } = await startChat();
 
-    emit({
-      kind: "fileChange",
-      itemId: "files-1",
-      changes: [{ path: "a.rs", kind: "add", diff: null }],
-    });
-    emit({
-      kind: "fileChange",
-      itemId: "files-2",
-      changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }],
-    });
-    emit({ kind: "turnDone", status: "completed" });
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
 
-    const items = timeline(chatId).filter((item) => item.type === "fileChange");
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
-      itemId: "files-1",
-      ordinal: 0,
-      turnComplete: true,
-      changes: [
-        { path: "a.rs", kind: "add", diff: null },
-        { path: "b.rs", kind: "modify", diff: "+x\n" },
-      ],
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(2);
+      expect(items.map((item) => item.itemId)).toEqual(["files-1", "files-2"]);
+      expect(items.every((item) => item.turnComplete === false)).toBe(true);
+    });
+
+    it("does not notify the changes-review store when a turn closes", async () => {
+      const { chatId, emit } = await startChat();
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      expect(changesReview.notifyChangesReviewTurnCompleted).not.toHaveBeenCalled();
     });
   });
 
-  it("keeps the change-receipt item open while its turn is still running", async () => {
-    const { chatId, emit } = await startChat();
-
-    emit({
-      kind: "fileChange",
-      itemId: "files-1",
-      changes: [{ path: "a.rs", kind: "add", diff: null }],
+  describe("changesReview flag on — per-turn receipt grouping (#231 PR3)", () => {
+    beforeEach(() => {
+      flags.changesReview = true;
     });
 
-    const item = timeline(chatId).find((i) => i.type === "fileChange");
-    expect(item).toMatchObject({ ordinal: 0, turnComplete: false });
-  });
+    it("folds repeated fileChange events within one turn into a single closed receipt item", async () => {
+      const { chatId, emit } = await startChat();
 
-  it("closes the open change receipt on turnFailed the same as turnDone", async () => {
-    const { chatId, emit } = await startChat();
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "modify", diff: "+x\n" }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
 
-    emit({
-      kind: "fileChange",
-      itemId: "files-1",
-      changes: [{ path: "a.rs", kind: "add", diff: null }],
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        itemId: "files-1",
+        ordinal: 0,
+        turnComplete: true,
+        changes: [
+          { path: "a.rs", kind: "add", diff: null },
+          { path: "b.rs", kind: "modify", diff: "+x\n" },
+        ],
+      });
     });
-    emit({ kind: "turnFailed", error: "boom" });
 
-    const item = timeline(chatId).find((i) => i.type === "fileChange");
-    expect(item).toMatchObject({ turnComplete: true });
-  });
+    it("keeps the change-receipt item open while its turn is still running", async () => {
+      const { chatId, emit } = await startChat();
 
-  it("only assigns a new receipt ordinal to a turn that actually changed files", async () => {
-    const { chatId, emit } = await startChat();
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
 
-    // First turn: no file changes at all — must not consume an ordinal, since
-    // `changes_list_turn_change_sets` never emits a ChangeSet for it either.
-    emit({ kind: "turnStarted" });
-    emit({ kind: "turnDone", status: "completed" });
-
-    emit({ kind: "turnStarted" });
-    emit({
-      kind: "fileChange",
-      itemId: "files-1",
-      changes: [{ path: "a.rs", kind: "add", diff: null }],
+      const item = timeline(chatId).find((i) => i.type === "fileChange");
+      expect(item).toMatchObject({ ordinal: 0, turnComplete: false });
     });
-    emit({ kind: "turnDone", status: "completed" });
 
-    emit({ kind: "turnStarted" });
-    emit({
-      kind: "fileChange",
-      itemId: "files-2",
-      changes: [{ path: "b.rs", kind: "add", diff: null }],
+    it("closes the open change receipt on turnFailed the same as turnDone", async () => {
+      const { chatId, emit } = await startChat();
+
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnFailed", error: "boom" });
+
+      const item = timeline(chatId).find((i) => i.type === "fileChange");
+      expect(item).toMatchObject({ turnComplete: true });
     });
-    emit({ kind: "turnDone", status: "completed" });
 
-    const items = timeline(chatId).filter((item) => item.type === "fileChange");
-    expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
-  });
+    it("only assigns a new receipt ordinal to a turn that actually changed files", async () => {
+      const { chatId, emit } = await startChat();
 
-  it("notifies the changes-review store when a live turn completes", async () => {
-    const { chatId, emit } = await startChat();
-    emit({ kind: "turnDone", status: "completed" });
-    expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
-  });
+      // First turn: no file changes at all — must not consume an ordinal, since
+      // `changes_list_turn_change_sets` never emits a ChangeSet for it either.
+      emit({ kind: "turnStarted" });
+      emit({ kind: "turnDone", status: "completed" });
 
-  it("notifies the changes-review store when a live turn fails", async () => {
-    const { chatId, emit } = await startChat();
-    emit({ kind: "turnFailed", error: "boom" });
-    expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
+      emit({ kind: "turnStarted" });
+      emit({
+        kind: "fileChange",
+        itemId: "files-1",
+        changes: [{ path: "a.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      emit({ kind: "turnStarted" });
+      emit({
+        kind: "fileChange",
+        itemId: "files-2",
+        changes: [{ path: "b.rs", kind: "add", diff: null }],
+      });
+      emit({ kind: "turnDone", status: "completed" });
+
+      const items = timeline(chatId).filter((item) => item.type === "fileChange");
+      expect(items.map((item) => item.ordinal)).toEqual([0, 1]);
+    });
+
+    it("notifies the changes-review store when a live turn completes", async () => {
+      const { chatId, emit } = await startChat();
+      emit({ kind: "turnDone", status: "completed" });
+      expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
+    });
+
+    it("notifies the changes-review store when a live turn fails", async () => {
+      const { chatId, emit } = await startChat();
+      emit({ kind: "turnFailed", error: "boom" });
+      expect(changesReview.notifyChangesReviewTurnCompleted).toHaveBeenCalledWith(chatId);
+    });
   });
 
   it("replaces accumulated Pi tool updates instead of appending them", async () => {
@@ -1354,6 +1398,7 @@ describe("agentChat history", () => {
   });
 
   it("seeds the next change-receipt ordinal from a turn-with-changes already in history (#231 PR3)", async () => {
+    flags.changesReview = true;
     const history = historyFromEvents([
       { kind: "turnStarted" },
       {

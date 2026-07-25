@@ -42,6 +42,7 @@ import { loadAgentEngine } from "../../lib/chatDefaults";
 import { parseSwarmCommand } from "../../lib/swarmCommand";
 import { ChatTimeline, type ChangesReceiptSource } from "./ChatTimeline";
 import { changesListTurnChangeSets, type ChangeSet } from "../../lib/changes";
+import { flagEnabled } from "../../stores/flags";
 import { SwarmRunCard } from "./SwarmRunCard";
 import { Composer } from "./Composer";
 import { ImageLightbox } from "./ImageLightbox";
@@ -234,10 +235,13 @@ export function AgentChatView(props: {
       (state()?.timeline ?? []).filter((item) => item.type === "fileChange" && item.turnComplete)
         .length,
   );
+  // Flag off (#231 `changesReview`, default off): the source stays null
+  // forever, so this resource never fetches -- no `changes_list_turn_change_sets`
+  // call happens at all, matching the "no receipt, no fetch" gating contract.
   const [changesReceiptSets] = createResource(
     () =>
-      state()?.historyLoaded
-        ? `${props.chatId} ${props.projectRoot} ${completedChangesReceiptCount()}`
+      flagEnabled("changesReview") && state()?.historyLoaded
+        ? `${props.chatId}::${props.projectRoot}::${completedChangesReceiptCount()}`
         : null,
     () => changesListTurnChangeSets(props.chatId, props.projectRoot),
   );

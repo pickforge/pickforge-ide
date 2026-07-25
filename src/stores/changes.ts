@@ -185,7 +185,12 @@ export function loadChangeDiff(path: string, staged = false): Promise<ChangeDiff
   }
   const target = workingTreeTarget();
   if (!target) return Promise.reject(new Error("no active working-tree changes-review target"));
-  const key = `${staged ? "staged" : "unstaged"} ${path}`;
+  // A NUL delimiter can't appear in either component, so it's an unambiguous
+  // join even if `path` itself started with "staged"/"unstaged". Written as
+  // the \u0000 escape (closes #311) rather than a raw embedded byte -- same
+  // runtime string, but keeps this a plain-text source file instead of one
+  // git/editors detect as binary.
+  const key = `${staged ? "staged" : "unstaged"}\u0000${path}`;
   const cached = workingTreeDiffCache.get(key);
   if (cached) return cached;
   const promise = changesWorkingTreeFileDiff(target.projectRoot, path, staged);

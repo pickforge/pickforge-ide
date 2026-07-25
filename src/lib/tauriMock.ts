@@ -642,8 +642,15 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   git_diff: () =>
     "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
   git_discover_repos: (a) => [a.projectRoot],
-  changes_list_turn_change_sets: (a) =>
-    a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [],
+  // #231 PR3's `changesReview` flag-off VRT scenario asserts this never
+  // fires — a simple call counter is the cheapest way to prove "no fetch"
+  // from Playwright without a real network/IPC layer to inspect.
+  changes_list_turn_change_sets: (a) => {
+    const globals = window as unknown as Record<string, unknown>;
+    globals.__PICKFORGE_VRT_CHANGES_LIST_CALLS__ =
+      ((globals.__PICKFORGE_VRT_CHANGES_LIST_CALLS__ as number) ?? 0) + 1;
+    return a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [];
+  },
   changes_turn_file_diff: () => CHANGES_DIFF_FIXTURE,
   changes_working_tree: (a) => CHANGES_WORKING_TREE_FIXTURE(a.projectRoot as string),
   changes_working_tree_file_diff: () => CHANGES_DIFF_FIXTURE,

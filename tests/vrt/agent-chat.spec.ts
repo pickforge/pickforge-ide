@@ -3,6 +3,8 @@ import { test, expect } from "@playwright/test";
 test("agent chat fixture", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    // #231 PR3 renders behind the default-off `changesReview` flag.
+    localStorage.setItem("pickforge.flags", JSON.stringify({ changesReview: true }));
   });
 
   await page.goto("/#/workbench");
@@ -93,6 +95,30 @@ test("agent chat fixture", async ({ page }) => {
     maxDiffPixelRatio: 0.025,
     animations: "disabled",
   });
+});
+
+// #231 PR3 is gated behind `changesReview` (default off). With the flag off,
+// the fixture's turn keeps rendering the pre-existing raw per-event
+// FileChangeCard exactly as on main, and the chat view never fetches
+// `changes_list_turn_change_sets` at all.
+test("agent chat fixture with changesReview off renders the legacy file-change card", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+  });
+
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  await expect(page.locator(".pf-chat-receipt")).toHaveCount(0);
+  const filesCard = page.locator(".pf-chat-files");
+  await expect(filesCard).toBeVisible();
+  await expect(filesCard.locator(".pf-chat-file")).toHaveCount(2);
+  await expect(filesCard.locator(".pf-chat-file-path").first()).toHaveText("src/lib/tauriMock.ts");
+
+  const fetchCount = await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__PICKFORGE_VRT_CHANGES_LIST_CALLS__ ?? 0,
+  );
+  expect(fetchCount).toBe(0);
 });
 
 // #307: contextUsed > contextWindow must not render an unclamped >100%

@@ -37,6 +37,7 @@ import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { notifyChangesReviewTurnCompleted } from "./changes";
+import { flagEnabled } from "./flags";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 import { remotePtyFor } from "../lib/remoteContext";
@@ -807,6 +808,23 @@ function reduceAgentEvent(
       ]);
     }
     case "fileChange": {
+      // Flag off (#231 `changesReview`, default off): keep pushing one raw
+      // item per event, exactly the pre-#231-PR3 behavior — no folding, no
+      // ordinal/turnComplete tracking, so `ChatTimeline` keeps rendering the
+      // legacy per-event `FileChangeCard` unchanged.
+      if (!flagEnabled("changesReview")) {
+        return withTimeline(chat, [
+          ...chat.timeline,
+          {
+            type: "fileChange",
+            seq: nextSeq(),
+            itemId: event.itemId,
+            changes: event.changes.map((change) => ({ ...change })),
+            ordinal: chat.nextChangesReceiptOrdinal,
+            turnComplete: false,
+          },
+        ]);
+      }
       // Fold every FileChange event within one open turn into a SINGLE
       // timeline item (#231 PR3) — the chat receipt is one card per completed
       // turn, not one per event. Matches `group_turn_change_sets`'s implicit
@@ -966,7 +984,9 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     // #231 PR3: a live turn just closed — if this chat's changes-review store
     // target is already pointed at it, refresh it. Live-only (not called from
     // `stateFromHistory`'s replay), same as the activity-glow calls below.
-    notifyChangesReviewTurnCompleted(chatId);
+    // Gated: with `changesReview` off nothing ever sets a review target, so
+    // this would be a guaranteed no-op — skip it rather than call it anyway.
+    if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
     const titleEligible = event.kind === "turnDone" && event.status === "completed";
     if (titleEligible) {
       if (activeTitleTurn && !activeTitleTurn.hidden) {

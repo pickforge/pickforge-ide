@@ -34,6 +34,7 @@ import { TokenBadge } from "./TokenBadge";
 import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import { reviewTurnChanges } from "../../lib/changesReceiptActions";
 import type { ChangeSet } from "../../lib/changes";
+import { flagEnabled } from "../../stores/flags";
 import "./chat.css";
 
 /** Resolves a chat receipt's turn ordinal to its backend `ChangeSet` (#231
@@ -118,8 +119,11 @@ function renderItem(
       );
     case "fileChange":
       // An in-progress turn keeps the existing raw per-event card; only a
-      // COMPLETED turn collapses to the compact receipt (#231 PR3).
-      if (!item.turnComplete) {
+      // COMPLETED turn collapses to the compact receipt (#231 PR3) — and only
+      // when the flag is on. Flag off: the reducer never sets
+      // `turnComplete`/groups events either, so this is already the legacy
+      // per-event card; the explicit flag check here is defense in depth.
+      if (!item.turnComplete || !flagEnabled("changesReview")) {
         return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
       }
       return (

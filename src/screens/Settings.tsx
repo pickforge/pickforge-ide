@@ -3,6 +3,7 @@ import {
   agentAuthFact,
   agentProfiles,
   discoverAgentCli,
+  discoverCodexModels,
   loadAgentModels,
   isCompatibleOmpAcpVersion,
   OMP_ACP_VERSION_RANGE,
@@ -687,7 +688,7 @@ function createAgentDiagnosticsState() {
 
   const enabledAgentDiagnosticIds = () =>
     AGENT_DIAGNOSTIC_IDS.filter((agentId) => agentId === "pi" || flagEnabled("ompAgents"));
-  const reloadAgentDiagnostics = async () => {
+  const reloadAgentDiagnostics = async (force = false) => {
     const ids = enabledAgentDiagnosticIds();
     if (ids.length === 0 || agentDiagnosticsLoading()) return;
     setAgentDiagnostics(() => ({}));
@@ -721,6 +722,9 @@ function createAgentDiagnosticsState() {
           authFailures[agentId] = errorText(error);
         }
       }),
+      // Session-TTL-cached; never throws, so it needs no failure slot here —
+      // a probe/parse failure just leaves the curated static table in place.
+      discoverCodexModels(force),
     ]);
     setAgentDiagnostics(() => next);
     setAgentDiagnosticErrors(() => failures);
@@ -1654,7 +1658,7 @@ const AgentModelsContent = (props: { diagnostics: AgentDiagnosticsState }) => {
         <button
           class="pf-ql-add"
           aria-disabled={diagnostics.agentDiagnosticsLoading()}
-          onClick={() => void diagnostics.reloadAgentDiagnostics()}
+          onClick={() => void diagnostics.reloadAgentDiagnostics(true)}
         >
           <IconRefresh size={13} />
           {diagnostics.agentDiagnosticsLoading() ? "Checking connectors…" : "Refresh connector status"}

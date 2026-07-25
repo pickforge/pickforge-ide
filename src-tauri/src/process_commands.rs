@@ -62,6 +62,26 @@ fn probe_spec(agent_id: &str) -> Option<ProbeSpec> {
             help_args: &["--no-extensions", "--offline", "--help"],
             models_args: Some(&["--no-extensions", "--offline", "--list-models"]),
         }),
+        // `codex debug models` renders the CLI's model catalog as JSON.
+        // `--bundled` skips codex's own network refresh and dumps only the
+        // catalog shipped with this binary, which keeps this probe read-only
+        // and offline like the other steps — at the cost of the catalog
+        // lagging a live release until the next `codex update`. Verified on
+        // codex-cli 0.144.6: `{"models":[{"slug":...,"display_name":...,
+        // "visibility":"list"|"hide",
+        // "supported_reasoning_levels":[{"effort":...}],
+        // "default_reasoning_level":...},...]}`.
+        //
+        // Claude Code has no equivalent stable model-listing command (no
+        // `claude models`, and `--model <invalid>` reports a bare error
+        // without enumerating valid ids) — it intentionally has no entry
+        // here and always falls back to PickForge's curated static table.
+        "codex" => Some(ProbeSpec {
+            binary: "codex",
+            version_args: &["--version"],
+            help_args: &["--help"],
+            models_args: Some(&["debug", "models", "--bundled"]),
+        }),
         _ => None,
     }
 }
@@ -115,8 +135,11 @@ fn run_probe_step(
     }
 }
 
-/// Probe only the two rollout-gated CLIs with fixed, read-only argv. This never
-/// accepts paths, config, tokens, or arbitrary commands from the frontend.
+/// Probe an allowlisted CLI (omp, pi, codex) with fixed, read-only argv. This
+/// never accepts paths, config, tokens, or arbitrary commands from the
+/// frontend. Model discovery here is advisory-only for every caller: a
+/// failure must never gate a capability, only fall back to a static catalog
+/// (see AGENTS.md on capability-relevant probe errors, #285).
 #[tauri::command]
 pub async fn probe_agent_cli(agent_id: String) -> Result<AgentCliProbe, String> {
     let spec = probe_spec(&agent_id).ok_or_else(|| "unsupported agent probe".to_owned())?;
@@ -457,8 +480,20 @@ mod tests {
             Some(["--no-extensions", "--offline", "--list-models"].as_slice())
         );
 
+        let codex = probe_spec("codex").expect("Codex probe");
+        assert_eq!(codex.binary, "codex");
+        assert_eq!(codex.help_args, ["--help"]);
+        assert_eq!(
+            codex.models_args,
+            Some(["debug", "models", "--bundled"].as_slice())
+        );
+
+        // Claude Code has no stable model-listing command, so it has no
+        // probe spec entry — it always falls back to the static catalog.
+        assert!(probe_spec("claudeCode").is_none());
         assert!(probe_spec("sh").is_none());
         assert!(probe_spec("../omp").is_none());
+        assert!(probe_spec("../codex").is_none());
     }
 
     #[test]

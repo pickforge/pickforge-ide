@@ -73,19 +73,272 @@ function routeMetaLabel(): string | null {
   return `routed · ${formatCostCents(meta.costCents)}${balance}`;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function OperatorDock() {
-  let inputEl!: HTMLInputElement;
-  let panelEl!: HTMLDivElement;
+/** The command input + its dictation mic toggle. A presentational child
+ *  component — everything is an accessor/callback prop, so reactivity is
+ *  preserved. */
+function OperatorComposerField(props: {
+  inputRef: (el: HTMLInputElement) => void;
+  value: () => string;
+  busy: () => boolean;
+  onInput: (v: string) => void;
+  onEnter: () => void;
+  isComposing: (e: KeyboardEvent) => boolean;
+  micEnabled: () => boolean;
+  micEmber: () => boolean;
+  micLive: () => boolean;
+  micDisabled: () => boolean;
+  micTitle: () => string;
+  micPressed: () => boolean;
+  onToggleMic: () => void;
+}) {
+  return (
+    <div class="pf-op-field">
+      <input
+        ref={props.inputRef}
+        class="pf-op-input"
+        type="text"
+        spellcheck={false}
+        autocomplete="off"
+        placeholder={PLACEHOLDER}
+        value={props.value()}
+        disabled={props.busy()}
+        onInput={(e) => props.onInput(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" || props.isComposing(e)) return;
+          e.preventDefault();
+          props.onEnter();
+        }}
+      />
+      <Show when={props.micEnabled()}>
+        <button
+          type="button"
+          class="pf-op-mic"
+          classList={{
+            "pf-op-mic--live": props.micLive() && !props.micEmber(),
+            "pf-op-mic--ember": props.micEmber(),
+          }}
+          disabled={props.micDisabled()}
+          title={props.micTitle()}
+          aria-label={props.micTitle()}
+          aria-pressed={props.micPressed()}
+          onClick={props.onToggleMic}
+        >
+          <IconMic size={15} />
+        </button>
+      </Show>
+    </div>
+  );
+}
 
-  onMount(() => {
-    inputEl.focus();
-    void refreshVoiceStatus();
-  });
-  onCleanup(() => resetVoiceDock());
+/** The live-dictation transcript note, or (once dictation stops) its last
+ *  error. A presentational child component. */
+function OperatorVoiceStatus() {
+  return (
+    <>
+      <Show when={voiceDockActive()}>
+        <div class="pf-op-note pf-op-note--voice">
+          <span class="pf-op-note-key">
+            {voiceDockPhase() === "finalizing" ? "transcribe" : "listening"}
+          </span>
+          <span class="pf-op-note-body">
+            {voiceDockPreview() || (voiceDockPhase() === "finalizing" ? "finishing…" : "speak now…")}
+          </span>
+        </div>
+      </Show>
 
-  const isComposing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
+      <Show when={!voiceDockActive() && voiceDockError()}>
+        {(message) => (
+          <div class="pf-op-note pf-op-note--voice">
+            <span class="pf-op-note-key">voice</span>
+            <span class="pf-op-note-body">{message()}</span>
+          </div>
+        )}
+      </Show>
+    </>
+  );
+}
 
+/** The widget-candidate picker (or plain payload preview) plus confirm/
+ *  cancel actions for a `preview` dock view. A presentational child
+ *  component. */
+function OperatorPreviewView(props: { view: () => Extract<DockView, { kind: "preview" }> }) {
+  const p = props.view;
+  const candidates = () => p().candidates;
+  return (
+    <div class="pf-op-preview">
+      <div class="pf-op-preview-summary">
+        {p().summary}
+        <Show when={confidenceLabel(p().confidence)}>
+          {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
+        </Show>
+      </div>
+      <Show
+        when={candidates()}
+        fallback={(() => {
+          const lines = previewPayloadLines(p().intent);
+          return (
+            <Show when={lines.length > 0}>
+              <div class="pf-op-preview-payload">
+                <For each={lines}>
+                  {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
+                </For>
+              </div>
+            </Show>
+          );
+        })()}
+      >
+        {(choices) => (
+          <div class="pf-op-candidates" aria-label="Widget candidates">
+            <For each={choices()}>
+              {(candidate, position) => (
+                <button
+                  type="button"
+                  class="pf-op-candidate"
+                  disabled={operatorBusy()}
+                  onClick={() => void pickOperatorWidgetCandidate(candidate.index)}
+                >
+                  <span class="pf-op-candidate-key">{position() + 1}</span>
+                  <span class="pf-op-candidate-label">
+                    {candidate.className}
+                    <Show when={candidate.label}> — {candidate.label}</Show>
+                  </span>
+                  <span class="pf-op-candidate-index">#{candidate.index}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
+      <Show when={routeMetaLabel()}>
+        {(label) => (
+          <div class="pf-op-meta">{label()} · charged for routing; confirm runs the action</div>
+        )}
+      </Show>
+      <div class="pf-op-actions">
+        <Show
+          when={!candidates()}
+          fallback={
+            <button
+              type="button"
+              class="pf-op-cancel"
+              disabled={operatorBusy()}
+              onClick={() => void cancelOperatorPreview()}
+            >
+              Cancel
+            </button>
+          }
+        >
+          <EmberButton
+            label="Confirm"
+            disabled={operatorBusy()}
+            onClick={() => void confirmOperatorPreview()}
+          />
+          <button
+            type="button"
+            class="pf-op-cancel"
+            disabled={operatorBusy()}
+            onClick={() => void cancelOperatorPreview()}
+          >
+            Cancel
+          </button>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+/** The dispatched-command outcome for a `result` dock view. A presentational
+ *  child component. */
+function OperatorResultView(props: { view: () => Extract<DockView, { kind: "result" }> }) {
+  const res = () => props.view().result;
+  return (
+    <>
+      <div
+        class="pf-op-result"
+        classList={{
+          "pf-op-result--ok": res().status === "done" || res().status === "noop",
+          "pf-op-result--error": res().status === "failed" || res().status === "unsupported",
+          "pf-op-result--warn": res().status === "denied",
+        }}
+      >
+        {(() => {
+          const value = res();
+          return "summary" in value ? value.summary : value.message;
+        })()}
+      </div>
+      <Show when={routeMetaLabel()}>
+        {(label) => <div class="pf-op-meta">{label()}</div>}
+      </Show>
+    </>
+  );
+}
+
+/** The "needs a router model" notice for a `needsRouter` dock view. A
+ *  presentational child component. */
+function OperatorNeedsRouterView(props: { view: () => Extract<DockView, { kind: "needsRouter" }> }) {
+  return (
+    <>
+      <div class="pf-op-note">
+        <span class="pf-op-note-key">router</span>
+        <span class="pf-op-note-body">
+          needs a router model. Configure Operator router in Settings.
+          <span class="pf-op-note-reason"> {props.view().reason}</span>
+        </span>
+      </div>
+      <Show when={routeMetaLabel()}>
+        {(label) => <div class="pf-op-meta">{label()}</div>}
+      </Show>
+    </>
+  );
+}
+
+/** The "needs credits" notice + Buy credits CTA for a `needsCredits` dock
+ *  view. A presentational child component. */
+function OperatorNeedsCreditsView(props: { view: () => Extract<DockView, { kind: "needsCredits" }> }) {
+  return (
+    <div class="pf-op-credits">
+      <div class="pf-op-note">
+        <span class="pf-op-note-key">credits</span>
+        <span class="pf-op-note-body">
+          hosted routing needs credits.
+          <span class="pf-op-note-reason"> {formatCreditBalance(props.view().balance)} left</span>
+        </span>
+      </div>
+      <div class="pf-op-actions">
+        <button type="button" class="pf-op-cancel" onClick={() => openBuyCredits()}>
+          Buy credits
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The recent-activity list at the bottom of the dock. A presentational
+ *  child component. */
+function OperatorRecentList() {
+  return (
+    <Show when={operatorRecent().length > 0}>
+      <div class="pf-op-recent">
+        <MonoEyebrow text="Recent" />
+        <For each={operatorRecent()}>
+          {(row) => (
+            <div class="pf-op-recent-row">
+              <span class="pf-op-recent-status" data-status={row.status}>
+                {statusLabel(row.status)}
+              </span>
+              <span class="pf-op-recent-input">{row.inputText}</span>
+              <span class="pf-op-recent-time">{relativeTime(row.createdAt)}</span>
+            </div>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+}
+
+/** Derived mic affordance state shared by the composer field and the
+ *  Mod+M hotkey. A factory (not a composable — no signals of its own). */
+function createMicDockState() {
   // The mic carries the composition's single ember only when it's the live
   // focus — while a preview shows, the Confirm CTA owns the ember and the mic
   // yields to a neutral live treatment (never two embers).
@@ -107,8 +360,18 @@ export function OperatorDock() {
     if (micBusyLocked(operatorBusy())) return "dictation paused while the command runs";
     return voiceDockActive() ? "stop dictation (Mod+M)" : "start dictation (Mod+M)";
   };
+  return { micEmber, micDisabled, micUsable, micTitle };
+}
 
-  const trapFocus = (e: KeyboardEvent) => {
+/** The dock's keyboard trap: Mod+M dictation toggle, Escape to cancel/close,
+ *  digit keys to pick a preview candidate, and Tab focus wrapping. A factory
+ *  (not a composable — no signals of its own). */
+function createOperatorFocusTrap(
+  panelEl: () => HTMLDivElement,
+  isComposing: (e: KeyboardEvent) => boolean,
+  micUsable: () => boolean,
+): (e: KeyboardEvent) => void {
+  return (e: KeyboardEvent) => {
     if (isComposing(e)) return;
     if (hotkeyMatches(e, "Mod+M")) {
       e.preventDefault();
@@ -135,7 +398,7 @@ export function OperatorDock() {
     }
     if (e.key !== "Tab") return;
     const focusables = Array.from(
-      panelEl.querySelectorAll<HTMLElement>("input, button:not([disabled])"),
+      panelEl().querySelectorAll<HTMLElement>("input, button:not([disabled])"),
     );
     if (!focusables.length) return;
     const first = focusables[0];
@@ -148,6 +411,21 @@ export function OperatorDock() {
       first.focus();
     }
   };
+}
+
+export function OperatorDock() {
+  let inputEl!: HTMLInputElement;
+  let panelEl!: HTMLDivElement;
+
+  onMount(() => {
+    inputEl.focus();
+    void refreshVoiceStatus();
+  });
+  onCleanup(() => resetVoiceDock());
+
+  const isComposing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
+  const { micEmber, micDisabled, micUsable, micTitle } = createMicDockState();
+  const trapFocus = createOperatorFocusTrap(() => panelEl, isComposing, micUsable);
 
   return (
     <Portal>
@@ -161,102 +439,34 @@ export function OperatorDock() {
           onKeyDown={trapFocus}
         >
           <MonoEyebrow text="Operator" />
-          <div class="pf-op-field">
-            <input
-              ref={inputEl}
-              class="pf-op-input"
-              type="text"
-              spellcheck={false}
-              autocomplete="off"
-              placeholder={PLACEHOLDER}
-              value={operatorInput()}
-              disabled={operatorBusy()}
-              onInput={(e) => setOperatorInput(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || isComposing(e)) return;
-                e.preventDefault();
-                if (operatorView().kind === "preview") void confirmOperatorPreview();
-                else void submitOperatorCommand();
-              }}
-            />
-            <Show when={voiceDictationSettings().micEnabled}>
-              <button
-                type="button"
-                class="pf-op-mic"
-                classList={{
-                  "pf-op-mic--live": voiceDockActive() && !micEmber(),
-                  "pf-op-mic--ember": micEmber(),
-                }}
-                disabled={micDisabled()}
-                title={micTitle()}
-                aria-label={micTitle()}
-                aria-pressed={voiceDockActive()}
-                onClick={() => toggleDictation()}
-              >
-                <IconMic size={15} />
-              </button>
-            </Show>
-          </div>
+          <OperatorComposerField
+            inputRef={(el) => (inputEl = el)}
+            value={operatorInput}
+            busy={operatorBusy}
+            onInput={setOperatorInput}
+            onEnter={() => {
+              if (operatorView().kind === "preview") void confirmOperatorPreview();
+              else void submitOperatorCommand();
+            }}
+            isComposing={isComposing}
+            micEnabled={() => voiceDictationSettings().micEnabled}
+            micEmber={micEmber}
+            micLive={voiceDockActive}
+            micDisabled={micDisabled}
+            micTitle={micTitle}
+            micPressed={voiceDockActive}
+            onToggleMic={() => toggleDictation()}
+          />
 
-          <Show when={voiceDockActive()}>
-            <div class="pf-op-note pf-op-note--voice">
-              <span class="pf-op-note-key">
-                {voiceDockPhase() === "finalizing" ? "transcribe" : "listening"}
-              </span>
-              <span class="pf-op-note-body">
-                {voiceDockPreview() || (voiceDockPhase() === "finalizing" ? "finishing…" : "speak now…")}
-              </span>
-            </div>
-          </Show>
-
-          <Show when={!voiceDockActive() && voiceDockError()}>
-            {(message) => (
-              <div class="pf-op-note pf-op-note--voice">
-                <span class="pf-op-note-key">voice</span>
-                <span class="pf-op-note-body">{message()}</span>
-              </div>
-            )}
-          </Show>
+          <OperatorVoiceStatus />
 
           <Switch>
             <Match when={asView("needsRouter")}>
-              {(nr) => (
-                <>
-                  <div class="pf-op-note">
-                    <span class="pf-op-note-key">router</span>
-                    <span class="pf-op-note-body">
-                      needs a router model. Configure Operator router in Settings.
-                      <span class="pf-op-note-reason"> {nr().reason}</span>
-                    </span>
-                  </div>
-                  <Show when={routeMetaLabel()}>
-                    {(label) => <div class="pf-op-meta">{label()}</div>}
-                  </Show>
-                </>
-              )}
+              {(nr) => <OperatorNeedsRouterView view={nr} />}
             </Match>
 
             <Match when={asView("needsCredits")}>
-              {(nc) => (
-                <div class="pf-op-credits">
-                  <div class="pf-op-note">
-                    <span class="pf-op-note-key">credits</span>
-                    <span class="pf-op-note-body">
-                      hosted routing needs credits.
-                      <span class="pf-op-note-reason"> {formatCreditBalance(nc().balance)} left</span>
-                    </span>
-                  </div>
-                  <div class="pf-op-actions">
-                    <button
-                      type="button"
-                      class="pf-op-cancel"
-                      onClick={() => openBuyCredits()}
-                    >
-                      Buy credits
-                    </button>
-                  </div>
-                </div>
-              )}
+              {(nc) => <OperatorNeedsCreditsView view={nc} />}
             </Match>
 
             <Match when={asView("validationError")}>
@@ -269,137 +479,15 @@ export function OperatorDock() {
             </Match>
 
             <Match when={asView("preview")}>
-              {(p) => {
-                const candidates = () => p().candidates;
-                return (
-                  <div class="pf-op-preview">
-                    <div class="pf-op-preview-summary">
-                      {p().summary}
-                      <Show when={confidenceLabel(p().confidence)}>
-                        {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
-                      </Show>
-                    </div>
-                    <Show
-                      when={candidates()}
-                      fallback={(() => {
-                        const lines = previewPayloadLines(p().intent);
-                        return (
-                          <Show when={lines.length > 0}>
-                            <div class="pf-op-preview-payload">
-                              <For each={lines}>
-                                {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
-                              </For>
-                            </div>
-                          </Show>
-                        );
-                      })()}
-                    >
-                      {(choices) => (
-                        <div class="pf-op-candidates" aria-label="Widget candidates">
-                          <For each={choices()}>
-                            {(candidate, position) => (
-                              <button
-                                type="button"
-                                class="pf-op-candidate"
-                                disabled={operatorBusy()}
-                                onClick={() => void pickOperatorWidgetCandidate(candidate.index)}
-                              >
-                                <span class="pf-op-candidate-key">{position() + 1}</span>
-                                <span class="pf-op-candidate-label">
-                                  {candidate.className}
-                                  <Show when={candidate.label}> — {candidate.label}</Show>
-                                </span>
-                                <span class="pf-op-candidate-index">#{candidate.index}</span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      )}
-                    </Show>
-                    <Show when={routeMetaLabel()}>
-                      {(label) => (
-                        <div class="pf-op-meta">{label()} · charged for routing; confirm runs the action</div>
-                      )}
-                    </Show>
-                    <div class="pf-op-actions">
-                      <Show
-                        when={!candidates()}
-                        fallback={
-                          <button
-                            type="button"
-                            class="pf-op-cancel"
-                            disabled={operatorBusy()}
-                            onClick={() => void cancelOperatorPreview()}
-                          >
-                            Cancel
-                          </button>
-                        }
-                      >
-                        <EmberButton
-                          label="Confirm"
-                          disabled={operatorBusy()}
-                          onClick={() => void confirmOperatorPreview()}
-                        />
-                        <button
-                          type="button"
-                          class="pf-op-cancel"
-                          disabled={operatorBusy()}
-                          onClick={() => void cancelOperatorPreview()}
-                        >
-                          Cancel
-                        </button>
-                      </Show>
-                    </div>
-                  </div>
-                );
-              }}
+              {(p) => <OperatorPreviewView view={p} />}
             </Match>
 
             <Match when={asView("result")}>
-              {(r) => {
-                const res = () => r().result;
-                return (
-                  <>
-                    <div
-                      class="pf-op-result"
-                      classList={{
-                        "pf-op-result--ok":
-                          res().status === "done" || res().status === "noop",
-                        "pf-op-result--error":
-                          res().status === "failed" || res().status === "unsupported",
-                        "pf-op-result--warn": res().status === "denied",
-                      }}
-                    >
-                      {(() => {
-                        const value = res();
-                        return "summary" in value ? value.summary : value.message;
-                      })()}
-                    </div>
-                    <Show when={routeMetaLabel()}>
-                      {(label) => <div class="pf-op-meta">{label()}</div>}
-                    </Show>
-                  </>
-                );
-              }}
+              {(r) => <OperatorResultView view={r} />}
             </Match>
           </Switch>
 
-          <Show when={operatorRecent().length > 0}>
-            <div class="pf-op-recent">
-              <MonoEyebrow text="Recent" />
-              <For each={operatorRecent()}>
-                {(row) => (
-                  <div class="pf-op-recent-row">
-                    <span class="pf-op-recent-status" data-status={row.status}>
-                      {statusLabel(row.status)}
-                    </span>
-                    <span class="pf-op-recent-input">{row.inputText}</span>
-                    <span class="pf-op-recent-time">{relativeTime(row.createdAt)}</span>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
+          <OperatorRecentList />
         </div>
       </div>
     </Portal>

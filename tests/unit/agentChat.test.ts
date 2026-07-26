@@ -1344,6 +1344,31 @@ describe("agentChat store reducer", () => {
     expect(call?.[1]).not.toHaveProperty("payload");
   });
 
+  it("resolves an MCP row in place instead of appending a duplicate (#362)", async () => {
+    // The parser half of this change starts emitting completions for MCP calls.
+    // Without an itemId match path the reducer appended a SECOND row, so a
+    // resolving call visibly doubled instead of updating.
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "pickforge-lanes", tool: "lanes_wait" });
+    expect(timeline(chatId).filter((item) => item.type === "mcpToolCall")).toHaveLength(1);
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "pickforge-lanes", tool: "lanes_wait" });
+
+    const rows = timeline(chatId).filter((item) => item.type === "mcpToolCall");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].itemId).toBe("mcp-1");
+  });
+
+  it("still appends a distinct MCP call as its own row (#362)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "srv", tool: "a" });
+    emit({ kind: "mcpToolCall", itemId: "mcp-2", server: "srv", tool: "b" });
+
+    expect(timeline(chatId).filter((item) => item.type === "mcpToolCall")).toHaveLength(2);
+  });
+
   it("approves requests through IPC and removes pending approvals", async () => {
     const { chatId, emit } = await startChat();
 

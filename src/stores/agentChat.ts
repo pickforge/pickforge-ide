@@ -917,6 +917,35 @@ function reduceCommandDone(
   ]);
 }
 
+/** Matches an existing row by `itemId` before appending, exactly as
+ *  `reduceToolUse` below does. Without this an MCP completion event appends a
+ *  SECOND row rather than resolving the first — and the parser only started
+ *  emitting completions in the same change that added this, so the two must
+ *  not be separated (#362). */
+function reduceMcpToolCall(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "mcpToolCall" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  let matched = false;
+  const timeline = chat.timeline.map((item) => {
+    if (item.type !== "mcpToolCall" || item.itemId !== event.itemId) return item;
+    matched = true;
+    return { ...item, server: event.server, tool: event.tool };
+  });
+  if (matched) return withTimeline(chat, timeline);
+  return withTimeline(chat, [
+    ...chat.timeline,
+    {
+      type: "mcpToolCall",
+      seq: nextSeq(),
+      itemId: event.itemId,
+      server: event.server,
+      tool: event.tool,
+    },
+  ]);
+}
+
 function reduceToolUse(
   chat: AgentChatState,
   event: Extract<AgentEvent, { kind: "toolUse" }>,
@@ -1101,16 +1130,7 @@ function reduceAgentEvent(
     case "toolUse":
       return reduceToolUse(chat, event, nextSeq);
     case "mcpToolCall":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "mcpToolCall",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          server: event.server,
-          tool: event.tool,
-        },
-      ]);
+      return reduceMcpToolCall(chat, event, nextSeq);
     case "webSearch":
       return withTimeline(chat, [
         ...chat.timeline,

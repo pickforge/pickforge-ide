@@ -333,7 +333,7 @@
   border-right: var(--pf-hairline-width) solid var(--pf-text-low);
   border-bottom: var(--pf-hairline-width) solid var(--pf-text-low);
   transform: rotate(-45deg);
-  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
 }
 .pf-chat-thinking-chevron--open {
   transform: rotate(45deg);
@@ -689,7 +689,12 @@
 .pf-chat-line {
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-xs);
+  /* No `gap` here. `Disclosure` mounts its frame unconditionally, so a CLOSED
+     row now has a second (zero-height) flex child — and flex gap applies
+     between items regardless of their height, which silently added 4px to
+     every compact row (measured 29px -> 33px) and undercut the row-height
+     constants in chatTimelineVirtual.ts. The open-state spacing lives inside
+     the collapsing body instead, where it animates with it. */
   border-radius: var(--pf-radius-sm);
   background: var(--pf-item-fill);
   min-width: 0;
@@ -726,6 +731,18 @@
   justify-content: center;
   width: var(--pf-space-md);
   color: var(--pf-text-low);
+}
+/* One icon that turns, not two icons that swap (#372). Swapping DOM nodes
+   gives the affordance no motion of its own, so the disclosure read as two
+   unrelated events; rotating is what makes open/close read as one gesture —
+   the thinking chevron above has always done this. `.pf-chat-line--open` was
+   already applied by every one of these cards and matched no rule anywhere:
+   a hook that was written and never connected. */
+.pf-chat-line-chevron svg {
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
+}
+.pf-chat-line--open .pf-chat-line-chevron svg {
+  transform: rotate(90deg);
 }
 .pf-chat-line-chevron-spacer {
   display: inline-block;
@@ -781,7 +798,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-xs);
-  padding: 0 var(--pf-space-sm) var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
 
 /* ---- Changes receipt (#231 PR3): one compact card per completed turn.

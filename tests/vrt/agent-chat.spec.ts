@@ -212,3 +212,91 @@ test("agent chat tool-run density keeps a burst tighter than its prose boundarie
     animations: "disabled",
   });
 });
+
+// #372: every disclosure row in the transcript animates the same way. Before
+// this, only THINKING used <Collapse>; CMD/TOOL/MCP/WEB hard-unmounted with
+// <Show>, so the body popped into existence and everything below snapped down,
+// and the chevron swapped DOM nodes instead of turning. Asserted as end states
+// (the suite runs with animations disabled), plus the two properties that make
+// the motion possible at all: the row carries the open hook, and the chevron is
+// ONE node that rotates rather than two that swap.
+test("agent chat: a command row's disclosure rotates one chevron and carries the open hook (#372)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    localStorage.setItem("pickforge.flags", JSON.stringify({ changesReview: true }));
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  const commandRow = page.locator(".pf-chat-line--command").first();
+  const chevron = commandRow.locator(".pf-chat-line-chevron svg");
+  const toggle = commandRow.getByRole("button", { name: /command details/ });
+
+  // Closed: exactly one chevron node, unrotated, no body, no open hook.
+  await expect(chevron).toHaveCount(1);
+  await expect(commandRow).not.toHaveClass(/pf-chat-line--open/);
+  await expect(commandRow.locator(".pf-chat-line-body")).toHaveCount(0);
+  const closedTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
+  // The disclosure frame mounts even while closed, so a flex `gap` on the row
+  // would apply to it at zero height and silently pad every compact row
+  // (measured 29px -> 33px before that gap moved inside the body). The
+  // virtualizer's COMPACT_COMMAND_PX estimate is calibrated on this number.
+  const closedHeight = await commandRow.evaluate((el) => el.getBoundingClientRect().height);
+  expect(closedHeight).toBeLessThanOrEqual(32);
+
+  await toggle.click();
+
+  // Open: same single node, now rotated; body present; hook applied.
+  await expect(commandRow).toHaveClass(/pf-chat-line--open/);
+  await expect(chevron).toHaveCount(1);
+  await expect(commandRow.locator(".pf-chat-line-body")).toHaveCount(1);
+  const openTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
+  expect(openTransform).not.toBe(closedTransform);
+
+  // The collapse animates rather than cutting: the frame is a transition on
+  // grid-template-rows, and its duration is a token so reduced motion zeroes it.
+  const frame = commandRow.locator(".pf-collapse");
+  await expect(frame).toHaveCount(1);
+  const transition = await frame.evaluate((el) => getComputedStyle(el).transitionProperty);
+  expect(transition).toContain("grid-template-rows");
+
+  // The chevron must TRANSITION, not merely end up rotated — without this a
+  // deleted transition rule leaves every other assertion green, since a
+  // chevron with no transition also reports 0s under reduced motion.
+  const chevronTransition = await chevron.evaluate(
+    (el) => getComputedStyle(el).transitionProperty,
+  );
+  expect(chevronTransition).toContain("transform");
+
+
+  await toggle.click();
+  await expect(commandRow).not.toHaveClass(/pf-chat-line--open/);
+});
+
+test("agent chat: reduced motion collapses the disclosure duration to zero (#372)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    localStorage.setItem("pickforge.flags", JSON.stringify({ changesReview: true }));
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  const commandRow = page.locator(".pf-chat-line--command").first();
+  await commandRow.getByRole("button", { name: /command details/ }).click();
+
+  // Durations are tokens, so this is a check that nothing hardcoded one —
+  // not new CSS.
+  const duration = await commandRow
+    .locator(".pf-collapse")
+    .evaluate((el) => getComputedStyle(el).transitionDuration);
+  expect(duration).toBe("0s");
+  const chevronDuration = await commandRow
+    .locator(".pf-chat-line-chevron svg")
+    .evaluate((el) => getComputedStyle(el).transitionDuration);
+  expect(chevronDuration).toBe("0s");
+});

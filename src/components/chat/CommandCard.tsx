@@ -1,7 +1,7 @@
 import { type JSX, Show, createSignal } from "solid-js";
 import { compactInline, hasHiddenDetail } from "../../lib/chatDisplay";
-import { IconChevronDown, IconChevronRight } from "../icons";
-import { StatusPill, type StatusIntent } from "../ui";
+import { IconChevronRight } from "../icons";
+import { Disclosure, StatusPill, type StatusIntent } from "../ui";
 import "./chat.css";
 
 type CommandStatus = "running" | "completed" | "failed" | "interrupted";
@@ -41,9 +41,7 @@ export function CommandCard(props: {
       >
         <span class="pf-chat-line-chevron" aria-hidden="true">
           <Show when={canExpand()} fallback={<span class="pf-chat-line-chevron-spacer" />}>
-            <Show when={open()} fallback={<IconChevronRight size={12} />}>
-              <IconChevronDown size={12} />
-            </Show>
+            <IconChevronRight size={12} />
           </Show>
         </span>
         <span class="pf-chat-line-tag">cmd</span>
@@ -61,7 +59,7 @@ export function CommandCard(props: {
           />
         </span>
       </button>
-      <Show when={open()}>
+      <Disclosure open={open()}>
         <div class="pf-chat-line-body">
           <Show when={hasHiddenCommand()}>
             <pre class="pf-chat-tail">{props.command}</pre>
@@ -70,7 +68,7 @@ export function CommandCard(props: {
             <pre class="pf-chat-tail">{props.outputTail}</pre>
           </Show>
         </div>
-      </Show>
+      </Disclosure>
     </div>
   );
 }

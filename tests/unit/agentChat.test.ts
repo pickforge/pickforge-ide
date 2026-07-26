@@ -1240,6 +1240,110 @@ describe("agentChat store reducer", () => {
     expect(agentChat(chatId)?.approvals).toEqual([]);
   });
 
+  it("parses AskUserQuestion's questions out of the approval detail (#364)", async () => {
+    const { chatId, emit } = await startChat();
+    // `detail` already carried the whole tool input; it was simply never read,
+    // so the card had nothing to render and showed a bare "TOOL AskUserQuestion".
+    const detail = JSON.stringify({
+      toolName: "AskUserQuestion",
+      input: {
+        questions: [
+          {
+            question: "Which database?",
+            header: "DB",
+            options: [
+              { label: "Postgres", description: "Relational" },
+              { label: "SQLite" },
+            ],
+          },
+          {
+            question: "Which regions?",
+            multiSelect: true,
+            options: [{ label: "us" }, { label: "eu" }],
+          },
+        ],
+      },
+    });
+
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "question",
+      detail,
+    });
+
+    const approval = agentChat(chatId)?.approvals[0];
+    expect(approval?.kind).toBe("question");
+    expect(approval?.parsed?.questions).toEqual([
+      {
+        question: "Which database?",
+        header: "DB",
+        options: [{ label: "Postgres", description: "Relational" }, { label: "SQLite" }],
+      },
+      {
+        question: "Which regions?",
+        multiSelect: true,
+        options: [{ label: "us" }, { label: "eu" }],
+      },
+    ]);
+  });
+
+  it("drops malformed questions rather than rendering an empty card (#364)", async () => {
+    const { chatId, emit } = await startChat();
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "question",
+      detail: JSON.stringify({ toolName: "AskUserQuestion", input: { questions: [{}, 7] } }),
+    });
+
+    // No usable question text: ApprovalPrompt falls back to the generic row.
+    expect(agentChat(chatId)?.approvals[0]?.parsed?.questions).toBeUndefined();
+  });
+
+  it("forwards a question card's answers to the approve IPC (#364)", async () => {
+    const { chatId, emit } = await startChat();
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "question",
+      detail: JSON.stringify({
+        toolName: "AskUserQuestion",
+        input: { questions: [{ question: "Which database?", options: [{ label: "Postgres" }] }] },
+      }),
+    });
+
+    await approveAgentRequest(chatId, "approval-1", "accept", {
+      answers: { "Which database?": "Postgres" },
+      annotations: { "Which database?": { notes: "managed only" } },
+    });
+
+    const call = tauri.invoke.mock.calls.find((entry) => entry[0] === "agent_chat_approve");
+    expect(call?.[1]).toMatchObject({
+      approvalId: "approval-1",
+      decision: "accept",
+      payload: {
+        answers: { "Which database?": "Postgres" },
+        annotations: { "Which database?": { notes: "managed only" } },
+      },
+    });
+  });
+
+  it("sends no payload key for an ordinary approval (#364)", async () => {
+    const { chatId, emit } = await startChat();
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "command",
+      detail: "Run bun test",
+    });
+
+    await approveAgentRequest(chatId, "approval-1", "accept");
+
+    const call = tauri.invoke.mock.calls.find((entry) => entry[0] === "agent_chat_approve");
+    expect(call?.[1]).not.toHaveProperty("payload");
+  });
+
   it("approves requests through IPC and removes pending approvals", async () => {
     const { chatId, emit } = await startChat();
 

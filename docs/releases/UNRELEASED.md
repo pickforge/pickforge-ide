@@ -51,6 +51,12 @@ reset this file.
   rows is smaller, so an agent run reads as a log rather than a list of cards.
 - Numbered lists in chat messages no longer push their "10." markers into the
   message bubble's edge.
+- `AskUserQuestion` is answerable. A Claude agent asking you to choose between
+  options used to render as a bare "TOOL AskUserQuestion" Allow/Deny prompt,
+  and pressing Allow made the agent report that you had declined to answer and
+  continue on invented defaults. It now renders the real questions and options,
+  sends your actual answers back, and "Allow for session" can no longer
+  auto-answer a later question with a stale reply.
 
 ## Internal/release changes (dark: no default-on behavior change)
 

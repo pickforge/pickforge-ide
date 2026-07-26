@@ -1,13 +1,18 @@
 import { type JSX, For, Show } from "solid-js";
-import { type AgentApproval } from "../../stores/agentChat";
+import {
+  type AgentApproval,
+  type AgentApprovalAnswers,
+} from "../../stores/agentChat";
 import { type AgentApprovalDecision } from "../../lib/agentChat";
 import { MonoEyebrow } from "../ui";
+import { QuestionPrompt } from "./QuestionPrompt";
 import "./chat.css";
 
 const KIND_LABEL: Record<AgentApproval["kind"], string> = {
   command: "Command",
   fileChange: "File change",
   toolUse: "Tool",
+  question: "Question",
 };
 
 function headline(approval: AgentApproval): string {
@@ -68,13 +73,28 @@ function ApprovalRow(props: {
 
 export function ApprovalPrompt(props: {
   approvals: AgentApproval[];
-  onDecide: (approvalId: string, decision: AgentApprovalDecision) => void;
+  onDecide: (
+    approvalId: string,
+    decision: AgentApprovalDecision,
+    answers?: AgentApprovalAnswers,
+  ) => void;
 }): JSX.Element {
   return (
     <div class="pf-approvals" role="group" aria-label="Pending approvals">
       <For each={props.approvals}>
         {(approval, index) => (
-          <ApprovalRow approval={approval} primary={index() === 0} onDecide={props.onDecide} />
+          // A question is not an approval — rendering it as one is what made it
+          // unanswerable (#364). Falls back to the generic prompt if the
+          // questions could not be parsed, so a malformed payload degrades to
+          // the old behaviour instead of an empty card.
+          <Show
+            when={approval.kind === "question" && (approval.parsed?.questions?.length ?? 0) > 0}
+            fallback={
+              <ApprovalRow approval={approval} primary={index() === 0} onDecide={props.onDecide} />
+            }
+          >
+            <QuestionPrompt approval={approval} onDecide={props.onDecide} />
+          </Show>
         )}
       </For>
     </div>

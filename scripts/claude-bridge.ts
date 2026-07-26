@@ -55,6 +55,9 @@ export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "canc
 
 export type PendingApproval = {
   scopeKey: string;
+  /** Needed by `resolveApprovalDecision` to apply the session-scope exemption
+   *  (#364); `scopeKey` alone cannot distinguish a tool from its scope. */
+  toolName: string;
   input: Record<string, unknown>;
   resolve: (result: PermissionResult) => void;
 };
@@ -128,6 +131,10 @@ type ApproveCommand = {
   chatId: string;
   requestId: string;
   decision: ApprovalDecision;
+  /** Present only for tools that collect an answer rather than a yes/no
+   *  (AskUserQuestion today). Every other tool's four decisions are
+   *  untouched. */
+  payload?: ApprovalAnswerPayload;
 };
 type InterruptCommand = { op: "interrupt"; chatId: string };
 type CloseCommand = { op: "close"; chatId: string };
@@ -277,11 +284,41 @@ export function createUserTextMessage(
   };
 }
 
+/** The answers a question card collected, on their way back to the tool.
+ *  `answers` is keyed by the EXACT `question` string (not `header`) — that is
+ *  what the SDK matches on. Multi-select arrives already joined with ", ",
+ *  because the tool expects one string per question, not an array. */
+export type ApprovalAnswerPayload = {
+  answers: Record<string, string>;
+  annotations?: Record<string, { preview?: string; notes?: string }>;
+  response?: string;
+};
+
 export function permissionResultForDecision(
   decision: ApprovalDecision,
   input: Record<string, unknown>,
+  payload?: ApprovalAnswerPayload,
 ): PermissionResult {
   if (decision === "accept" || decision === "acceptForSession") {
+    // Allowing an AskUserQuestion without answers is what produced "The user
+    // did not answer the questions." — the SDK strips `answers` before the
+    // callback, so echoing `input` back hands the tool an empty answer set and
+    // it reports a refusal the user never made (#364). An empty `answers`
+    // object yields the same fallback, so omit the key entirely when there is
+    // nothing to say rather than sending `{}`.
+    if (payload && Object.keys(payload.answers).length > 0) {
+      return {
+        behavior: "allow",
+        updatedInput: {
+          ...input,
+          answers: payload.answers,
+          ...(payload.annotations && Object.keys(payload.annotations).length > 0
+            ? { annotations: payload.annotations }
+            : {}),
+          ...(payload.response !== undefined ? { response: payload.response } : {}),
+        },
+      };
+    }
     return { behavior: "allow", updatedInput: input };
   }
   if (decision === "decline") {
@@ -290,15 +327,29 @@ export function permissionResultForDecision(
   return { behavior: "deny", message: "cancelled", interrupt: true };
 }
 
+/** Tools whose prompt IS the interaction, so "allow for session" can never
+ *  apply. `approvalScopeKey` collapses every AskUserQuestion to
+ *  `AskUserQuestion\0""` — it has no command or path to scope by — so one
+ *  session grant would silently auto-answer every later question with a stale
+ *  reply. That is data corruption, not a convenience gap (#364). */
+const NEVER_SESSION_SCOPED = new Set(["AskUserQuestion"]);
+
+export function isSessionScopable(toolName: string): boolean {
+  return !NEVER_SESSION_SCOPED.has(toolName);
+}
+
 export function resolveApprovalDecision(
   gate: PermissionGate,
   requestId: string,
   decision: ApprovalDecision,
+  payload?: ApprovalAnswerPayload,
 ): boolean {
   const pending = gate.pendingApprovals.get(requestId);
   if (!pending) return false;
-  if (decision === "acceptForSession") gate.alwaysAllow.add(pending.scopeKey);
-  pending.resolve(permissionResultForDecision(decision, pending.input));
+  if (decision === "acceptForSession" && isSessionScopable(pending.toolName)) {
+    gate.alwaysAllow.add(pending.scopeKey);
+  }
+  pending.resolve(permissionResultForDecision(decision, pending.input, payload));
   return true;
 }
 
@@ -321,7 +372,7 @@ export function createPermissionHandler(
       };
 
       signal.addEventListener("abort", abort, { once: true });
-      gate.pendingApprovals.set(toolUseID, { scopeKey, input, resolve: finish });
+      gate.pendingApprovals.set(toolUseID, { scopeKey, toolName, input, resolve: finish });
       emit({ ev: "approvalRequest", chatId, requestId: toolUseID, toolName, input });
     });
   };
@@ -581,7 +632,7 @@ async function handleCommand(
     case "approve": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      if (!resolveApprovalDecision(chat.gate, command.requestId, command.decision)) {
+      if (!resolveApprovalDecision(chat.gate, command.requestId, command.decision, command.payload)) {
         writeStderr(`unknown approval request ${command.requestId} for chat ${command.chatId}`);
       }
       return;

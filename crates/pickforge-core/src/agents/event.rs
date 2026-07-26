@@ -172,6 +172,11 @@ pub enum ApprovalKind {
     Command,
     FileChange,
     ToolUse,
+    /// A tool whose prompt IS the interaction — the host renders its questions
+    /// and sends back answers, rather than a yes/no (#364). `AskUserQuestion`
+    /// declares `requiresUserInteraction`, so it routes through the permission
+    /// callback even under bypass, by design.
+    Question,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

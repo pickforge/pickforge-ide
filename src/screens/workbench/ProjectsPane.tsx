@@ -109,7 +109,7 @@ import {
   cardSwarmRun,
   laneTickTone,
 } from "../../stores/flatWorkCard";
-import { formatCost } from "../../components/chat/ContextMeter";
+import { formatCardCost } from "../../components/chat/ContextMeter";
 import { agentChat, latestPlanForChat } from "../../stores/agentChat";
 import { ensureProjectBranch, projectBranchOf } from "../../stores/projectBranch";
 import { swarmRuns } from "../../stores/swarm";
@@ -1393,6 +1393,12 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
 // the NEEDS YOU label") rather than branching into mockup-illustrated
 // sub-labels like "approval" — chatLifecycleState has one attention bit, not
 // a reason, so a single canonical label is the honest one.
+// Locked rule (#306): bracketed text appears on the NEEDS YOU label and
+// nowhere else. The brackets are literal characters, matching the composer
+// chip idiom (`[Image #1]`) rather than the CSS-drawn bracket used for the
+// dropdown trigger's mark — this is bracketed *text*, not a frame glyph, and
+// keeping it in the string is what lets a test assert the treatment rather
+// than a class name that can pass while the treatment is missing (#361).
 const CARD_STATUS_TEXT: Record<CardVisualState, string> = {
   needsYou: "needs you",
   working: "working",
@@ -1460,7 +1466,7 @@ const WorkCardFooter = (props: {
         )}
       </Show>
       <Show when={props.cost()}>
-        {(c) => <span class="pf-work-card-cost">{formatCost(c().amount, c().estimated)}</span>}
+        {(c) => <span class="pf-work-card-cost">{formatCardCost(c().amount, c().estimated)}</span>}
       </Show>
     </div>
   </Show>
@@ -1543,7 +1549,9 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
           </span>
         </Show>
         <span class="pf-work-card-status" classList={{ "pf-work-card-status--needsyou": showBracket() }}>
-          {CARD_STATUS_TEXT[props.state]}
+          {showBracket()
+            ? `[ ${CARD_STATUS_TEXT[props.state]} ]`
+            : CARD_STATUS_TEXT[props.state]}
         </span>
       </div>
       <Show when={brief()}>{(text) => <div class="pf-work-card-brief">{text()}</div>}</Show>

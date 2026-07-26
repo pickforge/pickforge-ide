@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
-import { ContextMeter } from "../../src/components/chat/ContextMeter";
+import { ContextMeter, formatCardCost, formatCost } from "../../src/components/chat/ContextMeter";
 import type { AgentChatTotals } from "../../src/stores/agentChat";
 
 let root: HTMLDivElement;
@@ -111,5 +111,35 @@ describe("ContextMeter", () => {
     mount({ contextUsed: null, contextWindow: null });
 
     expect(root.querySelector(".pf-chat-context")).toBeNull();
+  });
+});
+
+// #361: the sidebar work card's footer is scanned, not read. `$1.8884` is four
+// digits nobody compares at a glance and it crowds the branch and `plan M/N`
+// items beside it. The composer readout keeps 4dp — same number, different job.
+describe("formatCardCost", () => {
+  it("renders two decimals at card scale", () => {
+    expect(formatCardCost(1.8884, false)).toBe("$1.89");
+    expect(formatCardCost(0.41, false)).toBe("$0.41");
+    expect(formatCardCost(12, false)).toBe("$12.00");
+  });
+
+  it("collapses a sub-cent figure rather than rounding it to $0.00", () => {
+    expect(formatCardCost(0.0004, false)).toBe("<$0.01");
+    expect(formatCardCost(0.009, false)).toBe("<$0.01");
+  });
+
+  it("keeps exact zero as $0.00 — no cost is not the same as nearly none", () => {
+    expect(formatCardCost(0, false)).toBe("$0.00");
+  });
+
+  it("carries the estimate marker through both branches", () => {
+    expect(formatCardCost(1.8884, true)).toBe("~$1.89");
+    expect(formatCardCost(0.0004, true)).toBe("~<$0.01");
+  });
+
+  it("leaves the composer readout's precision alone", () => {
+    expect(formatCost(1.8884, false)).toBe("$1.8884");
+    expect(formatCost(0.0004, false)).toBe("$0.0004");
   });
 });

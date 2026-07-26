@@ -10,11 +10,23 @@ function compact(n: number): string {
   return String(Math.round(n));
 }
 
-/** Shared cost format ("~" prefix for an estimated figure, 4dp) — also used
- *  by the sidebar work card's footer cost item (#306 PR2) so the two never
- *  drift apart. */
+/** Composer readout cost format ("~" prefix for an estimated figure, 4dp).
+ *  4dp is right here: this is the session's own running total, read
+ *  deliberately, where a sub-cent delta is the signal. */
 export function formatCost(cost: number, estimated: boolean): string {
   return `${estimated ? "~" : ""}$${cost.toFixed(4)}`;
+}
+
+/** Card-scale cost format (2dp, sub-cent collapses to `<$0.01`). The sidebar
+ *  work card's footer is scanned, not read — `$1.8884` is four digits of
+ *  precision nobody is comparing at a glance, and it crowds the branch and
+ *  `plan M/N` items beside it (#361). Deliberately NOT the composer's format:
+ *  same number, different job. Exact zero stays `$0.00` rather than `<$0.01`,
+ *  which would imply cost that has not been incurred. */
+export function formatCardCost(cost: number, estimated: boolean): string {
+  const prefix = estimated ? "~" : "";
+  if (cost > 0 && cost < 0.01) return `${prefix}<$0.01`;
+  return `${prefix}$${cost.toFixed(2)}`;
 }
 
 export function ContextMeter(props: {

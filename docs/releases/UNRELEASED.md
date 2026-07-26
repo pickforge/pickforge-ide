@@ -112,6 +112,12 @@ reset this file.
   scrollable "view all" dialog. Active runs are deliberately never capped: run
   ids sort by start time, so a strict newest-N page would hide a long-running
   run — exactly the one still worth acting on.
+- Sidebar work card visual gaps closed (behind the default-off `flatChatList`
+  flag, #361 PR 1): the NEEDS YOU label now carries the locked bracket
+  treatment as real glyphs rather than only a recolour, the footer cost reads
+  at card scale (`$0.41`, sub-cent as `<$0.01`) instead of the composer's four
+  decimals, and the branch reads one step up the text ramp so it is legible as
+  an identifier beside `plan M/N` rather than one grey run.
 - Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
   started while the re-fold was fetching history had its just-sent message
   wiped from the timeline, because the commit replaced the timeline wholesale

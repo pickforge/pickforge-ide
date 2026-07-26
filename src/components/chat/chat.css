@@ -1183,6 +1183,109 @@
   color: var(--pf-text-low);
   overflow-wrap: anywhere;
 }
+/* ---- Question card (#364) ----
+   An AskUserQuestion is not an approval, so it does not borrow the approval
+   row's yes/no shape beyond the shared frame and buttons. Options are
+   bracket-marked mono text ([x] / [ ]) — the same idiom as the plan card's
+   step markers and the NEEDS YOU label — never filled chips or native
+   radio/checkbox chrome. The ember stays on the single submit action, which
+   is the one thing the reader is here to do. */
+.pf-approval--question {
+  gap: var(--pf-space-md);
+}
+.pf-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.pf-question-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+}
+.pf-question-text {
+  font-size: var(--pf-size-body-md);
+  color: var(--pf-text-hi);
+  overflow-wrap: anywhere;
+}
+.pf-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pf-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-med);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-question-option:hover {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+.pf-question-option--on {
+  color: var(--pf-text-hi);
+}
+.pf-question-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-low);
+}
+.pf-question-option--on .pf-question-mark {
+  color: var(--pf-ember-soft);
+}
+.pf-question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.pf-question-option-label {
+  font-size: var(--pf-size-body-sm);
+  overflow-wrap: anywhere;
+}
+.pf-question-option-desc {
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-question-input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-3);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-question-input:focus-visible {
+  border-color: var(--pf-hairline-strong);
+  outline: none;
+}
+.pf-question-notes {
+  font-size: var(--pf-size-label-sm);
+}
+.pf-approval-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .pf-approval-actions {
   display: flex;
   flex-wrap: wrap;

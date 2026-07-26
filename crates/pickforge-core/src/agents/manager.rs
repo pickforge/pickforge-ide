@@ -1431,6 +1431,7 @@ impl AgentChatManager {
         session_id: &str,
         approval_id: &str,
         decision: &str,
+        payload: Option<&serde_json::Value>,
     ) -> Result<(), AgentChatError> {
         let (engine, provider, project_root, omp_client) = {
             let inner = self.lock_inner()?;
@@ -1467,7 +1468,7 @@ impl AgentChatManager {
             }
             (Engine::V2, AgentProvider::ClaudeCode) => self
                 .cached_claude_bridge_client()?
-                .chat_approve(session_id, approval_id, decision)
+                .chat_approve(session_id, approval_id, decision, payload)
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
             (Engine::V2, AgentProvider::Omp) => omp_client
                 .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?
@@ -3133,7 +3134,9 @@ mod tests {
         approval_id: &str,
         events2: &Arc<Mutex<Vec<AgentEvent>>>,
     ) {
-        manager.approve(session_id, approval_id, "accept").unwrap();
+        manager
+            .approve(session_id, approval_id, "accept", None)
+            .unwrap();
         manager
             .set_mode(session_id, None, None, Some("default".to_string()))
             .unwrap();
@@ -4505,7 +4508,7 @@ done
         approval_id: &str,
     ) {
         manager
-            .approve(session_id, approval_id, "approved")
+            .approve(session_id, approval_id, "approved", None)
             .unwrap();
         let approval_log = wait_for_file(log, |text| {
             text.contains(r#""id":42"#) && text.contains(r#""decision":"approved""#)

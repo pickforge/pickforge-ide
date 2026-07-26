@@ -284,10 +284,11 @@ pub async fn agent_chat_approve(
     session_id: String,
     approval_id: String,
     decision: String,
+    payload: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let mgr = mgr.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        mgr.approve(&session_id, &approval_id, &decision)
+        mgr.approve(&session_id, &approval_id, &decision, payload.as_ref())
             .map_err(|e| e.to_string())
     })
     .await

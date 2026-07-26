@@ -98,16 +98,35 @@ export type AgentTimelineItem =
       estimatedCostUsd: number | null;
     };
 
+/** One question from an `AskUserQuestion` call. `question` is the identity the
+ *  SDK matches answers on — `header` is only a short label for the card. */
+export type AgentApprovalQuestion = {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: { label: string; description?: string }[];
+};
+
 export type AgentApproval = {
   approvalId: string;
-  kind: "command" | "fileChange" | "toolUse";
+  kind: "command" | "fileChange" | "toolUse" | "question";
   detail: string;
   parsed?: {
     command?: string;
     cwd?: string;
     reason?: string;
     toolName?: string;
+    questions?: AgentApprovalQuestion[];
   };
+};
+
+/** What a question card collected, on its way back to the tool. `answers` is
+ *  keyed by the exact `question` text; a multi-select answer is one ", "-joined
+ *  string, because the tool expects a string per question, not an array. */
+export type AgentApprovalAnswers = {
+  answers: Record<string, string>;
+  annotations?: Record<string, { preview?: string; notes?: string }>;
+  response?: string;
 };
 
 export type AgentChatTotals = {
@@ -477,7 +496,40 @@ function parseApprovalDetail(detail: string): AgentApproval["parsed"] | undefine
   if (reason) parsed.reason = reason;
   if (toolName) parsed.toolName = toolName;
 
+  // `detail` already carries the whole tool input, so AskUserQuestion's
+  // questions arrive intact and were simply never read (#364).
+  const questions = parseQuestions(record.questions ?? input?.questions);
+  if (questions) parsed.questions = questions;
+
   return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+function parseQuestions(value: unknown): AgentApprovalQuestion[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const questions = value.flatMap((raw) => {
+    const record = asRecord(raw);
+    const question = record ? stringProp(record, ["question"]) : undefined;
+    if (!record || !question) return [];
+    const options = Array.isArray(record.options)
+      ? record.options.flatMap((rawOption) => {
+          const option = asRecord(rawOption);
+          const label = option ? stringProp(option, ["label"]) : undefined;
+          if (!option || !label) return [];
+          const description = stringProp(option, ["description"]);
+          return [{ label, ...(description ? { description } : {}) }];
+        })
+      : [];
+    const header = stringProp(record, ["header"]);
+    return [
+      {
+        question,
+        ...(header ? { header } : {}),
+        ...(record.multiSelect === true ? { multiSelect: true } : {}),
+        options,
+      },
+    ];
+  });
+  return questions.length > 0 ? questions : undefined;
 }
 
 function approvalFromEvent(
@@ -2242,6 +2294,7 @@ export async function approveAgentRequest(
   chatId: string,
   approvalId: string,
   decision: AgentApprovalDecision,
+  answers?: AgentApprovalAnswers,
 ): Promise<void> {
   const chat = chats[chatId];
   const sessionId = chat?.sessionId;
@@ -2254,7 +2307,7 @@ export async function approveAgentRequest(
   }
 
   try {
-    await agentChatApprove(sessionId, approvalId, decision);
+    await agentChatApprove(sessionId, approvalId, decision, answers);
     const approvals = chats[chatId]?.approvals;
     if (approvals?.some((approval) => approval.approvalId === approvalId)) {
       setChats(chatId, {

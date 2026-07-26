@@ -26,6 +26,7 @@ import {
   steerAgentChat,
   switchAgentChatProvider,
   type AgentApproval,
+  type AgentApprovalAnswers,
   type AgentChatState,
 } from "../../stores/agentChat";
 import { type AgentApprovalDecision, type AgentProvider } from "../../lib/agentChat";
@@ -214,7 +215,11 @@ function ChatViewNotices(props: {
   recoveryStatusRef: (el: HTMLDivElement) => void;
   hasApprovals: () => boolean;
   approvals: () => AgentApproval[];
-  onDecideApproval: (approvalId: string, decision: AgentApprovalDecision) => void;
+  onDecideApproval: (
+    approvalId: string,
+    decision: AgentApprovalDecision,
+    answers?: AgentApprovalAnswers,
+  ) => void;
 }) {
   return (
     <>
@@ -683,8 +688,8 @@ export function AgentChatView(props: {
         recoveryStatusRef={(el) => (recoveryStatusEl = el)}
         hasApprovals={hasApprovals}
         approvals={approvals}
-        onDecideApproval={(approvalId, decision) =>
-          void approveAgentRequest(props.chatId, approvalId, decision)
+        onDecideApproval={(approvalId, decision, answers) =>
+          void approveAgentRequest(props.chatId, approvalId, decision, answers)
         }
       />
       <ComposerFooter

@@ -352,8 +352,16 @@ export function agentChatApprove(
   sessionId: string,
   approvalId: string,
   decision: AgentApprovalDecision,
+  payload?: unknown,
 ): Promise<void> {
-  return invoke("agent_chat_approve", { sessionId, approvalId, decision });
+  // `payload` is omitted entirely for ordinary yes/no approvals so their wire
+  // shape is unchanged; only a question card sends one (#364).
+  return invoke("agent_chat_approve", {
+    sessionId,
+    approvalId,
+    decision,
+    ...(payload === undefined ? {} : { payload }),
+  });
 }
 
 export function agentChatSteer(sessionId: string, text: string): Promise<void> {

@@ -329,18 +329,27 @@ impl ClaudeBridgeClient {
         result
     }
 
+    /// `payload` carries a question card's collected answers. It is `None` for
+    /// every ordinary yes/no approval, and the bridge omits the key entirely in
+    /// that case so the four existing decisions are byte-identical on the wire
+    /// (#364).
     pub fn chat_approve(
         &self,
         chat_id: &str,
         request_id: &str,
         decision: &str,
+        payload: Option<&serde_json::Value>,
     ) -> Result<(), ClaudeBridgeError> {
-        self.send_value(json!({
+        let mut command = json!({
             "op": "approve",
             "chatId": chat_id,
             "requestId": request_id,
             "decision": decision,
-        }))
+        });
+        if let Some(payload) = payload {
+            command["payload"] = payload.clone();
+        }
+        self.send_value(command)
     }
 
     pub fn chat_interrupt(&self, chat_id: &str) -> Result<(), ClaudeBridgeError> {
@@ -882,6 +891,7 @@ fn remove_chat(state: &Arc<ClientState>, chat_id: &str) {
 fn approval_kind(tool_name: &str) -> ApprovalKind {
     match tool_name {
         "Bash" => ApprovalKind::Command,
+        "AskUserQuestion" => ApprovalKind::Question,
         "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => ApprovalKind::FileChange,
         _ => ApprovalKind::ToolUse,
     }
@@ -1375,7 +1385,20 @@ done
         assert_bridge_flow_events(&snapshot);
 
         client
-            .chat_approve("chat-1", "approval-1", "acceptForSession")
+            .chat_approve("chat-1", "approval-1", "acceptForSession", None)
+            .unwrap();
+        // An AskUserQuestion approval carries the collected answers to the
+        // child; an ordinary approval above must stay byte-identical on the
+        // wire, with no `payload` key at all (#364).
+        client
+            .chat_approve(
+                "chat-1",
+                "approval-2",
+                "accept",
+                Some(&serde_json::json!({
+                    "answers": { "Which database?": "Postgres" }
+                })),
+            )
             .unwrap();
         client
             .chat_set_permission_mode("chat-1", "plan")
@@ -1397,6 +1420,13 @@ done
         assert!(log.contains(r#""allowedTools":["Bash"]"#));
         assert!(log.contains(r#""images":["/tmp/pickforge-shot.png"]"#));
         assert!(log.contains(r#""decision":"acceptForSession""#));
+        assert!(log.contains(r#""answers":{"Which database?":"Postgres"}"#));
+        // The plain approval line carries no payload key.
+        let plain_approve = log
+            .lines()
+            .find(|line| line.contains(r#""requestId":"approval-1""#))
+            .expect("plain approve line");
+        assert!(!plain_approve.contains("payload"));
     }
 
     #[cfg(unix)]

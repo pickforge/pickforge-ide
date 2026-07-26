@@ -26,6 +26,7 @@ import {
   permissionResultForDecision,
   resetBridgeStateForTests,
   resolveApprovalDecision,
+  isSessionScopable,
   type BridgeEvent,
 } from "../../scripts/claude-bridge";
 
@@ -129,6 +130,109 @@ describe("PushableAsyncQueue", () => {
     await expect(next).resolves.toEqual({ done: false, value: "hello" });
     queue.end();
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+  });
+});
+
+describe("AskUserQuestion answers (#364)", () => {
+  const QUESTIONS = {
+    questions: [
+      { question: "Which database?", header: "DB", options: [{ label: "Postgres" }] },
+      { question: "Which regions?", header: "Regions", options: [{ label: "us" }, { label: "eu" }] },
+    ],
+  };
+
+  it("REGRESSION: allowing without answers is what produced 'the user did not answer'", () => {
+    // The SDK strips `answers` before the callback, so echoing input back hands
+    // the tool an empty answer set and its own result text becomes
+    // "The user did not answer the questions." Pinning the old shape here so a
+    // future refactor cannot quietly restore it.
+    const result = permissionResultForDecision("accept", QUESTIONS);
+    expect(result).toEqual({ behavior: "allow", updatedInput: QUESTIONS });
+    expect((result as { updatedInput: Record<string, unknown> }).updatedInput.answers)
+      .toBeUndefined();
+  });
+
+  it("sends answers keyed by the exact question text, not the header", () => {
+    const result = permissionResultForDecision("accept", QUESTIONS, {
+      answers: { "Which database?": "Postgres" },
+    });
+
+    const updated = (result as { updatedInput: Record<string, unknown> }).updatedInput;
+    expect(updated.answers).toEqual({ "Which database?": "Postgres" });
+    expect(updated.questions).toEqual(QUESTIONS.questions);
+    // Keying by `header` would silently produce an unmatched answer.
+    expect(Object.keys(updated.answers as object)).not.toContain("DB");
+  });
+
+  it("carries multi-select as one comma-joined string, annotations and free text", () => {
+    const result = permissionResultForDecision("accept", QUESTIONS, {
+      answers: { "Which regions?": "us, eu" },
+      annotations: { "Which regions?": { notes: "prefer eu" } },
+      response: "anything else is fine",
+    });
+
+    const updated = (result as { updatedInput: Record<string, unknown> }).updatedInput;
+    expect(updated.answers).toEqual({ "Which regions?": "us, eu" });
+    expect(updated.annotations).toEqual({ "Which regions?": { notes: "prefer eu" } });
+    expect(updated.response).toBe("anything else is fine");
+  });
+
+  it("omits an empty answers object rather than sending {}, which yields the same fallback", () => {
+    const result = permissionResultForDecision("accept", QUESTIONS, { answers: {} });
+
+    const updated = (result as { updatedInput: Record<string, unknown> }).updatedInput;
+    expect(updated.answers).toBeUndefined();
+    expect(updated.annotations).toBeUndefined();
+  });
+
+  it("never lets 'allow for session' auto-answer a later question", () => {
+    // approvalScopeKey collapses every AskUserQuestion to the same key, so one
+    // grant would answer every future question with a stale reply.
+    const gate = createPermissionGate();
+    gate.pendingApprovals.set("req-1", {
+      scopeKey: approvalScopeKey("AskUserQuestion", QUESTIONS),
+      toolName: "AskUserQuestion",
+      input: QUESTIONS,
+      resolve: () => {},
+    });
+
+    expect(resolveApprovalDecision(gate, "req-1", "acceptForSession", {
+      answers: { "Which database?": "Postgres" },
+    })).toBe(true);
+    expect(gate.alwaysAllow.size).toBe(0);
+    expect(isSessionScopable("AskUserQuestion")).toBe(false);
+  });
+
+  it("still session-scopes ordinary tools", () => {
+    const gate = createPermissionGate();
+    const input = { command: "bun test" };
+    gate.pendingApprovals.set("req-1", {
+      scopeKey: approvalScopeKey("Bash", input),
+      toolName: "Bash",
+      input,
+      resolve: () => {},
+    });
+
+    expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
+    expect(gate.alwaysAllow.has(approvalScopeKey("Bash", input))).toBe(true);
+    expect(isSessionScopable("Bash")).toBe(true);
+  });
+
+  it("passes the payload through resolveApprovalDecision to the waiting promise", async () => {
+    const gate = createPermissionGate();
+    const handler = createPermissionHandler("chat-1", gate, () => {});
+    const pending = handler("AskUserQuestion", QUESTIONS, {
+      toolUseID: "req-1",
+      signal: new AbortController().signal,
+    });
+
+    expect(resolveApprovalDecision(gate, "req-1", "accept", {
+      answers: { "Which database?": "Postgres" },
+    })).toBe(true);
+
+    const result = await pending;
+    expect((result as { updatedInput: Record<string, unknown> }).updatedInput.answers)
+      .toEqual({ "Which database?": "Postgres" });
   });
 });
 

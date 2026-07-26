@@ -133,6 +133,16 @@ keep new UI consistent with it.
   hard build failure. Always run that exact command locally before pushing
   (#339 review: a `.iter().any(|x| *x == s)` collapse passed every local test
   and failed CI on `clippy::manual_contains`).
+- Never resolve a conflict in a test file by bulk-stripping conflict markers.
+  `tsc --noEmit` does not type-check Playwright specs, so a swallowed closing
+  `});` merges two tests into one and surfaces only as Playwright's "No tests
+  found" — which reads like a bad `-g` filter, not a broken file. Check brace
+  and paren balance after resolving, and run the spec.
+- A Playwright screenshot assertion WRITES the baseline when none exists, so a
+  failed local run can "pass" on retry by creating a `*-chromium-darwin.png`.
+  Those must never be committed (baselines are CI-rendered Linux PNGs) — delete
+  them before staging, and treat a second-run pass as a signal to check
+  `git status`, not as a green result.
 - A test for an object-identity bug must return a FRESH object from its mock on
   every call, the way a real `invoke` deserializes one. Handing back the same
   fixture reference makes `<For>`/`reconcile` see stable identity, so the test

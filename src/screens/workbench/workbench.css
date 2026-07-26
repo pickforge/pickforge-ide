@@ -3444,6 +3444,12 @@ body.pf-resizing .pf-dc-resizer-grip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* The branch is an identifier — a name you read — while `plan M/N` and the
+     cost beside it are quantities you scan. Inheriting the footer's
+     `--pf-text-low` made all three one undifferentiated grey run (#361). One
+     step up in the existing text ramp separates them without adding chrome or
+     spending the ember, which the card reserves for its state. */
+  color: var(--pf-text-med);
 }
 /* Plan progress M/N (#306 PR3) — present only with an active plan (see
    cardPlanProgress). Fixed-width digits so the footer doesn't jitter as the

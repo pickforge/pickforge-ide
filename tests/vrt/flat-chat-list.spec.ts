@@ -246,7 +246,11 @@ test("flatChatList: bracket L-corners appear only on the needs-you card", async 
   await expect(needsYouCard).toHaveCount(1);
   await expect(needsYouCard.locator(".pf-work-card-corner")).toHaveCount(4);
   await expect(needsYouCard.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
-  await expect(needsYouCard.locator(".pf-work-card-status")).toHaveText("needs you");
+  // #361: assert the GLYPHS, not the class. The class assertion alone passed
+  // for months while the locked bracket treatment was never implemented —
+  // only the recolour was. Bracketed text belongs on this label and nowhere
+  // else, so the working card above is pinned bare in the same breath.
+  await expect(needsYouCard.locator(".pf-work-card-status")).toHaveText("[ needs you ]");
 
   // No filled pill chips anywhere in the flat list — the locked rule again.
   await expect(page.locator(".pf-flat-list .pf-pill")).toHaveCount(0);
@@ -276,7 +280,7 @@ test("flatChatList: bracket L-corners survive on an ACTIVE needs-you card (P2 fi
   await expect(activeNeedsYou).toHaveCount(1);
   await expect(activeNeedsYou.locator(".pf-work-card-corner")).toHaveCount(4);
   await expect(activeNeedsYou.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
-  await expect(activeNeedsYou.locator(".pf-work-card-status")).toHaveText("needs you");
+  await expect(activeNeedsYou.locator(".pf-work-card-status")).toHaveText("[ needs you ]");
 });
 
 test("flatChatList: bracket L-corners survive on a STAGED needs-you card (P2 fix)", async ({ page }) => {
@@ -363,7 +367,7 @@ test("flatChatList: footer items render only with real data", async ({ page }) =
   await expect(workingCard.locator(".pf-work-card-plan")).toHaveText("plan 2/5");
   await expect(workingCard.locator(".pf-work-card-lane")).toHaveCount(3);
   await expect(workingCard.locator(".pf-work-card-lane-count")).toHaveText("1/3");
-  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.4100");
+  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.41");
   // Document order within the footer follows branch · plan · lanes · cost.
   await expect(workingCard.locator(".pf-work-card-foot > *")).toHaveCount(4);
   const footItems = workingCard.locator(".pf-work-card-foot > *");
@@ -403,7 +407,7 @@ test("flatChatList: a project with no branch omits the branch item, other footer
   await expect(workingCard.locator(".pf-work-card-branch")).toHaveCount(0);
   await expect(workingCard.locator(".pf-work-card-plan")).toHaveText("plan 2/5");
   await expect(workingCard.locator(".pf-work-card-lane")).toHaveCount(3);
-  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.4100");
+  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.41");
   await expect(workingCard.locator(".pf-work-card-foot > *")).toHaveCount(3);
 });
 

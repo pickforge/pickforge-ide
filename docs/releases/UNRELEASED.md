@@ -57,6 +57,10 @@ reset this file.
   continue on invented defaults. It now renders the real questions and options,
   sends your actual answers back, and "Allow for session" can no longer
   auto-answer a later question with a stale reply.
+- Chat timeline spacing is now run-aware: a burst of CMD/TOOL/MCP/web rows sits
+  tight as one block, while prose keeps the wider "new thought" distance either
+  side of it. Previously every pair was spaced identically, so nothing in the
+  layout told a run of tool calls apart from a change of subject.
 
 ## Internal/release changes (dark: no default-on behavior change)
 

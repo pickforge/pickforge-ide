@@ -5,9 +5,11 @@ import { decideTimelineScroll } from "../../src/lib/chatTimelineScroll";
 import {
   DEFAULT_VIRTUAL_GAP_PX,
   DEFAULT_VIRTUAL_PADDING_PX,
+  DEFAULT_VIRTUAL_RUN_GAP_PX,
   buildTimelineLayout,
   buildTimelineRows,
   estimateTimelineRowHeight,
+  isCompactTimelineRow,
   timelineVirtualRowKey,
   visibleTimelineKeys,
   type TimelineVirtualRow,
@@ -359,7 +361,11 @@ describe("chat timeline virtualization helpers", () => {
 
     const layout = buildTimelineLayout(
       rows,
-      { padding: DEFAULT_VIRTUAL_PADDING_PX, gap: DEFAULT_VIRTUAL_GAP_PX },
+      {
+        padding: DEFAULT_VIRTUAL_PADDING_PX,
+        gap: DEFAULT_VIRTUAL_GAP_PX,
+        runGap: DEFAULT_VIRTUAL_RUN_GAP_PX,
+      },
       heights,
     );
 
@@ -368,6 +374,121 @@ describe("chat timeline virtualization helpers", () => {
       DEFAULT_VIRTUAL_PADDING_PX * 2 + 100 + DEFAULT_VIRTUAL_GAP_PX + 120,
     );
     expect(layout.keyToIndex.get("assistantText:2")).toBe(1);
+  });
+
+  it("classifies the one-line log rows as compact and the prose/card rows as not (#367)", () => {
+    const compactKinds: TimelineVirtualRow[] = [
+      { kind: "working" },
+      { kind: "item", item: { type: "thinking", seq: 1, text: "t", streaming: false } },
+      {
+        kind: "item",
+        item: { type: "command", seq: 2, itemId: "c", command: "ls", status: "completed", exitCode: 0, outputTail: null },
+      },
+      { kind: "item", item: { type: "toolUse", seq: 3, itemId: "t", name: "read", detail: null } },
+      { kind: "item", item: { type: "mcpToolCall", seq: 4, itemId: "m", server: "github", tool: "list" } },
+      { kind: "item", item: { type: "webSearch", seq: 5, itemId: "w", query: "q" } },
+    ];
+    const proseAndCards: TimelineVirtualRow[] = [
+      { kind: "item", item: { type: "userMessage", seq: 6, text: "hi" } },
+      { kind: "item", item: { type: "assistantText", seq: 7, text: "hello", streaming: false } },
+      { kind: "item", item: { type: "plan", seq: 8, items: [] } },
+      {
+        kind: "item",
+        item: { type: "fileChange", seq: 9, itemId: "f", changes: [], ordinal: 0, turnComplete: false },
+      },
+      {
+        kind: "item",
+        item: { type: "usage", seq: 10, inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, costUsd: null, estimatedCostUsd: null },
+      },
+    ];
+
+    expect(compactKinds.map(isCompactTimelineRow)).toEqual(compactKinds.map(() => true));
+    expect(proseAndCards.map(isCompactTimelineRow)).toEqual(proseAndCards.map(() => false));
+  });
+
+  it("tightens a run of compact rows and keeps the wide gap at prose boundaries (#367)", () => {
+    // prose → cmd → cmd → tool → prose: the burst is one block (runGap inside),
+    // while each boundary that touches prose gets the full gap.
+    const rows = buildTimelineRows(
+      [
+        { type: "assistantText", seq: 1, text: "before", streaming: false },
+        { type: "command", seq: 2, itemId: "c1", command: "a", status: "completed", exitCode: 0, outputTail: null },
+        { type: "command", seq: 3, itemId: "c2", command: "b", status: "completed", exitCode: 0, outputTail: null },
+        { type: "toolUse", seq: 4, itemId: "t1", name: "read", detail: null },
+        { type: "assistantText", seq: 5, text: "after", streaming: false },
+      ],
+      false,
+    );
+    const heights = new Map([
+      ["assistantText:1", 40],
+      ["command:2", 30],
+      ["command:3", 30],
+      ["toolUse:4", 24],
+      ["assistantText:5", 40],
+    ]);
+    const metrics = { padding: 0, gap: 12, runGap: 4 };
+
+    const layout = buildTimelineLayout(rows, metrics, heights);
+
+    expect(layout.starts).toEqual([
+      0,
+      40 + 12, // prose → cmd: boundary gap
+      52 + 30 + 4, // cmd → cmd: run gap
+      86 + 30 + 4, // cmd → tool: run gap across kinds
+      120 + 24 + 12, // tool → prose: boundary gap
+    ]);
+    expect(layout.totalHeight).toBe(156 + 40);
+  });
+
+  it("keeps a run of six commands at the run gap for its full length (#367)", () => {
+    // The issue's own acceptance fixture: six consecutive CMD rows must sit at
+    // the tight pitch between every pair, not just the first.
+    const rows = buildTimelineRows(
+      Array.from({ length: 6 }, (_, index): AgentTimelineItem => ({
+        type: "command",
+        seq: index + 1,
+        itemId: `cmd-${index + 1}`,
+        command: `step ${index + 1}`,
+        status: "completed",
+        exitCode: 0,
+        outputTail: null,
+      })),
+      false,
+    );
+    const heights = new Map(rows.map((row) => [timelineVirtualRowKey(row), 30]));
+    const metrics = { padding: 0, gap: 12, runGap: 4 };
+
+    const layout = buildTimelineLayout(rows, metrics, heights);
+
+    expect(layout.starts).toEqual([0, 34, 68, 102, 136, 170]);
+    expect(layout.totalHeight).toBe(170 + 30);
+  });
+
+  it("keeps culling in step with the run-aware starts", () => {
+    // visibleTimelineKeys re-derives heights but consumes the layout's starts;
+    // a culling window cut between runGap-spaced rows must agree with them.
+    const rows = buildTimelineRows(
+      Array.from({ length: 6 }, (_, index): AgentTimelineItem => ({
+        type: "command",
+        seq: index + 1,
+        itemId: `cmd-${index + 1}`,
+        command: `step ${index + 1}`,
+        status: "completed",
+        exitCode: 0,
+        outputTail: null,
+      })),
+      false,
+    );
+    const heights = new Map(rows.map((row) => [timelineVirtualRowKey(row), 30]));
+    const metrics = { padding: 0, gap: 12, runGap: 4 };
+    const layout = buildTimelineLayout(rows, metrics, heights);
+
+    // starts: [0, 34, 68, 102, 136, 170]; a 60px window at top 60 spans rows 2–4.
+    expect(visibleTimelineKeys(layout, heights, metrics, 60, 60, 0)).toEqual([
+      "command:2",
+      "command:3",
+      "command:4",
+    ]);
   });
 
   it("trusts a streaming row's measurement over the estimate (#352)", () => {
@@ -379,7 +500,7 @@ describe("chat timeline virtualization helpers", () => {
       [{ type: "assistantText", seq: 1, text: "x".repeat(20_000), streaming: true }],
       false,
     );
-    const metrics = { padding: 0, gap: 0 };
+    const metrics = { padding: 0, gap: 0, runGap: 0 };
     const heights = new Map([["assistantText:1", 120]]);
 
     expect(estimateTimelineRowHeight(rows[0])).toBeGreaterThan(120);
@@ -394,7 +515,7 @@ describe("chat timeline virtualization helpers", () => {
       ],
       false,
     );
-    const metrics = { padding: 0, gap: 0 };
+    const metrics = { padding: 0, gap: 0, runGap: 0 };
     const heights = new Map([
       ["assistantText:1", 120],
       ["usage:2", 40],
@@ -411,7 +532,7 @@ describe("chat timeline virtualization helpers", () => {
   });
 
   it("handles empty layouts and unmeasured visible rows", () => {
-    const metrics = { padding: 10, gap: 4 };
+    const metrics = { padding: 10, gap: 4, runGap: 2 };
     const empty = buildTimelineLayout([], metrics, new Map());
     const rows = buildTimelineRows(
       [{ type: "assistantText", seq: 1, text: "unmeasured", streaming: false }],
@@ -437,7 +558,7 @@ describe("chat timeline virtualization helpers", () => {
       true,
     );
     const heights = new Map(rows.map((row) => [timelineVirtualRowKey(row), 100]));
-    const metrics = { padding: 10, gap: 0 };
+    const metrics = { padding: 10, gap: 0, runGap: 0 };
     const layout = buildTimelineLayout(rows, metrics, heights);
 
     expect(visibleTimelineKeys(layout, heights, metrics, 250, 100, 0)).toEqual([
@@ -471,7 +592,7 @@ describe("chat timeline virtualization helpers", () => {
       ["assistantText:3", 100],
       ["assistantText:4", 100],
     ]);
-    const metrics = { padding: 0, gap: 0 };
+    const metrics = { padding: 0, gap: 0, runGap: 0 };
     const layout = buildTimelineLayout(rows, metrics, heights);
     // starts: [0, 100, 600, 700]; scroll top 150 falls inside row 2.
     expect(visibleTimelineKeys(layout, heights, metrics, 150, 100, 0)).toEqual([
@@ -496,7 +617,7 @@ describe("chat timeline virtualization helpers", () => {
       false,
     );
     const heights = new Map(rows.map((row) => [timelineVirtualRowKey(row), 100]));
-    const metrics = { padding: 0, gap: 0 };
+    const metrics = { padding: 0, gap: 0, runGap: 0 };
     const layout = buildTimelineLayout(rows, metrics, heights);
 
     expect(visibleTimelineKeys(layout, heights, metrics, 5000, 300, 0)).toEqual([

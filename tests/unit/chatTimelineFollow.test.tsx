@@ -41,6 +41,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("../../src/components/chat/ImageLightbox", () => ({ openLightbox: () => {} }));
 
 import { ChatTimeline } from "../../src/components/chat/ChatTimeline";
+import { DEFAULT_VIRTUAL_GAP_PX } from "../../src/lib/chatTimelineVirtual";
 
 const VIEWPORT_HEIGHT = 300;
 
@@ -186,8 +187,10 @@ function turn(streaming: boolean): AgentTimelineItem[] {
   return [assistant(1, false), assistant(2, false), assistant(3, streaming)];
 }
 
-/** What the virtual layout should come to for `rows` rows of measured height. */
-function expectedHeight(rows: number, height = MEASURED_ROW_HEIGHT, gap = 4): number {
+/** What the virtual layout should come to for `rows` rows of measured height.
+ *  All rows in these turns are prose (or a working row beside prose), so every
+ *  pair takes DEFAULT_VIRTUAL_GAP_PX — the boundary gap, not the #367 run gap. */
+function expectedHeight(rows: number, height = MEASURED_ROW_HEIGHT, gap = DEFAULT_VIRTUAL_GAP_PX): number {
   return 16 * 2 + height * rows + gap * (rows - 1);
 }
 
@@ -230,7 +233,9 @@ describe("ChatTimeline end-of-turn follow (#352)", () => {
       root.querySelectorAll<HTMLDivElement>(".pf-chat-virtual-row"),
       (el) => Number.parseFloat(/translate3d\(0, ([-\d.]+)px/.exec(el.style.transform)?.[1] ?? "0"),
     );
-    expect(rowTops).toEqual([16, 16 + 24 + 4, 16 + (24 + 4) * 2]);
+    // Prose rows, so the pitch uses the boundary gap (12): 24px measured height
+    // plus DEFAULT_VIRTUAL_GAP_PX — and crucially no 48px slot.
+    expect(rowTops).toEqual([16, 16 + 24 + 12, 16 + (24 + 12) * 2]);
   });
 
   it("pins the usage row that lands after the turn's content shrinks", () => {

@@ -13,6 +13,10 @@ const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
 // ContextMeter overflow warning state.
 const VRT_AGENT_CHAT_CONTEXT_OVERFLOW_KEY = "pickforge.vrt.agentChatContextOverflow";
 const VRT_AGENT_CHAT_RUNNING_KEY = "pickforge.vrt.agentChatRunning";
+// #367's density scenario: a run of six consecutive command rows plus a
+// tool/mcp/web tail, bracketed by prose, so the tighter within-run gap is
+// pinned by its own golden rather than incidentally captured.
+const VRT_AGENT_CHAT_TOOL_RUN_KEY = "pickforge.vrt.agentChatToolRun";
 const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
 // #306 PR1's flat chat list (flag `flatChatList`) VRT scenario: adds a
@@ -540,9 +544,18 @@ function agentChatRunningFixtureEnabled(): boolean {
   }
 }
 
+function agentChatToolRunFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_AGENT_CHAT_TOOL_RUN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** The default fixture's usage row, with contextUsed pushed past
  * contextWindow — renders ContextMeter's warn state (#307). */
 function agentChatHistoryForFixture(): AgentTimelineEntry[] {
+  if (agentChatToolRunFixtureEnabled()) return AGENT_CHAT_TOOL_RUN_HISTORY;
   if (agentChatRunningFixtureEnabled()) {
     return AGENT_CHAT_HISTORY.filter(
       (entry) => entry.entryType !== "item" || entry.kind !== "turnDone",
@@ -684,6 +697,78 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
     contextWindow: 1_000_000,
   }),
   item(11, { kind: "turnDone", status: "completed" }),
+];
+
+// #367: prose → thinking → six command rows → tool/mcp/web → prose. The run
+// of compact rows must read as one block; the prose boundaries must breathe.
+function commandPair(
+  seq: number,
+  itemId: string,
+  command: string,
+  outputTail: string,
+): AgentTimelineEntry[] {
+  return [
+    item(seq, { kind: "commandStarted", itemId, command, cwd: "/home/dev/acme-app" }),
+    item(seq + 1, { kind: "commandDone", itemId, exitCode: 0, status: "completed", outputTail }),
+  ];
+}
+
+const AGENT_CHAT_TOOL_RUN_HISTORY: AgentTimelineEntry[] = [
+  {
+    entryType: "message",
+    seq: 1,
+    role: "user",
+    content: "Run the full validation gate and collect the evidence.",
+    createdAt: now,
+  },
+  item(2, { kind: "turnStarted" }),
+  item(3, {
+    kind: "textFinal",
+    itemId: "run-intro",
+    text: "Running the gate now. The burst below is one logical unit of work — six commands and three tool calls back to back — so it should read as a single block against this prose.",
+  }),
+  item(4, {
+    kind: "thinkingFinal",
+    itemId: "run-thinking",
+    text: "Chain the checks: each command only makes sense if the previous one succeeded.",
+  }),
+  ...commandPair(5, "run-cmd-1", "bun install --frozen-lockfile", "Checked 312 installs across 4 workspaces"),
+  ...commandPair(7, "run-cmd-2", "bun run lint", "No issues found in 214 files"),
+  ...commandPair(9, "run-cmd-3", "bunx tsc --noEmit", "0 errors"),
+  ...commandPair(11, "run-cmd-4", "bun run test:unit", "182 passed (3.1s)"),
+  ...commandPair(13, "run-cmd-5", "cargo clippy --workspace", "warning-free in 41.2s"),
+  ...commandPair(15, "run-cmd-6", "bun run vrt -- tests/vrt/agent-chat.spec.ts", "3 passed (11.8s)"),
+  item(17, {
+    kind: "toolUse",
+    itemId: "run-tool-1",
+    name: "read_file",
+    status: "completed",
+    detail: "src/lib/chatTimelineVirtual.ts",
+  }),
+  item(18, {
+    kind: "mcpToolCall",
+    itemId: "run-mcp-1",
+    server: "github",
+    tool: "list_workflow_runs",
+    status: "completed",
+    detail: "3 green runs on fix-367-run-density",
+  }),
+  item(19, { kind: "webSearch", itemId: "run-web-1", query: "playwright toHaveScreenshot maxDiffPixelRatio" }),
+  item(20, {
+    kind: "textFinal",
+    itemId: "run-outro",
+    text: "Every check passed. This closing paragraph is a new thought, so the boundary above it should carry more air than any pair of rows inside the burst.",
+  }),
+  item(21, {
+    kind: "usage",
+    inputTokens: 24_310,
+    cachedInputTokens: 8_192,
+    outputTokens: 1_874,
+    costUsd: 0.0912,
+    contextUsed: 41_780,
+    contextWindow: 1_000_000,
+  }),
+  item(22, { kind: "turnDone", status: "completed" }),
 ];
 
 const MOCK_ORCHESTRA_TASKS: { id: string; projectRoot: string }[] = [];

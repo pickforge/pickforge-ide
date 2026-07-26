@@ -11,6 +11,7 @@ import {
 import { type AgentTimelineItem } from "../../stores/agentChat";
 import {
   DEFAULT_VIRTUAL_GAP_PX,
+  DEFAULT_VIRTUAL_RUN_GAP_PX,
   DEFAULT_VIRTUAL_PADDING_PX,
   buildTimelineLayout,
   buildTimelineRows,
@@ -287,6 +288,7 @@ export function ChatTimeline(props: {
   const [metrics, setMetrics] = createSignal({
     padding: DEFAULT_VIRTUAL_PADDING_PX,
     gap: DEFAULT_VIRTUAL_GAP_PX,
+    runGap: DEFAULT_VIRTUAL_RUN_GAP_PX,
   });
 
   const rows = createMemo(() => buildTimelineRows(props.items, props.working));
@@ -469,9 +471,16 @@ export function ChatTimeline(props: {
     const next = {
       padding: parseCssPx(scroller, "--pf-chat-virtual-padding", DEFAULT_VIRTUAL_PADDING_PX),
       gap: parseCssPx(scroller, "--pf-chat-virtual-gap", DEFAULT_VIRTUAL_GAP_PX),
+      runGap: parseCssPx(scroller, "--pf-chat-virtual-run-gap", DEFAULT_VIRTUAL_RUN_GAP_PX),
     };
     setMetrics((current) => {
-      if (current.padding === next.padding && current.gap === next.gap) return current;
+      if (
+        current.padding === next.padding
+        && current.gap === next.gap
+        && current.runGap === next.runGap
+      ) {
+        return current;
+      }
       return next;
     });
   };

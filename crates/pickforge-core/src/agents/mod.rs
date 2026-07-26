@@ -26,8 +26,8 @@ pub use omp_acp::{
 pub use pi_kit::{detect_pi_kit, PiKitDetection};
 pub use pi_kit_context::{clear_forge_context, write_forge_context};
 pub use pi_kit_runs::{
-    abandon_pi_kit_lane, list_pi_kit_runs, pi_kit_data_dir, pi_kit_runs_dir, PiKitAbandonOutcome,
-    PiKitLaneStatus, PiKitRunEntry, PiKitRunStatus, PiKitRunTotals, PIKIT_DATA_DIR_ENV,
+    abandon_pi_kit_lane, list_pi_kit_run_page, list_pi_kit_runs, pi_kit_data_dir, pi_kit_runs_dir, PiKitAbandonOutcome,
+    PiKitLaneStatus, PiKitRunEntry, PiKitRunPage, PiKitRunStatus, PiKitRunTotals, PIKIT_DATA_DIR_ENV,
 };
 pub use remote_exec::{RemoteExec, RemoteExecError};
 pub use skills::{list_agent_skills, AgentSkill};

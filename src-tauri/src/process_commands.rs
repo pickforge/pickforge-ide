@@ -8,7 +8,7 @@ use std::time::Duration;
 use pickforge_core::agents::{
     claude_auth_status_authenticated, codex_login_status_authenticated, detect_pi_kit,
     pi_kit_data_dir, pi_kit_runs_dir, AuthPresenceProbe, AuthPresenceUnknownReason,
-    PiKitAbandonOutcome, PiKitDetection, PiKitRunEntry, PIKIT_DATA_DIR_ENV,
+    PiKitAbandonOutcome, PiKitDetection, PiKitRunEntry, PiKitRunPage, PIKIT_DATA_DIR_ENV,
 };
 use pickforge_core::process::RunError;
 use pickforge_core::{is_on_user_path, run_timeout_capped, CommandOutcome, OutputTruncation};
@@ -283,6 +283,23 @@ pub async fn list_pi_kit_runs() -> Result<Vec<PiKitRunEntry>, String> {
         resolve_pi_kit_runs_dir()
             .map(|dir| pickforge_core::agents::list_pi_kit_runs(&dir))
             .unwrap_or_default()
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Bounded variant: every active run plus the `limit` most recent ended ones,
+/// with the total on disk. The panel polls this every few seconds, so its cost
+/// must not scale with run history (#363).
+#[tauri::command]
+pub async fn list_pi_kit_run_page(limit: usize) -> Result<PiKitRunPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resolve_pi_kit_runs_dir()
+            .map(|dir| pickforge_core::agents::list_pi_kit_run_page(&dir, limit))
+            .unwrap_or_else(|| PiKitRunPage {
+                runs: Vec::new(),
+                total: 0,
+            })
     })
     .await
     .map_err(|error| error.to_string())

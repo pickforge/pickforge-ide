@@ -147,6 +147,16 @@ pub struct PiKitRunEntry {
     pub orphaned: bool,
 }
 
+/// One page of runs plus the total on disk, so the panel can bound what it
+/// renders without lying about how much history exists (#363).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PiKitRunPage {
+    pub runs: Vec<PiKitRunEntry>,
+    /// Every `*.status.json` on disk, including ones this page omits.
+    pub total: usize,
+}
+
 /// Lists every `<run>.status.json` in `runs_dir`, newest run id first (run
 /// ids embed a compact timestamp, so a reverse lexical sort mirrors pi-kit's
 /// own `listRuns()`). A missing runs directory is the neutral "no runs yet"
@@ -158,6 +168,48 @@ pub struct PiKitRunEntry {
 /// the next revision.
 pub fn list_pi_kit_runs(runs_dir: &Path) -> Vec<PiKitRunEntry> {
     list_pi_kit_runs_at(runs_dir, now_ms())
+}
+
+/// Bounded listing: **every active run**, plus the `limit` most recent ended
+/// ones, plus the total on disk.
+///
+/// Not simply "the newest N". Run ids embed a start timestamp, so a
+/// long-running active run sorts below newer *ended* ones — a strict newest-N
+/// page would hide exactly the runs still worth acting on. Active runs are
+/// therefore never dropped, and the cap applies only to history (#363).
+///
+/// `limit == 0` still returns every active run: the cap bounds history, it does
+/// not suppress live work.
+pub fn list_pi_kit_run_page(runs_dir: &Path, limit: usize) -> PiKitRunPage {
+    list_pi_kit_run_page_at(runs_dir, limit, now_ms())
+}
+
+fn list_pi_kit_run_page_at(runs_dir: &Path, limit: usize, now_ms: i64) -> PiKitRunPage {
+    let all = list_pi_kit_runs_at(runs_dir, now_ms);
+    let total = all.len();
+    let mut ended_kept = 0usize;
+    let runs = all
+        .into_iter()
+        .filter(|entry| {
+            if is_active_entry(entry) {
+                return true;
+            }
+            ended_kept += 1;
+            ended_kept <= limit
+        })
+        .collect();
+    PiKitRunPage { runs, total }
+}
+
+/// A run counts as active while its status says so. An unreadable or
+/// unsupported status cannot be shown to be finished, so it is treated as
+/// history rather than pinned forever.
+fn is_active_entry(entry: &PiKitRunEntry) -> bool {
+    entry
+        .status
+        .as_ref()
+        .map(|status| status.state == "active")
+        .unwrap_or(false)
 }
 
 /// Deterministic core of [`list_pi_kit_runs`] with an injected clock, so
@@ -444,6 +496,84 @@ mod tests {
             r#"{{"schemaVersion":1,"revision":3,"updatedAtMs":{updated_at_ms},"run":"{run}","state":"{state}","durationMs":1000,"totals":{{"cost":0.02,"tokensIn":100,"tokensOut":50}},"lanes":[{}]}}"#,
             lanes.join(",")
         )
+    }
+
+    /// Run ids sort lexically, and the listing is newest-first, so `run-9xxx`
+    /// is "newer" than `run-1xxx`.
+    fn seed_page_fixture(root: &TempDir) {
+        let live_pid = std::process::id() as i32;
+        let running = [lane_json("lane-1", "running", Some(live_pid))];
+        let done = [lane_json("lane-1", "done", Some(i32::MAX))];
+        // One OLD active run — the case a strict newest-N page would hide.
+        root.write("run-1000.status.json", &status_json("run-1000", "active", now_ms(), &running));
+        for id in ["run-2000", "run-3000", "run-4000", "run-5000", "run-6000"] {
+            root.write(&format!("{id}.status.json"), &status_json(id, "ended", now_ms(), &done));
+        }
+    }
+
+    #[test]
+    fn page_keeps_every_active_run_even_when_older_than_the_cap() {
+        let root = TempDir::new("page-active");
+        seed_page_fixture(&root);
+
+        let page = list_pi_kit_run_page(&root.path, 2);
+
+        assert_eq!(page.total, 6);
+        // 2 newest ended + the old active one, which is NOT counted against
+        // the cap and NOT dropped for being old.
+        let ids: Vec<&str> = page.runs.iter().map(|entry| entry.run.as_str()).collect();
+        assert_eq!(ids, vec!["run-6000", "run-5000", "run-1000"]);
+    }
+
+    #[test]
+    fn page_reports_the_full_total_even_when_it_omits_runs() {
+        let root = TempDir::new("page-total");
+        seed_page_fixture(&root);
+
+        let page = list_pi_kit_run_page(&root.path, 1);
+
+        assert_eq!(page.runs.len(), 2); // 1 ended + 1 active
+        assert_eq!(page.total, 6);
+    }
+
+    #[test]
+    fn a_zero_limit_still_returns_live_work() {
+        // The cap bounds history; it must never suppress a run you can still act on.
+        let root = TempDir::new("page-zero");
+        seed_page_fixture(&root);
+
+        let page = list_pi_kit_run_page(&root.path, 0);
+
+        assert_eq!(page.runs.len(), 1);
+        assert_eq!(page.runs[0].run, "run-1000");
+        assert_eq!(page.total, 6);
+    }
+
+    #[test]
+    fn a_limit_beyond_history_returns_everything() {
+        let root = TempDir::new("page-big");
+        seed_page_fixture(&root);
+
+        let page = list_pi_kit_run_page(&root.path, 100);
+
+        assert_eq!(page.runs.len(), 6);
+        assert_eq!(page.total, 6);
+    }
+
+    #[test]
+    fn an_unreadable_status_counts_as_history_not_pinned_live() {
+        // A run whose status cannot be parsed cannot be shown to be finished —
+        // but pinning it forever would let junk crowd out real runs.
+        let root = TempDir::new("page-unsupported");
+        root.write("run-9000.status.json", r#"{"schemaVersion":99,"run":"run-9000"}"#);
+        let done = [lane_json("lane-1", "done", Some(i32::MAX))];
+        root.write("run-8000.status.json", &status_json("run-8000", "ended", now_ms(), &done));
+
+        let page = list_pi_kit_run_page(&root.path, 1);
+
+        assert_eq!(page.total, 2);
+        assert_eq!(page.runs.len(), 1);
+        assert_eq!(page.runs[0].run, "run-9000"); // newest-first, capped at 1
     }
 
     #[test]

@@ -143,6 +143,11 @@ keep new UI consistent with it.
   Those must never be committed (baselines are CI-rendered Linux PNGs) — delete
   them before staging, and treat a second-run pass as a signal to check
   `git status`, not as a green result.
+- `cargo check -p pickforge-core` is not enough for a change that adds a Tauri
+  command: `src-tauri` fails its build script before compiling any Rust until
+  `bun run sidecar` stages the external binaries, so a missing import in
+  `*_commands.rs` surfaces only in CI. Run `bun run sidecar` once per worktree,
+  then `cargo check --workspace`.
 - A test for an object-identity bug must return a FRESH object from its mock on
   every call, the way a real `invoke` deserializes one. Handing back the same
   fixture reference makes `<For>`/`reconcile` see stable identity, so the test

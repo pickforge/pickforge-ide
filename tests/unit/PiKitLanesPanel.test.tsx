@@ -70,7 +70,7 @@ function summary(): HTMLButtonElement {
 describe("PiKitLanesPanel", () => {
   it("keeps an expanded run open across a poll refresh (#363)", async () => {
     vi.useFakeTimers();
-    testEnv.invoke.mockResolvedValue([ACTIVE_RUN]);
+    testEnv.invoke.mockResolvedValue({ runs: [ACTIVE_RUN], total: 1 });
     await mountPanel();
     await vi.advanceTimersByTimeAsync(0);
 
@@ -80,7 +80,7 @@ describe("PiKitLanesPanel", () => {
 
     // The next poll delivers freshly deserialized objects — the exact
     // condition that used to dispose and recreate the row.
-    testEnv.invoke.mockResolvedValue([clone(ACTIVE_RUN)]);
+    testEnv.invoke.mockResolvedValue({ runs: [clone(ACTIVE_RUN)], total: 1 });
     await vi.advanceTimersByTimeAsync(4_000);
     await vi.advanceTimersByTimeAsync(4_000);
 
@@ -90,7 +90,7 @@ describe("PiKitLanesPanel", () => {
 
   it("updates a lane's numbers in place while the run stays expanded (#363)", async () => {
     vi.useFakeTimers();
-    testEnv.invoke.mockResolvedValue([ACTIVE_RUN]);
+    testEnv.invoke.mockResolvedValue({ runs: [ACTIVE_RUN], total: 1 });
     await mountPanel();
     await vi.advanceTimersByTimeAsync(0);
 
@@ -100,7 +100,7 @@ describe("PiKitLanesPanel", () => {
 
     const advanced = clone(ACTIVE_RUN);
     advanced.status!.lanes[0].tokensOut = 999;
-    testEnv.invoke.mockResolvedValue([advanced]);
+    testEnv.invoke.mockResolvedValue({ runs: [advanced], total: 1 });
     await vi.advanceTimersByTimeAsync(4_000);
 
     // Same DOM node, new text: an update, not a remount.
@@ -115,6 +115,7 @@ describe("PiKitLanesPanel", () => {
     // is deserialized per call, so no entry is ever reference-equal to the last.
     // Handing back one shared object would make this test pass without the fix.
     testEnv.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_pi_kit_run_page") return Promise.resolve({ runs: [clone(ACTIVE_RUN)], total: 1 });
       if (cmd === "list_pi_kit_runs") return Promise.resolve([clone(ACTIVE_RUN)]);
       if (cmd === "abandon_pi_kit_lane") return Promise.resolve({ requested: true, consumed: true });
       return Promise.resolve(null);
@@ -137,9 +138,63 @@ describe("PiKitLanesPanel", () => {
     expect(root.querySelector(".pf-pikit-body")).not.toBeNull();
   });
 
+  it("offers the rest behind a dialog instead of growing without bound (#363)", async () => {
+    vi.useFakeTimers();
+    const ended: PiKitRunEntry = {
+      ...clone(ACTIVE_RUN),
+      run: "run-old",
+      status: { ...clone(ACTIVE_RUN).status!, run: "run-old", state: "ended" },
+    };
+    testEnv.invoke.mockImplementation((cmd: string) => {
+      // The poll returns a PAGE: one run rendered, six on disk.
+      if (cmd === "list_pi_kit_run_page") {
+        return Promise.resolve({ runs: [clone(ACTIVE_RUN)], total: 6 });
+      }
+      // The dialog reads the full list separately, on demand.
+      if (cmd === "list_pi_kit_runs") {
+        return Promise.resolve([clone(ACTIVE_RUN), ended]);
+      }
+      return Promise.resolve(null);
+    });
+    await mountPanel();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The affordance counts what is on DISK, not what happens to be rendered.
+    const viewAll = root.querySelector<HTMLButtonElement>(".pf-pikit-view-all");
+    expect(viewAll).not.toBeNull();
+    expect(viewAll!.textContent).toContain("6");
+    expect(root.querySelectorAll(".pf-pikit-card")).toHaveLength(1);
+
+    viewAll!.click();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.querySelectorAll(".pf-pikit-card")).toHaveLength(2);
+    expect(dialog!.querySelector(".pf-pikit-all-scroll")).not.toBeNull();
+
+    // Escape closes it.
+    dialog!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("shows no view-all affordance when nothing is hidden (#363)", async () => {
+    vi.useFakeTimers();
+    testEnv.invoke.mockImplementation((cmd: string) =>
+      cmd === "list_pi_kit_run_page"
+        ? Promise.resolve({ runs: [clone(ACTIVE_RUN)], total: 1 })
+        : Promise.resolve(null),
+    );
+    await mountPanel();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(root.querySelector(".pf-pikit-view-all")).toBeNull();
+  });
+
   it("still collapses when the user asks it to", async () => {
     vi.useFakeTimers();
-    testEnv.invoke.mockResolvedValue([ACTIVE_RUN]);
+    testEnv.invoke.mockResolvedValue({ runs: [ACTIVE_RUN], total: 1 });
     await mountPanel();
     await vi.advanceTimersByTimeAsync(0);
 

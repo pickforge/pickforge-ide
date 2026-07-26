@@ -108,6 +108,20 @@ export function listPiKitRuns(): Promise<PiKitRunEntry[]> {
   return invoke<PiKitRunEntry[]>("list_pi_kit_runs");
 }
 
+/** One page of runs plus the total on disk. */
+export interface PiKitRunPage {
+  runs: PiKitRunEntry[];
+  total: number;
+}
+
+/** Every ACTIVE run plus the `limit` most recent ended ones, with the total.
+ *  Not "the newest N": run ids embed a start time, so a long-running active run
+ *  sorts below newer ended ones and a strict newest-N page would hide exactly
+ *  the runs still worth acting on (#363). */
+export function listPiKitRunPage(limit: number): Promise<PiKitRunPage> {
+  return invoke<PiKitRunPage>("list_pi_kit_run_page", { limit });
+}
+
 export interface PiKitAbandonOutcome {
   requested: boolean;
   /** Best-effort: whether the owning pi-kit runner appeared to consume the

@@ -469,6 +469,49 @@ test("flatChatList: a short pane scrolls the list instead of squashing cards (#3
   expect(listScrolls).toBe(true);
 });
 
+// #356: the list re-sorts mid-turn — a chat promoted out of the quiet tail is
+// inserted as a live work card ABOVE the reader's scroll offset. The browser
+// answers content growth above the viewport by silently adjusting scrollTop,
+// which in a short pane parks the view mid-card and reads as the section
+// having collapsed. jsdom has no layout engine, so this cannot be a unit test;
+// it follows #341's assertion-only (non-screenshot) precedent above.
+//
+// The synthetic insertion stands in for a real quiet→live promotion: it
+// isolates the anchoring behavior deterministically, where driving a genuine
+// `chatBusy` flip would need a new fixture switch in `src/lib/tauriMock.ts`.
+test("flatChatList: content growing above the fold does not silently re-scroll the list (#356)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 560 });
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+    localStorage.setItem("pickforge.vrt.flatChatListHeavyFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Whisper batch tuning").waitFor();
+
+  const drift = await page.locator(".pf-flat-list").evaluate(async (list: HTMLElement) => {
+    const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    list.scrollTop = 40;
+    await raf();
+    const before = list.scrollTop;
+    const promoted = document.createElement("div");
+    promoted.style.height = "120px";
+    list.insertBefore(promoted, list.firstElementChild);
+    await raf();
+    const after = list.scrollTop;
+    promoted.remove();
+    return { before, after };
+  });
+
+  // Non-vacuity guard: if the fixture ever fits the viewport, `scrollTop = 40`
+  // clamps to 0 and the drift assertion passes for free, fix or no fix.
+  expect(drift.before).toBe(40);
+  // Without `overflow-anchor: none` this measured 40 -> 162.
+  expect(drift.after).toBe(drift.before);
+});
+
 test("flatChatList calm pane (visual) — no live chats, just the quiet tail", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));

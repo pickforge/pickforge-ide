@@ -99,7 +99,7 @@ test("flatChatList: new-chat menu shows terminal and harness marks", async ({ pa
 // project — the flat list's whole point is "everything that needs me across
 // projects", so filtering to one project must never hide one that lives in
 // another.
-test("flatChatList project chips single-select filter working/quiet, never hide needs-you", async ({ page }) => {
+test("flatChatList project dropdown single-selects filter working/quiet, never hide needs-you", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
     localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
@@ -107,15 +107,32 @@ test("flatChatList project chips single-select filter working/quiet, never hide 
   await page.goto("/#/workbench");
   await page.getByText("PR monitoring agent flow").waitFor();
 
-  const chips = page.locator(".pf-flat-chip");
-  await expect(chips).toHaveText(["All projects", "acme-app", "widgets"]);
-  await expect(chips.filter({ hasText: "All projects" })).toHaveClass(/pf-flat-chip--on/);
+  // #371: the chip row became the app's one dropdown. `All projects` is a real
+  // option, not a placeholder, so it is the trigger's label in the all-state.
+  const trigger = page.locator(".pf-flat-project-filter .pf-dropdown-trigger");
+  await expect(trigger).toContainText("All projects");
+
+  // The point of the swap: the toolbar is ONE row and stays one row. The chip
+  // row it replaced wrapped and measured 72px here, leaving a 108px list
+  // viewport for 92px cards; the dropdown measures 36px and leaves 144px.
+  // A regression to a wrapping control would show up as this growing.
+  const barHeight = await page
+    .locator(".pf-flat-bar")
+    .evaluate((el) => el.getBoundingClientRect().height);
+  expect(barHeight).toBeLessThanOrEqual(44);
+
+  await trigger.click();
+  const options = page.locator(".pf-dropdown-option-label");
+  await expect(options).toHaveText(["All projects", "acme-app", "widgets"]);
+  await expect(
+    page.locator(".pf-dropdown-option--on .pf-dropdown-option-label"),
+  ).toHaveText("All projects");
 
   // "PR monitoring agent flow" is a widgets chat — filtering to acme-app must
   // still show it, above acme-app's own working/quiet chats, while hiding
   // widgets' quiet chats ("Slider refactor", "Local usage analytics plan").
-  await chips.filter({ hasText: "acme-app" }).click();
-  await expect(chips.filter({ hasText: "acme-app" })).toHaveClass(/pf-flat-chip--on/);
+  await options.filter({ hasText: "acme-app" }).click();
+  await expect(trigger).toContainText("acme-app");
 
   const titles = await page
     .locator(".pf-flat-list .pf-work-card-title, .pf-flat-list .pf-flat-title")
@@ -127,6 +144,38 @@ test("flatChatList project chips single-select filter working/quiet, never hide 
     "Settings polish", // quiet, acme-app
   ]);
   await expect(page.locator(".pf-flat-quiet-divider")).toHaveText("quiet · 2");
+});
+
+// #371: the chips carried the project context menu (rename, remote host, move
+// to group, archive) and the flat list has no other project surface, so losing
+// it in the swap would be a silent regression. Right-clicking an option row
+// must close the dropdown and open the same ProjectMenu.
+test("flatChatList: right-clicking a project option opens the project menu, not the browser's", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.locator(".pf-flat-project-filter .pf-dropdown-trigger").click();
+  await page.locator(".pf-dropdown-option-label").filter({ hasText: "acme-app" }).click({
+    button: "right",
+  });
+
+  // The dropdown yields to the menu rather than stacking two popovers.
+  await expect(page.locator(".pf-dropdown-option")).toHaveCount(0);
+  const menu = page.locator(".pf-floating-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Rename");
+
+  // Selection is unchanged — a right-click inspects, it does not filter.
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".pf-flat-project-filter .pf-dropdown-trigger")).toContainText(
+    "All projects",
+  );
 });
 
 // #306 PR1 review (P2-2): the eager cross-project load must not blank the

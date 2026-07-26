@@ -13,6 +13,11 @@ export interface DropdownOption {
   icon?: () => JSX.Element;
   /** Optional trailing content per row (e.g. a StatusPill). */
   trailing?: JSX.Element;
+  /** Optional per-row right-click handler. Added for the flat sidebar's
+   *  project filter (#371): the chips it replaced carried the project context
+   *  menu, and the flat list has no other project surface, so the affordance
+   *  has to survive the swap. Optional — every other Dropdown is unaffected. */
+  onContextMenu?: (event: MouseEvent) => void;
 }
 
 /** One option row in the open menu. A child component (not inlined in the
@@ -64,6 +69,18 @@ function DropdownOptionRow(props: {
         }
       }}
       onClick={props.onChoose}
+      onContextMenu={
+        props.option.onContextMenu
+          ? (event) => {
+              // Close first: the handler opens its own popover positioned from
+              // this event's coords, and two stacked popovers is not a state
+              // this app has. `false` skips focus restore so the trigger does
+              // not steal focus back from the menu that is about to open.
+              props.onClose(false);
+              props.option.onContextMenu?.(event);
+            }
+          : undefined
+      }
     >
       <span class="pf-dropdown-check" aria-hidden="true">
         <Show when={props.selected}>

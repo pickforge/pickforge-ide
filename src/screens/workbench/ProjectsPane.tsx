@@ -15,6 +15,7 @@ import {
   Switch,
 } from "solid-js";
 import { FloatingMenu } from "../../components/FloatingMenu";
+import { Dropdown, type DropdownOption } from "../../components/Dropdown";
 import { Collapse } from "../../components/ui";
 import {
   IconChevronDown,
@@ -1243,37 +1244,45 @@ const GroupHeader = (props: { ctrl: ProjectsPaneController; group: ProjectGroup;
 };
 
 // ---- flat chat list (#306 PR1, behind `flatChatList`) ----
-// Projects become single-select filter chips; project affordances (remote
-// badge, archive, rename) move behind the chip's own context menu instead of
-// living inline — right-click reopens the same ProjectMenu the tree used.
+// The project filter is the app's one dropdown (#371). It used to be a row of
+// pill chips, which wrapped onto 2-3 rows in a narrow sidebar — 72px of fixed
+// chrome that grew with every project and ate the list's height — and rounded
+// filled/outlined pills are the shape the design system rules out for
+// state-bearing text. Project affordances (rename, remote host, move to group,
+// archive) ride each option's right-click, the same ProjectMenu the chips
+// opened; the flat list has no other project surface, so that has to survive.
+// `ALL PROJECTS` is a real option, not a placeholder.
+const ALL_PROJECTS = "__all";
+
 const FlatFilterBar = (props: { ctrl: ProjectsPaneController }) => {
   const ctrl = props.ctrl;
+  const options = (): DropdownOption[] => [
+    { value: ALL_PROJECTS, label: "All projects" },
+    ...workspace.projects.map((p) => ({
+      value: p.projectRoot,
+      label: p.displayName,
+      onContextMenu: (e: MouseEvent) => ctrl.openFromContext("project", p.projectRoot, e),
+    })),
+  ];
+  // Archiving the filtered project — reachable from this very menu — used to
+  // leave `filterRoot` pointing at a root that no longer exists, which the
+  // dropdown rendered as its generic "Select" placeholder while the list stayed
+  // filtered to nothing. A filter aimed at a gone project is not a state worth
+  // preserving, so fall back to the all-state.
+  createEffect(() => {
+    const root = ctrl.filterRoot();
+    if (root === null) return;
+    if (!workspace.projects.some((p) => p.projectRoot === root)) ctrl.setFilterRoot(null);
+  });
   return (
     <div class="pf-pane-toolbar pf-flat-bar">
-      <div class="pf-flat-filters">
-        <button
-          type="button"
-          class="pf-flat-chip"
-          classList={{ "pf-flat-chip--on": ctrl.filterRoot() === null }}
-          onClick={() => ctrl.setFilterRoot(null)}
-        >
-          All projects
-        </button>
-        <For each={workspace.projects}>
-          {(p) => (
-            <button
-              type="button"
-              class="pf-flat-chip"
-              classList={{ "pf-flat-chip--on": ctrl.filterRoot() === p.projectRoot }}
-              onClick={() => ctrl.setFilterRoot(p.projectRoot)}
-              onContextMenu={(e) => ctrl.openFromContext("project", p.projectRoot, e)}
-              title={`${p.displayName} — right-click for project options`}
-            >
-              {p.displayName}
-            </button>
-          )}
-        </For>
-      </div>
+      <Dropdown
+        class="pf-flat-project-filter"
+        title="Filter by project"
+        value={ctrl.filterRoot() ?? ALL_PROJECTS}
+        options={options()}
+        onChange={(value) => ctrl.setFilterRoot(value === ALL_PROJECTS ? null : value)}
+      />
       <div class="pf-pane-toolbar-actions">
         <button
           class="pf-icon-btn"

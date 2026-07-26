@@ -99,6 +99,12 @@ reset this file.
   run id, which also lets lane values update in place instead of remounting the
   row. Swarm run cards in chat had the same defect from their own store's
   per-update object rebuild and now key expansion by run id.
+- The flat sidebar's project filter (behind the default-off `flatChatList`
+  flag, #371) is now the app's one dropdown instead of a wrapping row of pill
+  chips. The chips wrapped onto multiple rows and grew with every project —
+  72px of fixed chrome against a 108px list viewport; the dropdown is 36px and
+  leaves 144px. Project right-click options (rename, remote host, move to
+  group, archive) moved onto the dropdown's option rows, so nothing is lost.
 - Settings shell (behind the default-off `settingsNavigation` flag, #211 PR 3):
   section titles inside the content pane are now real headings (h2, with h3
   for sub-groups like Connector diagnostics and Danger zone) instead of

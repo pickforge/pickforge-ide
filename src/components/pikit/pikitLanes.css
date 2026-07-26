@@ -72,6 +72,14 @@
   align-items: center;
   color: var(--pf-text-low);
 }
+/* Same rotating chevron as the chat transcript's disclosure rows (#372 PR 2) —
+   this panel was modelled on SwarmRunCard, so the two should not drift. */
+.pf-pikit-summary-chevron svg {
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
+}
+.pf-pikit-card--open .pf-pikit-summary-chevron svg {
+  transform: rotate(90deg);
+}
 
 .pf-pikit-summary-title {
   flex: none;

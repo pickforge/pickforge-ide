@@ -61,6 +61,9 @@ reset this file.
   tight as one block, while prose keeps the wider "new thought" distance either
   side of it. Previously every pair was spaced identically, so nothing in the
   layout told a run of tool calls apart from a change of subject.
+- Swarm run cards in chat and the pi-kit lanes panel now use the same
+  expand/collapse motion and rotating chevron as the rest of the transcript,
+  so every disclosure in the app behaves one way.
 - Expanding a CMD, TOOL, MCP or WEB row in chat now eases open and closed with
   a chevron that turns, instead of the body popping into existence and
   everything below snapping down. THINKING already behaved this way, so the

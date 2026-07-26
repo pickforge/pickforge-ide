@@ -147,7 +147,12 @@ describe("PiKitLanesPanel", () => {
     expect(summary().getAttribute("aria-expanded")).toBe("true");
 
     summary().click();
+    // The state flips at once; the body lingers just long enough for the
+    // collapse to play (#372 PR 2).
     expect(summary().getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector(".pf-pikit-card--open")).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(400);
     expect(root.querySelector(".pf-pikit-body")).toBeNull();
   });
 });

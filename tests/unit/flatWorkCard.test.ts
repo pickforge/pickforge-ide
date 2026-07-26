@@ -208,6 +208,79 @@ describe("cardBrief — present only with real task-brief text", () => {
   });
 });
 
+describe("cardBrief — the active plan step (#361 PR2)", () => {
+  const planOf = (items: { text: string; status: PlanItemStatus }[]) => () => ({ items });
+
+  it("shows the in-progress step, so the brief and `plan M/N` read one source", () => {
+    const brief = cardBrief(
+      chat({ taskBriefText: null }),
+      planOf([
+        { text: "Read the parser", status: "completed" },
+        { text: "Lift the Bash-only guard", status: "inProgress" },
+        { text: "Write the fixture tests", status: "pending" },
+      ]),
+    );
+    expect(brief).toBe("Lift the Bash-only guard");
+  });
+
+  it("prefers the plan step over a cached one-liner, so the two cannot drift", () => {
+    const brief = cardBrief(
+      chat({ taskBriefText: "Some older summary" }),
+      planOf([{ text: "Lift the Bash-only guard", status: "inProgress" }]),
+    );
+    expect(brief).toBe("Lift the Bash-only guard");
+  });
+
+  it("falls through to the one-liner when the plan is all complete", () => {
+    // M === N leaves no inProgress item; showing the last step would be a lie.
+    const brief = cardBrief(
+      chat({ taskBriefText: "Wrapping up" }),
+      planOf([
+        { text: "Read the parser", status: "completed" },
+        { text: "Ship it", status: "completed" },
+      ]),
+    );
+    expect(brief).toBe("Wrapping up");
+  });
+
+  it("shows nothing when a finished plan has no one-liner either", () => {
+    const brief = cardBrief(
+      chat({ taskBriefText: null }),
+      planOf([{ text: "Ship it", status: "completed" }]),
+    );
+    expect(brief).toBeNull();
+  });
+
+  it("falls through when there is no plan at all", () => {
+    expect(cardBrief(chat({ taskBriefText: "One-liner" }), () => null)).toBe("One-liner");
+    expect(cardBrief(chat({ taskBriefText: null }), () => null)).toBeNull();
+  });
+
+  it("ignores an in-progress step with no text rather than showing a blank line", () => {
+    const brief = cardBrief(
+      chat({ taskBriefText: null }),
+      planOf([{ text: "   ", status: "inProgress" }]),
+    );
+    expect(brief).toBeNull();
+  });
+
+  it("flattens and caps a long step — the line is single-line-ellipsis anyway", () => {
+    const long = `${"x".repeat(200)}`;
+    const brief = cardBrief(
+      chat({ taskBriefText: null }),
+      planOf([{ text: `multi\n  line\n  ${long}`, status: "inProgress" }]),
+    );
+    expect(brief).not.toBeNull();
+    expect(brief!.length).toBeLessThanOrEqual(120);
+    expect(brief).not.toContain("\n");
+    expect(brief!.endsWith("…")).toBe(true);
+  });
+
+  it("still works with no plan accessor at all (call sites that have none)", () => {
+    expect(cardBrief(chat({ taskBriefText: "Just text" }))).toBe("Just text");
+  });
+});
+
 describe("cardBranch — footer principle: present only for a worktree with a resolvable branch (#306 PR3)", () => {
   it("returns the branch when the project root's cache holds one", () => {
     const branchOf = (root: string) => (root === "/proj/a" ? "feat/flat-card-plumbing" : undefined);

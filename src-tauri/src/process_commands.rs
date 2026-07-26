@@ -8,7 +8,7 @@ use std::time::Duration;
 use pickforge_core::agents::{
     claude_auth_status_authenticated, codex_login_status_authenticated, detect_pi_kit,
     pi_kit_data_dir, pi_kit_runs_dir, AuthPresenceProbe, AuthPresenceUnknownReason,
-    PiKitAbandonOutcome, PiKitDetection, PiKitRunEntry, PIKIT_DATA_DIR_ENV,
+    PiKitAbandonOutcome, PiKitDetection, PiKitRunEntry, PiKitRunPage, PIKIT_DATA_DIR_ENV,
 };
 use pickforge_core::process::RunError;
 use pickforge_core::{is_on_user_path, run_timeout_capped, CommandOutcome, OutputTruncation};

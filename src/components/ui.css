@@ -6,7 +6,13 @@
   display: grid;
   grid-template-rows: 1fr;
   min-height: 0;
-  transition: grid-template-rows var(--pf-dur-standard) var(--pf-ease-forge);
+  /* `--pf-ease-curve` (easeInOutCubic) is what docs/design-system/motion.md
+     prescribes for two-way expand/collapse — symmetric in and out, where
+     `--pf-ease-forge` is an entrance curve. `--pf-dur-fast` because these rows
+     are dense: at `standard` a reader toggling several in a row waits on the
+     animation. Both are tokens, so reduced motion collapses them to 0ms and
+     the disclosure renders instantly for free (#372). */
+  transition: grid-template-rows var(--pf-dur-fast) var(--pf-ease-curve);
 }
 .pf-collapse--closed {
   grid-template-rows: 0fr;

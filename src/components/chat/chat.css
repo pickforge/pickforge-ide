@@ -333,7 +333,7 @@
   border-right: var(--pf-hairline-width) solid var(--pf-text-low);
   border-bottom: var(--pf-hairline-width) solid var(--pf-text-low);
   transform: rotate(-45deg);
-  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
 }
 .pf-chat-thinking-chevron--open {
   transform: rotate(45deg);
@@ -726,6 +726,18 @@
   justify-content: center;
   width: var(--pf-space-md);
   color: var(--pf-text-low);
+}
+/* One icon that turns, not two icons that swap (#372). Swapping DOM nodes
+   gives the affordance no motion of its own, so the disclosure read as two
+   unrelated events; rotating is what makes open/close read as one gesture —
+   the thinking chevron above has always done this. `.pf-chat-line--open` was
+   already applied by every one of these cards and matched no rule anywhere:
+   a hook that was written and never connected. */
+.pf-chat-line-chevron svg {
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
+}
+.pf-chat-line--open .pf-chat-line-chevron svg {
+  transform: rotate(90deg);
 }
 .pf-chat-line-chevron-spacer {
   display: inline-block;

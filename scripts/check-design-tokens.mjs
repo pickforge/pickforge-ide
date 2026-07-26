@@ -11,36 +11,54 @@ const SRC = join(ROOT, "src");
 // curve would visibly pump their speed. The `linear()` function is an arbitrary
 // custom curve, so it is caught rather than carved out.
 const DECLARATION = /(?:transition|animation)(?:-timing-function)?\s*:\s*([^;{}]*)/gi;
+// The same declarations can be expressed from TS/TSX and bypass the CSS scan
+// entirely: an inline `style={{ transition: "... 200ms ease-in" }}`, or a Web
+// Animations `element.animate(..., { easing: "..." })`. There are zero of
+// either today — this keeps it that way rather than fixing a live violation
+// (#359). Matched on the quoted string so a `var(--pf-ease-*)` reference still
+// passes through the same carve-out as CSS.
+const TS_DECLARATION =
+  /(?:transition|animation|animationTimingFunction|transitionTimingFunction|easing)\s*:\s*(`[^`]*`|"[^"]*"|'[^']*')/gi;
 const VAR_REFERENCE = /var\(\s*--[a-zA-Z0-9-]+\s*(?:,[^()]*)?\)/gi;
 const RAW_EASING = /\b(?:cubic-bezier|ease-in-out|ease-in|ease-out|ease\b|linear(?=\s*\())/i;
 
-function cssFiles(dir) {
+function filesWithExt(dir, test) {
   return readdirSync(dir).flatMap((entry) => {
     const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return cssFiles(path);
-    return path.endsWith(".css") ? [path] : [];
+    if (statSync(path).isDirectory()) return filesWithExt(path, test);
+    return test(path) ? [path] : [];
   });
 }
 
+const cssFiles = (dir) => filesWithExt(dir, (path) => path.endsWith(".css"));
+const scriptFiles = (dir) => filesWithExt(dir, (path) => /\.tsx?$/.test(path));
+
 const files = cssFiles(SRC);
-if (files.length === 0) {
-  console.error(`check-design-tokens: found no CSS under ${relative(ROOT, SRC)} — refusing to pass vacuously`);
+const scripts = scriptFiles(SRC);
+if (files.length === 0 || scripts.length === 0) {
+  console.error(
+    `check-design-tokens: found no ${files.length === 0 ? "CSS" : "TS/TSX"} under ${relative(ROOT, SRC)} — refusing to pass vacuously`,
+  );
   process.exit(1);
 }
 
-const violations = files.flatMap((path) => {
-  const source = readFileSync(path, "utf8");
-  return [...source.matchAll(DECLARATION)].flatMap((match) => {
-    if (!RAW_EASING.test(match[1].replace(VAR_REFERENCE, ""))) return [];
-    return [
-      {
-        file: relative(ROOT, path),
-        line: source.slice(0, match.index).split("\n").length,
-        declaration: match[0].replace(/\s+/g, " ").trim(),
-      },
-    ];
+function scan(paths, pattern) {
+  return paths.flatMap((path) => {
+    const source = readFileSync(path, "utf8");
+    return [...source.matchAll(pattern)].flatMap((match) => {
+      if (!RAW_EASING.test(match[1].replace(VAR_REFERENCE, ""))) return [];
+      return [
+        {
+          file: relative(ROOT, path),
+          line: source.slice(0, match.index).split("\n").length,
+          declaration: match[0].replace(/\s+/g, " ").trim(),
+        },
+      ];
+    });
   });
-});
+}
+
+const violations = [...scan(files, DECLARATION), ...scan(scripts, TS_DECLARATION)];
 
 if (violations.length > 0) {
   for (const { file, line, declaration } of violations) {
@@ -52,4 +70,6 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-design-tokens: no raw easing in ${files.length} CSS files`);
+console.log(
+  `check-design-tokens: no raw easing in ${files.length} CSS files and ${scripts.length} TS/TSX files`,
+);

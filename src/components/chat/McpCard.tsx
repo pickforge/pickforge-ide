@@ -1,6 +1,7 @@
 import { type JSX, Show, createSignal } from "solid-js";
 import { compactInline, hasHiddenDetail } from "../../lib/chatDisplay";
-import { IconChevronDown, IconChevronRight } from "../icons";
+import { IconChevronRight } from "../icons";
+import { Disclosure } from "../ui";
 import "./chat.css";
 
 export function McpCard(props: {
@@ -24,9 +25,7 @@ export function McpCard(props: {
       >
         <span class="pf-chat-line-chevron" aria-hidden="true">
           <Show when={canExpand()} fallback={<span class="pf-chat-line-chevron-spacer" />}>
-            <Show when={open()} fallback={<IconChevronRight size={12} />}>
-              <IconChevronDown size={12} />
-            </Show>
+            <IconChevronRight size={12} />
           </Show>
         </span>
         <span class="pf-chat-line-tag">mcp</span>
@@ -41,11 +40,13 @@ export function McpCard(props: {
           </span>
         </Show>
       </button>
-      <Show when={open() && detail()}>
-        <div class="pf-chat-line-body">
-          <pre class="pf-chat-tail">{detail()}</pre>
-        </div>
-      </Show>
+      <Disclosure open={open()}>
+        <Show when={detail()}>
+          <div class="pf-chat-line-body">
+            <pre class="pf-chat-tail">{detail()}</pre>
+          </div>
+        </Show>
+      </Disclosure>
     </div>
   );
 }

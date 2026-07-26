@@ -1,6 +1,6 @@
 // Design-system primitives, web port (SolidJS). Phase 0 subset:
 // MonoEyebrow, HairlinePanel, StatusPill, Chip, EmberButton.
-import { type JSX, Show, splitProps } from "solid-js";
+import { type JSX, Show, createEffect, createSignal, onCleanup, splitProps } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import "./ui.css";
 
@@ -74,6 +74,69 @@ export function Collapse(props: { open: boolean; children: JSX.Element }): JSX.E
   return (
     <div class="pf-collapse" classList={{ "pf-collapse--closed": !props.open }}>
       <div class="pf-collapse-body">{props.children}</div>
+    </div>
+  );
+}
+
+/** Longest transition on `element`, in ms. Read from computed style rather than
+ *  hardcoded so the duration stays a token: `prefers-reduced-motion` collapses
+ *  `--pf-dur-*` to `0ms`, and this reads that as 0 and unmounts on the next
+ *  tick instead of waiting on a `transitionend` that will never fire. */
+function transitionMs(element: HTMLElement): number {
+  const raw = getComputedStyle(element).transitionDuration;
+  if (!raw) return 0;
+  return raw
+    .split(",")
+    .reduce((longest, part) => {
+      const value = part.trim();
+      const seconds = value.endsWith("ms") ? parseFloat(value) / 1000 : parseFloat(value);
+      return Number.isFinite(seconds) ? Math.max(longest, seconds) : longest;
+    }, 0) * 1000;
+}
+
+/** `Collapse`'s mount-aware sibling: the body is absent from the DOM while
+ *  closed, mounts when opened, and stays mounted only long enough for the
+ *  collapse to play out.
+ *
+ *  `Collapse` keeps its content mounted always, which is right for the small,
+ *  known-size bodies it wraps. Transcript disclosure bodies are neither — a
+ *  command's output tail or a lane list can be large, and they live inside a
+ *  virtualized timeline where every mounted row carries a ResizeObserver. So
+ *  the DOM cost is paid only while a row is actually open or closing (#372). */
+export function Disclosure(props: { open: boolean; children: JSX.Element }): JSX.Element {
+  const [mounted, setMounted] = createSignal(props.open);
+  let frame!: HTMLDivElement;
+  let timer: number | undefined;
+
+  const clearTimer = () => {
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    timer = undefined;
+  };
+
+  createEffect(() => {
+    if (props.open) {
+      // Re-opening mid-collapse cancels the pending unmount, so a fast
+      // toggle never drops the body out from under its own animation.
+      clearTimer();
+      setMounted(true);
+      return;
+    }
+    if (!mounted()) return;
+    clearTimer();
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      setMounted(false);
+    }, transitionMs(frame));
+  });
+
+  onCleanup(clearTimer);
+
+  return (
+    <div ref={frame} class="pf-collapse" classList={{ "pf-collapse--closed": !props.open }}>
+      <div class="pf-collapse-body">
+        <Show when={mounted()}>{props.children}</Show>
+      </div>
     </div>
   );
 }

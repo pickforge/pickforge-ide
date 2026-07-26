@@ -109,13 +109,47 @@ export function cardContextEdge(
   return { fraction, color: state === "working" ? "ember" : "amber" };
 }
 
-/** Task brief line — present only when the chat carries real brief text (no
- *  placeholder copy for a chat that hasn't been given one; taskBriefText has
- *  no writer yet as of #306 PR2, so this is always null today and lights up
- *  once one lands). */
-export function cardBrief(chat: Chat): string | null {
+/** How long a brief may be before it is cut. The line is single-line-ellipsis
+ *  in CSS anyway, so anything past this is invisible — capping here keeps a
+ *  persisted value from being longer than anything that can ever be read. */
+const BRIEF_MAX_CHARS = 120;
+
+/** Task brief line — the active plan step, falling back to a model-written
+ *  one-liner, then to nothing (decided on #361, 2026-07-25).
+ *
+ *  The plan step wins on purpose: the card says *step 2 of 5* in its footer and
+ *  *what step 2 is* on this line, both read from `latestPlanForChat`, so the
+ *  two can never disagree. `taskBriefText` is the fallback slot — it has no
+ *  writer outside fixtures today and lights up when #210's producer lands.
+ *
+ *  No placeholder when there is nothing to say, per the locked footer rule. */
+export function cardBrief(
+  chat: Chat,
+  latestPlanOf?: (id: string) => CardPlanLike | null,
+): string | null {
+  const step = activePlanStep(chat, latestPlanOf);
+  if (step) return step;
   const text = chat.taskBriefText?.trim();
-  return text ? text : null;
+  return text ? clipBrief(text) : null;
+}
+
+function activePlanStep(
+  chat: Chat,
+  latestPlanOf?: (id: string) => CardPlanLike | null,
+): string | null {
+  if (!latestPlanOf) return null;
+  const plan = latestPlanOf(chat.chatId);
+  if (!plan) return null;
+  // An all-complete plan has no `inProgress` item, so it falls through to the
+  // one-liner and then to nothing rather than showing a stale final step.
+  const active = plan.items.find((item) => item.status === "inProgress");
+  const text = active?.text?.trim();
+  return text ? clipBrief(text) : null;
+}
+
+function clipBrief(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > BRIEF_MAX_CHARS ? `${flat.slice(0, BRIEF_MAX_CHARS - 1)}…` : flat;
 }
 
 /** Footer branch item (#306 PR3) — present only when the chat's project root
@@ -136,7 +170,7 @@ export function cardBranch(
  *  importing agentChat.ts's own timeline type for it alone (same reasoning
  *  as `CardAgentChatLike` above). */
 export interface CardPlanLike {
-  items: readonly { status: PlanItemStatus }[];
+  items: readonly { status: PlanItemStatus; text?: string }[];
 }
 
 export interface CardPlanProgress {

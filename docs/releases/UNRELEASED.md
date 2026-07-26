@@ -119,6 +119,12 @@ reset this file.
   blocked from dead. The elapsed clock comes from the SDK's own heartbeat, not
   a client-side timer, so it cannot drift; compacting and requesting are
   surfaced too.
+- Sidebar work cards now show what the agent is actually doing (#361 PR 2,
+  behind the default-off `flatChatList` flag): the brief line is the plan's
+  active step, so a card reading `plan 2/5` also says what step 2 is. Both come
+  from one source, so they cannot disagree. A chat with no plan falls back to a
+  model-written one-liner, and a finished plan shows nothing rather than a
+  stale final step.
 - The default-off `pikitLanes` panel no longer re-reads and re-parses every run
   on disk every four seconds, or grow without bound (#363 PR 2). It shows every
   ACTIVE run plus the five most recent ended ones, with the rest behind a

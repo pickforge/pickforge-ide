@@ -1508,7 +1508,7 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
   const plan = () => cardPlanProgress(id, latestPlanForChat);
   const lanes = () => cardLanes(cardSwarmRun(id, root, swarmRuns));
   const cost = () => cardCost(id, agentChat);
-  const brief = () => cardBrief(props.chat);
+  const brief = () => cardBrief(props.chat, latestPlanForChat);
   const edge = () => (props.state === "justFinished" ? null : cardContextEdge(id, props.state, agentChat));
   const renaming = () => ctrl.renaming() === id;
   // Shared between the button (normal) and plain-div (renaming) variants

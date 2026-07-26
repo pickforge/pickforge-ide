@@ -76,17 +76,28 @@ test("agent chat fixture", async ({ page }) => {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 121));
     await nextFrame();
 
-    const before = snapshot();
-    await nextFrame();
-    const after = snapshot();
-    if (
-      before.scrollTop !== after.scrollTop
-      || before.scrollHeight !== after.scrollHeight
-      || before.firstRowTop !== after.firstRowTop
-    ) {
-      throw new Error("Agent chat timeline did not settle before screenshot capture");
+    // Poll for a settled pair rather than demanding the very first pair of
+    // frames match. The layout genuinely does settle, but on a loaded CI runner
+    // a single ResizeObserver commit can land between these two frames and the
+    // one-shot check reported that as "did not settle" — a flake that reddened
+    // unrelated PRs (observed 4/4 on a branch that passed 6/6 locally). Waiting
+    // longer is not weaker: the assertion is still "two consecutive frames are
+    // identical", it just gets more than one chance to observe it, and it still
+    // fails loudly if the timeline never stops moving.
+    let before = snapshot();
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await nextFrame();
+      const after = snapshot();
+      if (
+        before.scrollTop === after.scrollTop
+        && before.scrollHeight === after.scrollHeight
+        && before.firstRowTop === after.firstRowTop
+      ) {
+        return after;
+      }
+      before = after;
     }
-    return after;
+    throw new Error("Agent chat timeline did not settle before screenshot capture");
   });
   expect(settledTimeline.scrollTop).toBe(0);
 

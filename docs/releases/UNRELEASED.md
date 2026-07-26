@@ -34,6 +34,12 @@ reset this file.
   beside the agent/model pickers or stack into three lines in a narrow pane, and
   the wider bar makes a small fraction of a large context window visible.
 - Fixed flat-list work cards collapsing into clipped one-line pills when the sidebar pane is short (e.g. Files section expanded); the list now scrolls, which also stops rows shifting under the cursor and eating clicks.
+- The sidebar chat list no longer lets the browser silently re-scroll it when a
+  chat is promoted to a live card above the fold. Applies to Chromium-based
+  webviews (Windows/WebView2) today; WebKit does not implement scroll anchoring
+  until Safari 27, so this is prevention rather than a fix there. macOS builds
+  were never affected by this mechanism — the transient pane clipping reported
+  in #356 has a different, still-unidentified cause on WKWebView.
 - The chat now follows a turn all the way to its end. A streaming reply no longer
   reserves a screen of empty space below itself, and the turn's closing token/cost
   row is no longer left just below the fold — the view stopped following at the

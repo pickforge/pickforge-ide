@@ -128,6 +128,10 @@ export type AgentApprovalQuestion = {
  *  types and the reducers cannot drift apart. */
 export type ToolCallStatus = "inProgress" | "completed" | "failed";
 
+export type TurnActivity =
+  | { kind: "tool"; name: string; elapsedSeconds: number | null }
+  | { kind: "status"; label: string };
+
 export type AgentApproval = {
   approvalId: string;
   kind: "command" | "fileChange" | "toolUse" | "question";
@@ -186,6 +190,11 @@ export interface AgentChatState {
   mode: string | null;
   providerSwitched: boolean;
   turnActive: boolean;
+  /** What the turn is doing RIGHT NOW — the running tool and its elapsed
+   *  seconds, or the SDK's own compacting/requesting note. Live-only: never
+   *  persisted, and cleared on every turn boundary, because it describes a
+   *  moment rather than a fact about the transcript (#365). */
+  activity: TurnActivity | null;
   error: string | null;
   timeline: AgentTimelineItem[];
   queue: QueuedMessage[];
@@ -386,6 +395,7 @@ function emptyState(
     mode: null,
     providerSwitched: false,
     turnActive: false,
+    activity: null,
     error: null,
     timeline: [],
     queue: [],
@@ -433,6 +443,7 @@ function appendOptimisticUserMessage(
   };
   setChats(chatId, {
     turnActive: true,
+    activity: null,
     error: null,
     timeline: [...chat.timeline, message],
   });
@@ -943,6 +954,28 @@ function reduceCommandDone(
  *  SECOND row rather than resolving the first — and the parser only started
  *  emitting completions in the same change that added this, so the two must
  *  not be separated (#362). */
+/** Names the running tool by matching the heartbeat's itemId against the
+ *  timeline row that started it. An unmatched id is ignored rather than shown
+ *  as a nameless clock — other providers never emit this at all. */
+function withToolProgress(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "toolProgress" }>,
+): AgentChatState {
+  const row = chat.timeline.find(
+    (item): item is Extract<AgentTimelineItem, { type: "toolUse" | "command" | "mcpToolCall" }> =>
+      (item.type === "toolUse" || item.type === "command" || item.type === "mcpToolCall") &&
+      item.itemId === event.itemId,
+  );
+  if (!row) return chat;
+  const name =
+    row.type === "toolUse"
+      ? row.name
+      : row.type === "mcpToolCall"
+        ? `${row.server}/${row.tool}`
+        : row.command;
+  return { ...chat, activity: { kind: "tool", name, elapsedSeconds: event.elapsedSeconds } };
+}
+
 function reduceMcpToolCall(
   chat: AgentChatState,
   event: Extract<AgentEvent, { kind: "mcpToolCall" }>,
@@ -1136,7 +1169,7 @@ function reduceAgentEvent(
     case "providerEvent":
       return chat;
     case "turnStarted":
-      return { ...chat, turnActive: true, error: null, providerSwitched: false };
+      return { ...chat, turnActive: true, activity: null, error: null, providerSwitched: false };
     case "textDelta":
       return reduceTextDelta(chat, event.itemId ?? null, event.text, nextSeq);
     case "textFinal":
@@ -1176,6 +1209,14 @@ function reduceAgentEvent(
           query: event.query,
         },
       ]);
+    // Live-only, never persisted. `toolProgress` names the running tool by
+    // matching the event's itemId against the timeline row that started it —
+    // the elapsed clock comes from the SDK, not a client-side timer, so it
+    // survives a slow frame and cannot drift (#365).
+    case "toolProgress":
+      return withToolProgress(chat, event);
+    case "turnActivity":
+      return { ...chat, activity: { kind: "status", label: event.activity } };
     case "planUpdate":
       return reducePlanUpdate(chat, event, nextSeq);
     case "usage":
@@ -1183,11 +1224,17 @@ function reduceAgentEvent(
     case "rateLimits":
       return { ...chat, rateLimits: event.payload };
     case "turnDone":
-      return { ...finalizeStreaming(closeOpenChangesReceipt(chat)), turnActive: false, approvals: [] };
+      return {
+        ...finalizeStreaming(closeOpenChangesReceipt(chat)),
+        turnActive: false,
+        activity: null,
+        approvals: [],
+      };
     case "turnFailed":
       return {
         ...finalizeStreaming(closeOpenChangesReceipt(chat)),
         turnActive: false,
+        activity: null,
         error: event.error,
         approvals: [],
       };
@@ -2208,6 +2255,7 @@ function rollbackFailedSend(
   setChats(chatId, {
     ...((chat.provider === "omp" || chat.provider === "pi") ? { sessionId: null } : {}),
     turnActive: false,
+    activity: null,
     error: errorText(error),
     timeline: (chats[chatId]?.timeline ?? []).filter(
       (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
@@ -2516,6 +2564,7 @@ export async function retryAgentChatConnection(chatId: string): Promise<void> {
   setChats(chatId, {
     sessionId: null,
     turnActive: false,
+    activity: null,
     // The dead turn's outcome is unknown, so its backlog waits for an explicit
     // choice rather than firing into a session that just came back (#369).
     queueHeld: chat.queue.length > 0,

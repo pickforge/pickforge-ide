@@ -41,6 +41,7 @@ describe("flags", () => {
       "pikitContext",
       "changesReview",
       "mcpToolDetail",
+      "turnActivity",
       "flatChatList",
       "orchestraBoard",
       "messageQueue",

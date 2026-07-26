@@ -59,12 +59,40 @@ impl ClaudeStreamParser {
             Some("assistant") => self.handle_assistant(&value),
             Some("user") => self.handle_user(&value),
             Some("result") => self.handle_result(&value),
+            // Emitted while a tool runs. The bridge forwards every SDKMessage
+            // verbatim, so this always arrived and the dispatch simply dropped
+            // it — along with the only elapsed clock in the pipeline (#365).
+            Some("tool_progress") => Self::handle_tool_progress(&value),
             Some("rate_limit_event") => Vec::new(),
             _ => Vec::new(),
         }
     }
 
+    fn handle_tool_progress(value: &Value) -> Vec<AgentEvent> {
+        let Some(item_id) = string_at(value, "tool_use_id") else {
+            return Vec::new();
+        };
+        let Some(elapsed) = value.get("elapsed_time_seconds").and_then(Value::as_f64) else {
+            return Vec::new();
+        };
+        vec![AgentEvent::ToolProgress {
+            item_id: item_id.to_string(),
+            elapsed_seconds: elapsed,
+        }]
+    }
+
     fn handle_system(&mut self, value: &Value) -> Vec<AgentEvent> {
+        // `subtype: "status"` is the SDK saying what it is doing between tools
+        // (compacting / requesting). Checked before the init guard, which
+        // returns early once the session has started (#365).
+        if string_at(value, "subtype") == Some("status") {
+            return match string_at(value, "status") {
+                Some(activity) if !activity.is_empty() => vec![AgentEvent::TurnActivity {
+                    activity: activity.to_string(),
+                }],
+                _ => Vec::new(),
+            };
+        }
         if self.session_started || string_at(value, "subtype") != Some("init") {
             return Vec::new();
         }
@@ -1605,6 +1633,81 @@ mod tests {
 
         assert_eq!(compact_input_summary(&json!({})), None);
         assert_eq!(compact_input_summary(&Value::Null), None);
+    }
+
+    #[test]
+    fn tool_progress_carries_an_elapsed_clock_from_the_source() {
+        // There is no timing field anywhere else in the pipeline; without this
+        // the UI would need a client-side timer, which drifts and lies across
+        // a reconnect (#365).
+        let events = events_from(&[&json!({
+            "type": "tool_progress",
+            "tool_use_id": "t1",
+            "tool_name": "Bash",
+            "elapsed_time_seconds": 12.5
+        })
+        .to_string()]);
+
+        assert_eq!(
+            events,
+            vec![AgentEvent::ToolProgress {
+                item_id: "t1".to_string(),
+                elapsed_seconds: 12.5,
+            }]
+        );
+    }
+
+    #[test]
+    fn tool_progress_without_an_id_or_clock_is_ignored() {
+        let events = events_from(&[
+            &json!({ "type": "tool_progress", "elapsed_time_seconds": 1.0 }).to_string(),
+            &json!({ "type": "tool_progress", "tool_use_id": "t1" }).to_string(),
+        ]);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn system_status_surfaces_what_the_sdk_is_doing_between_tools() {
+        let events = events_from(&[
+            &json!({ "type": "system", "subtype": "status", "status": "compacting" }).to_string(),
+            &json!({ "type": "system", "subtype": "status", "status": "requesting" }).to_string(),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                AgentEvent::TurnActivity { activity: "compacting".to_string() },
+                AgentEvent::TurnActivity { activity: "requesting".to_string() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_status_frame_does_not_disturb_session_init() {
+        // `handle_system` returns early once the session has started, so the
+        // status branch has to be checked BEFORE that guard — otherwise every
+        // status after init is silently dropped.
+        let events = events_from(&[
+            &json!({ "type": "system", "subtype": "init", "session_id": "s1" }).to_string(),
+            &json!({ "type": "system", "subtype": "status", "status": "compacting" }).to_string(),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                AgentEvent::SessionStarted { provider_session_id: "s1".to_string() },
+                AgentEvent::TurnActivity { activity: "compacting".to_string() },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_status_is_ignored_rather_than_shown_as_blank() {
+        let events = events_from(&[
+            &json!({ "type": "system", "subtype": "status", "status": "" }).to_string(),
+            &json!({ "type": "system", "subtype": "status" }).to_string(),
+        ]);
+        assert!(events.is_empty(), "{events:?}");
     }
 
     #[test]

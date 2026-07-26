@@ -663,6 +663,7 @@ export function AgentChatView(props: {
       <ChatTimeline
         items={state()?.timeline ?? []}
         working={isAwaitingOutput(state())}
+        activity={state()?.activity ?? null}
         chatId={props.chatId}
         projectRoot={props.projectRoot}
         changesReceipts={changesReceipts}

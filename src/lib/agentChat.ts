@@ -87,6 +87,8 @@ export type AgentEvent =
       status: "inProgress" | "completed" | "failed";
       detail: string | null;
     }
+  | { kind: "toolProgress"; itemId: string; elapsedSeconds: number }
+  | { kind: "turnActivity"; activity: string }
   | { kind: "planUpdate"; items: PlanItem[] }
   | {
       kind: "usage";

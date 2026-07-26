@@ -2688,6 +2688,12 @@ fn handle_runner_event(
             }
             (errors, None)
         }
+        // Live-only, like ProviderPayload below: a tool's elapsed clock and the
+        // SDK's compacting/requesting note describe a turn WHILE it runs. They
+        // are meaningless once replayed from history — the tool has finished
+        // and its real duration is whatever the completion recorded — so they
+        // are never persisted as timeline rows (#365).
+        AgentEvent::ToolProgress { .. } | AgentEvent::TurnActivity { .. } => (Vec::new(), None),
         // Raw provider frames are live diagnostic events. They may contain
         // high-volume chunks and provider-specific data, so never turn them
         // into durable timeline rows.

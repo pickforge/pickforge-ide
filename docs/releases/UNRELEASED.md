@@ -113,6 +113,12 @@ reset this file.
   permissions are still bypassed only when the user explicitly selects bypass
   mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
+- The working row now names what is running and how long it has been running,
+  behind the new default-off `turnActivity` flag (#365). During a long MCP call
+  the chat used to show a bare "Working" dot with no way to tell thinking from
+  blocked from dead. The elapsed clock comes from the SDK's own heartbeat, not
+  a client-side timer, so it cannot drift; compacting and requesting are
+  surfaced too.
 - The default-off `pikitLanes` panel no longer re-reads and re-parses every run
   on disk every four seconds, or grow without bound (#363 PR 2). It shows every
   ACTIVE run plus the five most recent ended ones, with the rest behind a

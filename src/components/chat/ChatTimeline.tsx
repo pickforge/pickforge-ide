@@ -8,7 +8,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { type AgentTimelineItem } from "../../stores/agentChat";
+import { type AgentTimelineItem, type TurnActivity } from "../../stores/agentChat";
 import {
   DEFAULT_VIRTUAL_GAP_PX,
   DEFAULT_VIRTUAL_RUN_GAP_PX,
@@ -20,6 +20,7 @@ import {
   visibleTimelineKeys,
   type TimelineVirtualRow,
 } from "../../lib/chatTimelineVirtual";
+import { compactInline } from "../../lib/chatDisplay";
 import { ForgeEmptyState } from "../ui";
 import { ChatBubble } from "./ChatBubble";
 import { ThinkingBubble } from "./ThinkingBubble";
@@ -253,15 +254,49 @@ function parseCssPx(element: Element, name: string, fallback: number): number {
 /* Immediate turn feedback: dots + label the moment a turn is active with no
  * stream to look at — models without thinking output (or the gap before the
  * first delta / between tool calls) otherwise render nothing at all. */
-function WorkingRow(): JSX.Element {
+/** Whole seconds up to a minute, then `m:ss`. The clock is the SDK's own
+ *  elapsed figure, so this only formats — it never counts. */
+function formatElapsed(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  if (whole < 60) return `${whole}s`;
+  return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, "0")}s`;
+}
+
+function workingLabel(activity: TurnActivity | null | undefined): string {
+  if (!activity) return "Working";
+  if (activity.kind === "status") return activity.label;
+  return compactInline(activity.name, 48);
+}
+
+function WorkingRow(props: { activity?: TurnActivity | null }): JSX.Element {
+  // A bare "Working" dot says nothing during a four-minute lanes_wait — you
+  // cannot tell thinking from blocked from dead (#365). The elapsed readout
+  // rides the existing row rather than adding a badge.
+  const activity = () => (flagEnabled("turnActivity") ? props.activity : null);
+  const label = () => workingLabel(activity());
+  const elapsed = () => {
+    const current = activity();
+    return current?.kind === "tool" && current.elapsedSeconds !== null
+      ? formatElapsed(current.elapsedSeconds)
+      : null;
+  };
   return (
-    <div class="pf-chat-working-row" role="status" aria-label="Agent is working">
+    <div
+      class="pf-chat-working-row"
+      role="status"
+      aria-label={
+        elapsed() ? `Agent is working: ${label()}, ${elapsed()}` : `Agent is working: ${label()}`
+      }
+    >
       <span class="pf-chat-working" aria-hidden="true">
         <span />
         <span />
         <span />
       </span>
-      <span class="pf-chat-working-label">Working</span>
+      <span class="pf-chat-working-label">{label()}</span>
+      <Show when={elapsed()}>
+        {(value) => <span class="pf-chat-working-elapsed">{value()}</span>}
+      </Show>
     </div>
   );
 }
@@ -279,6 +314,7 @@ function WorkingRow(): JSX.Element {
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
+  activity?: TurnActivity | null;
   chatId?: string;
   projectRoot?: string;
   changesReceipts?: ChangesReceiptSource;
@@ -678,6 +714,7 @@ export function ChatTimeline(props: {
                     projectRoot={props.projectRoot}
                     changesReceipts={props.changesReceipts}
                     expansion={expansion}
+                    activity={props.activity}
                   />
                 )}
               </Show>
@@ -698,6 +735,7 @@ function MeasuredTimelineRow(props: {
   projectRoot?: string;
   changesReceipts?: ChangesReceiptSource;
   expansion?: RowExpansion;
+  activity?: TurnActivity | null;
 }): JSX.Element {
   let rowEl!: HTMLDivElement;
   let frame: number | null = null;
@@ -738,7 +776,7 @@ function MeasuredTimelineRow(props: {
             props.projectRoot,
             props.changesReceipts,
           )
-        : <WorkingRow />}
+        : <WorkingRow activity={props.activity} />}
     </div>
   );
 }

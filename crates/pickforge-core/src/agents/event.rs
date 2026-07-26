@@ -61,6 +61,19 @@ pub enum AgentEvent {
         status: ToolCallStatus,
         detail: Option<String>,
     },
+    /// A heartbeat the SDK emits WHILE a tool executes, carrying an
+    /// authoritative elapsed clock from the source. Additive: other providers
+    /// simply never emit it, and the frontend ignores an unknown item id
+    /// (#365).
+    ToolProgress {
+        item_id: String,
+        elapsed_seconds: f64,
+    },
+    /// The SDK's own answer to "what is it doing right now" — `compacting` or
+    /// `requesting` — for the stretches where no tool is running at all.
+    TurnActivity {
+        activity: String,
+    },
     PlanUpdate {
         items: Vec<PlanItem>,
     },

@@ -1417,6 +1417,67 @@ describe("agentChat store reducer", () => {
     });
   });
 
+  it("names the running tool from a tool_progress heartbeat (#365)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "toolUse", itemId: "t1", name: "Task", status: "inProgress", detail: "scout" });
+    emit({ kind: "toolProgress", itemId: "t1", elapsedSeconds: 12.5 });
+
+    expect(agentChat(chatId)?.activity).toEqual({
+      kind: "tool",
+      name: "Task",
+      elapsedSeconds: 12.5,
+    });
+  });
+
+  it("names an MCP call as server/tool, and a command by its command line (#365)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "mcpToolCall",
+      itemId: "m1",
+      server: "pickforge-lanes",
+      tool: "lanes_wait",
+      status: "inProgress",
+      detail: null,
+    });
+    emit({ kind: "toolProgress", itemId: "m1", elapsedSeconds: 4 });
+    expect(agentChat(chatId)?.activity).toMatchObject({ name: "pickforge-lanes/lanes_wait" });
+
+    emit({ kind: "commandStarted", itemId: "c1", command: "bun test", cwd: "/project" });
+    emit({ kind: "toolProgress", itemId: "c1", elapsedSeconds: 1 });
+    expect(agentChat(chatId)?.activity).toMatchObject({ name: "bun test" });
+  });
+
+  it("ignores a heartbeat for an item it has never seen (#365)", async () => {
+    // Other providers never emit this; an unmatched id must not produce a
+    // nameless clock.
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "toolProgress", itemId: "ghost", elapsedSeconds: 9 });
+
+    expect(agentChat(chatId)?.activity).toBeNull();
+  });
+
+  it("surfaces the SDK's own compacting/requesting note (#365)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "turnActivity", activity: "compacting" });
+
+    expect(agentChat(chatId)?.activity).toEqual({ kind: "status", label: "compacting" });
+  });
+
+  it("clears activity on a turn boundary — it describes a moment, not the transcript (#365)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "toolUse", itemId: "t1", name: "Task", status: "inProgress", detail: null });
+    emit({ kind: "toolProgress", itemId: "t1", elapsedSeconds: 3 });
+    expect(agentChat(chatId)?.activity).not.toBeNull();
+
+    emit({ kind: "turnDone", status: "completed" });
+    expect(agentChat(chatId)?.activity).toBeNull();
+  });
+
   it("carries a generic tool's terminal status (#365)", async () => {
     const { chatId, emit } = await startChat();
 

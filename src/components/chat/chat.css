@@ -2381,3 +2381,14 @@
     animation: none;
   }
 }
+
+/* Elapsed time on the working row (#365). The clock is the SDK's own figure,
+   forwarded on every tool_progress heartbeat — no client-side timer, so it
+   cannot drift. Anchored to the row that already exists rather than adding a
+   badge. */
+.pf-chat-working-elapsed {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  font-variant-numeric: tabular-nums;
+}

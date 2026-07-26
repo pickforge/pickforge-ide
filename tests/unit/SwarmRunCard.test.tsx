@@ -111,14 +111,35 @@ describe("SwarmRunCard", () => {
     expect(expanded).toEqual(["false", "true"]);
   });
 
-  it("still collapses on a second click", () => {
+  it("rotates one chevron rather than swapping two icons (#372)", () => {
+    dispose = render(() => <SwarmRunCard runs={[run()]} />, root);
+
+    const chevrons = () => root.querySelectorAll(".pf-chat-swarm-summary-chevron svg");
+    expect(chevrons()).toHaveLength(1);
+    expect(root.querySelector(".pf-chat-swarm-card--open")).toBeNull();
+
+    summary().click();
+    // Same single node — the open hook drives a transform, it does not swap
+    // the icon for a different one.
+    expect(chevrons()).toHaveLength(1);
+    expect(root.querySelector(".pf-chat-swarm-card--open")).not.toBeNull();
+  });
+
+  it("still collapses on a second click, holding the body for the animation (#372)", async () => {
+    vi.useFakeTimers();
     dispose = render(() => <SwarmRunCard runs={[run()]} />, root);
 
     summary().click();
     expect(summary().getAttribute("aria-expanded")).toBe("true");
 
     summary().click();
+    // The state flips at once; the body lingers just long enough for the
+    // collapse to play, instead of vanishing and snapping the rows below.
     expect(summary().getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector(".pf-chat-swarm-card--open")).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(400);
     expect(root.querySelector(".pf-chat-swarm-body")).toBeNull();
+    vi.useRealTimers();
   });
 });

@@ -6,8 +6,8 @@
 // token usage.
 import { For, Show, type JSX, createSignal, onCleanup, onMount } from "solid-js";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { ForgeEmptyState, MonoEyebrow } from "../ui";
-import { IconChevronDown, IconChevronRight, IconGrid, IconRefresh } from "../icons";
+import { Disclosure, ForgeEmptyState, MonoEyebrow } from "../ui";
+import { IconChevronRight, IconGrid, IconRefresh } from "../icons";
 import type { PiKitRunEntry } from "../../lib/process";
 import {
   loadPiKitRuns,
@@ -55,7 +55,11 @@ function RunCard(props: {
   const runAbandonHint = () => abandonHint(entry());
 
   return (
-    <section class="pf-pikit-card" aria-label="pi-kit run">
+    <section
+      class="pf-pikit-card"
+      classList={{ "pf-pikit-card--open": open() }}
+      aria-label="pi-kit run"
+    >
       <button
         type="button"
         class="pf-pikit-summary"
@@ -63,9 +67,7 @@ function RunCard(props: {
         onClick={() => setOpen((v) => !v)}
       >
         <span class="pf-pikit-summary-chevron" aria-hidden="true">
-          <Show when={open()} fallback={<IconChevronRight size={12} />}>
-            <IconChevronDown size={12} />
-          </Show>
+          <IconChevronRight size={12} />
         </span>
         <span class="pf-pikit-summary-title">
           <IconGrid size={13} />
@@ -86,7 +88,7 @@ function RunCard(props: {
           {runLabel(entry())}
         </span>
       </button>
-      <Show when={open()}>
+      <Disclosure open={open()}>
         <div class="pf-pikit-body">
           <Show when={status()} fallback={<div class="pf-pikit-empty">No status details available.</div>}>
             {(s) => (
@@ -150,7 +152,7 @@ function RunCard(props: {
             </button>
           </Show>
         </div>
-      </Show>
+      </Disclosure>
     </section>
   );
 }

@@ -3,8 +3,9 @@ import { compactInline } from "../../lib/chatDisplay";
 import { agentBackendDescriptor } from "../../lib/agentBackends";
 import type { SwarmLaneSnapshot, SwarmRunSnapshot } from "../../lib/mcp";
 import { setOrchestraOpen } from "../../stores/orchestraStage";
+import { Disclosure } from "../ui";
 import { selectChat } from "../../stores/workspace";
-import { IconChevronDown, IconChevronRight, IconGrid } from "../icons";
+import { IconChevronRight, IconGrid } from "../icons";
 import "./chat.css";
 
 
@@ -54,7 +55,11 @@ function SwarmRow(props: {
   const synth = () => synthesisLabel(run());
 
   return (
-    <section class="pf-chat-swarm-card" aria-label="Pickforge swarm run">
+    <section
+      class="pf-chat-swarm-card"
+      classList={{ "pf-chat-swarm-card--open": open() }}
+      aria-label="Pickforge swarm run"
+    >
       <button
         type="button"
         class="pf-chat-swarm-summary"
@@ -62,9 +67,7 @@ function SwarmRow(props: {
         onClick={() => setOpen()}
       >
         <span class="pf-chat-swarm-summary-chevron" aria-hidden="true">
-          <Show when={open()} fallback={<IconChevronRight size={12} />}>
-            <IconChevronDown size={12} />
-          </Show>
+          <IconChevronRight size={12} />
         </span>
         <span class="pf-chat-swarm-summary-title">
           <IconGrid size={13} />
@@ -85,7 +88,7 @@ function SwarmRow(props: {
           {run().status}
         </span>
       </button>
-      <Show when={open()}>
+      <Disclosure open={open()}>
         <div class="pf-chat-swarm-body">
           <div class="pf-chat-swarm-lanes">
             <For each={run().lanes}>
@@ -126,7 +129,7 @@ function SwarmRow(props: {
             {(error) => <div class="pf-chat-swarm-error">{error()}</div>}
           </Show>
         </div>
-      </Show>
+      </Disclosure>
     </section>
   );
 }

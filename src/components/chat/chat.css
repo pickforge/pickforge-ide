@@ -439,6 +439,15 @@
   align-items: center;
   color: var(--pf-text-low);
 }
+/* One icon that turns, matching every other disclosure in the transcript
+   (#372 PR 2). Same tokens as `.pf-chat-line-chevron`, so reduced motion
+   zeroes it for free. */
+.pf-chat-swarm-summary-chevron svg {
+  transition: transform var(--pf-dur-fast) var(--pf-ease-curve);
+}
+.pf-chat-swarm-card--open .pf-chat-swarm-summary-chevron svg {
+  transform: rotate(90deg);
+}
 .pf-chat-swarm-summary-title {
   flex: none;
   display: inline-flex;

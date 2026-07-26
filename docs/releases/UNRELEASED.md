@@ -69,6 +69,13 @@ reset this file.
   everything below snapping down. THINKING already behaved this way, so the
   same gesture no longer had two different behaviours in one transcript.
   Reduced motion renders it instantly.
+- Tool rows in Claude chats now show their arguments and actually finish. Every
+  non-Bash tool used to be emitted as running and never updated — permanently
+  "working" long after it completed — and MCP calls rendered as one dead grey
+  line with no arguments, no result and a disabled chevron. Rows whose tool
+  carries none of the four previously recognised argument keys (AskUserQuestion,
+  Task, Skill, Glob, ToolSearch, Read-with-offset) now summarise their input
+  instead of rendering bare.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
@@ -118,6 +125,11 @@ reset this file.
   at card scale (`$0.41`, sub-cent as `<$0.01`) instead of the composer's four
   decimals, and the branch reads one step up the text ramp so it is legible as
   an identifier beside `plan M/N` rather than one grey run.
+- MCP and tool rows in chat carry their arguments, result and a real terminal
+  status behind the new default-off `mcpToolDetail` flag (#362, #365): the row
+  resolves in place from WORKING to done or failed instead of staying
+  permanently "running", its chevron opens the full payload, and the toggle now
+  survives scrolling away and back.
 - Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
   started while the re-fold was fetching history had its just-sent message
   wiped from the timeline, because the commit replaced the timeline wholesale

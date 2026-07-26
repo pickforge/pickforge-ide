@@ -84,8 +84,25 @@ export type AgentTimelineItem =
        *  through the existing `FileChangeCard` until it closes. */
       turnComplete: boolean;
     }
-  | { type: "toolUse"; seq: number; itemId: string; name: string; detail: string | null }
-  | { type: "mcpToolCall"; seq: number; itemId: string; server: string; tool: string }
+  | {
+      type: "toolUse";
+      seq: number;
+      itemId: string;
+      name: string;
+      detail: string | null;
+      /** Absent on rows persisted before the parser learned to resolve
+       *  non-Bash tools (#365), so a replayed history stays readable. */
+      status?: ToolCallStatus;
+    }
+  | {
+      type: "mcpToolCall";
+      seq: number;
+      itemId: string;
+      server: string;
+      tool: string;
+      detail?: string | null;
+      status?: ToolCallStatus;
+    }
   | { type: "webSearch"; seq: number; itemId: string; query: string }
   | { type: "plan"; seq: number; items: PlanItem[] }
   | {
@@ -106,6 +123,10 @@ export type AgentApprovalQuestion = {
   multiSelect?: boolean;
   options: { label: string; description?: string }[];
 };
+
+/** Mirrors the wire event's status. Kept as its own alias so the two card
+ *  types and the reducers cannot drift apart. */
+export type ToolCallStatus = "inProgress" | "completed" | "failed";
 
 export type AgentApproval = {
   approvalId: string;
@@ -917,6 +938,45 @@ function reduceCommandDone(
   ]);
 }
 
+/** Matches an existing row by `itemId` before appending, exactly as
+ *  `reduceToolUse` below does. Without this an MCP completion event appends a
+ *  SECOND row rather than resolving the first — and the parser only started
+ *  emitting completions in the same change that added this, so the two must
+ *  not be separated (#362). */
+function reduceMcpToolCall(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "mcpToolCall" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  let matched = false;
+  const timeline = chat.timeline.map((item) => {
+    if (item.type !== "mcpToolCall" || item.itemId !== event.itemId) return item;
+    matched = true;
+    return {
+      ...item,
+      server: event.server,
+      tool: event.tool,
+      // A completion carries the result; keep the arg summary when it does
+      // not, so resolving a row never blanks what it already showed.
+      detail: event.detail ?? item.detail,
+      status: event.status,
+    };
+  });
+  if (matched) return withTimeline(chat, timeline);
+  return withTimeline(chat, [
+    ...chat.timeline,
+    {
+      type: "mcpToolCall",
+      seq: nextSeq(),
+      itemId: event.itemId,
+      server: event.server,
+      tool: event.tool,
+      detail: event.detail,
+      status: event.status,
+    },
+  ]);
+}
+
 function reduceToolUse(
   chat: AgentChatState,
   event: Extract<AgentEvent, { kind: "toolUse" }>,
@@ -929,7 +989,10 @@ function reduceToolUse(
     return {
       ...item,
       name: event.name,
-      detail: event.detail,
+      // A completion carries the result; keep the arg summary when it does not,
+      // so resolving a row never blanks what it already showed.
+      detail: event.detail ?? item.detail,
+      status: event.status,
     };
   });
   if (matched) return withTimeline(chat, timeline);
@@ -941,6 +1004,7 @@ function reduceToolUse(
       itemId: event.itemId,
       name: event.name,
       detail: event.detail,
+      status: event.status,
     },
   ]);
 }
@@ -1101,16 +1165,7 @@ function reduceAgentEvent(
     case "toolUse":
       return reduceToolUse(chat, event, nextSeq);
     case "mcpToolCall":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "mcpToolCall",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          server: event.server,
-          tool: event.tool,
-        },
-      ]);
+      return reduceMcpToolCall(chat, event, nextSeq);
     case "webSearch":
       return withTimeline(chat, [
         ...chat.timeline,

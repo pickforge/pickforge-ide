@@ -40,6 +40,7 @@ describe("flags", () => {
       "pikitLanes",
       "pikitContext",
       "changesReview",
+      "mcpToolDetail",
       "flatChatList",
       "orchestraBoard",
       "messageQueue",

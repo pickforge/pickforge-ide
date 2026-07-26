@@ -1344,6 +1344,99 @@ describe("agentChat store reducer", () => {
     expect(call?.[1]).not.toHaveProperty("payload");
   });
 
+  it("resolves an MCP row in place instead of appending a duplicate (#362)", async () => {
+    // The parser half of this change starts emitting completions for MCP calls.
+    // Without an itemId match path the reducer appended a SECOND row, so a
+    // resolving call visibly doubled instead of updating.
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "pickforge-lanes", tool: "lanes_wait" });
+    expect(timeline(chatId).filter((item) => item.type === "mcpToolCall")).toHaveLength(1);
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "pickforge-lanes", tool: "lanes_wait" });
+
+    const rows = timeline(chatId).filter((item) => item.type === "mcpToolCall");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].itemId).toBe("mcp-1");
+  });
+
+  it("carries an MCP call's status and detail, and resolves in place (#362)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "mcpToolCall",
+      itemId: "mcp-1",
+      server: "pickforge-lanes",
+      tool: "lanes_wait",
+      status: "inProgress",
+      detail: "run: run-7",
+    });
+    expect(timeline(chatId).find((item) => item.type === "mcpToolCall")).toMatchObject({
+      status: "inProgress",
+      detail: "run: run-7",
+    });
+
+    emit({
+      kind: "mcpToolCall",
+      itemId: "mcp-1",
+      server: "pickforge-lanes",
+      tool: "lanes_wait",
+      status: "completed",
+      detail: "lane finished",
+    });
+
+    const rows = timeline(chatId).filter((item) => item.type === "mcpToolCall");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "completed", detail: "lane finished" });
+  });
+
+  it("keeps the arg summary when a completion carries no result (#362)", async () => {
+    // Resolving a row must never blank what it already showed.
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "mcpToolCall",
+      itemId: "mcp-1",
+      server: "srv",
+      tool: "do",
+      status: "inProgress",
+      detail: "a: 1",
+    });
+    emit({
+      kind: "mcpToolCall",
+      itemId: "mcp-1",
+      server: "srv",
+      tool: "do",
+      status: "completed",
+      detail: null,
+    });
+
+    expect(timeline(chatId).find((item) => item.type === "mcpToolCall")).toMatchObject({
+      status: "completed",
+      detail: "a: 1",
+    });
+  });
+
+  it("carries a generic tool's terminal status (#365)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "toolUse", itemId: "t1", name: "Task", status: "inProgress", detail: "scout" });
+    emit({ kind: "toolUse", itemId: "t1", name: "Task", status: "failed", detail: "boom" });
+
+    const rows = timeline(chatId).filter((item) => item.type === "toolUse");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "failed", detail: "boom" });
+  });
+
+  it("still appends a distinct MCP call as its own row (#362)", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "mcpToolCall", itemId: "mcp-1", server: "srv", tool: "a" });
+    emit({ kind: "mcpToolCall", itemId: "mcp-2", server: "srv", tool: "b" });
+
+    expect(timeline(chatId).filter((item) => item.type === "mcpToolCall")).toHaveLength(2);
+  });
+
   it("approves requests through IPC and removes pending approvals", async () => {
     const { chatId, emit } = await startChat();
 

@@ -6,7 +6,12 @@ export type TimelineVirtualRow =
 
 export type TimelineVirtualMetrics = {
   padding: number;
+  /** Between any pair with a non-compact side: a prose boundary, a card, a
+   *  usage receipt. The "new thought" distance. */
   gap: number;
+  /** Between two adjacent compact log rows (see isCompactTimelineRow): a burst
+   *  of tool work reads as one block, so its internal gap is tighter. */
+  runGap: number;
 };
 
 export type TimelineVirtualLayout = {
@@ -18,8 +23,10 @@ export type TimelineVirtualLayout = {
 
 export const DEFAULT_VIRTUAL_PADDING_PX = 16;
 // Fallbacks mirroring the CSS custom properties on `.pf-chat-timeline`
-// (--pf-space-lg / --pf-space-xs); used until getComputedStyle can read them.
-export const DEFAULT_VIRTUAL_GAP_PX = 4;
+// (--pf-space-lg / --pf-space-md / --pf-space-xs); used until getComputedStyle
+// can read them.
+export const DEFAULT_VIRTUAL_GAP_PX = 12;
+export const DEFAULT_VIRTUAL_RUN_GAP_PX = 4;
 export const OVERSCAN_PX = 1_800;
 
 const CHARS_PER_LINE = 82;
@@ -148,6 +155,24 @@ function rowHeight(
   return rowHeights.get(key) ?? estimateTimelineRowHeight(row);
 }
 
+// The row kinds that render as one-line machine-log entries (the
+// `.pf-chat-line` family, the collapsed thinking header, and the transient
+// working pulse). A run of these is one burst of work, so the gap inside the
+// run is `metrics.runGap`; any pair with a prose/card side keeps `metrics.gap`.
+// Kind-based on purpose: expansion state lives in the component, and a row the
+// reader opened is still part of the same burst.
+const COMPACT_ROW_TYPES: ReadonlySet<AgentTimelineItem["type"]> = new Set([
+  "command",
+  "toolUse",
+  "mcpToolCall",
+  "webSearch",
+  "thinking",
+]);
+
+export function isCompactTimelineRow(row: TimelineVirtualRow): boolean {
+  return row.kind === "working" || COMPACT_ROW_TYPES.has(row.item.type);
+}
+
 export function buildTimelineLayout(
   rows: TimelineVirtualRow[],
   metrics: TimelineVirtualMetrics,
@@ -162,7 +187,11 @@ export function buildTimelineLayout(
     starts[i] = y;
     keyToIndex.set(key, i);
     y += rowHeight(row, key, rowHeights);
-    if (i < rows.length - 1) y += metrics.gap;
+    if (i < rows.length - 1) {
+      y += isCompactTimelineRow(row) && isCompactTimelineRow(rows[i + 1])
+        ? metrics.runGap
+        : metrics.gap;
+    }
   }
   return {
     rows,

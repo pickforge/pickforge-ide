@@ -43,10 +43,13 @@
 /* ---- Timeline ---- */
 .pf-chat-timeline {
   --pf-chat-virtual-padding: var(--pf-space-lg);
-  /* Log density: compact rows (cmd/tool/mcp/web/thinking) should read as a
-   * machine log, nearly touching. Bubbles keep their own internal padding, so
-   * one tight gap serves both voices. */
-  --pf-chat-virtual-gap: var(--pf-space-xs);
+  /* Two-tier density (#367): a run of compact rows (cmd/tool/mcp/web/
+   * thinking) keeps machine-log tightness via the run gap, while any pair
+   * with a prose/card side gets the wider gap — the "new thought" distance.
+   * The layout picks per pair in buildTimelineLayout (chatTimelineVirtual.ts);
+   * keep both values in sync with its DEFAULT_VIRTUAL_*_PX fallbacks. */
+  --pf-chat-virtual-gap: var(--pf-space-md);
+  --pf-chat-virtual-run-gap: var(--pf-space-xs);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

@@ -161,3 +161,54 @@ test("agent chat context meter overflow warning", async ({ page }) => {
     animations: "disabled",
   });
 });
+
+// #367: a run of six consecutive CMD rows plus a tool/mcp/web tail, bracketed
+// by prose. The within-run pitch must be tighter than the run's prose
+// boundaries — the geometry assertions pin the contract independently of the
+// golden, and the screenshot pins the rendered density itself.
+test("agent chat tool-run density keeps a burst tighter than its prose boundaries", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    localStorage.setItem("pickforge.vrt.agentChatToolRun", "1");
+  });
+
+  await page.goto("/#/workbench");
+  await page.getByText("Every check passed").waitFor();
+
+  const commands = page.locator(".pf-chat-line--command");
+  await expect(commands).toHaveCount(6);
+
+  const gapBelow = async (above: import("@playwright/test").Locator, below: import("@playwright/test").Locator) => {
+    const a = await above.boundingBox();
+    const b = await below.boundingBox();
+    if (!a || !b) throw new Error("row not rendered");
+    return b.y - (a.y + a.height);
+  };
+
+  // Every pair inside the six-command run sits at the same tight pitch.
+  const runGaps: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    runGaps.push(await gapBelow(commands.nth(i), commands.nth(i + 1)));
+  }
+  const virtualRow = (text: string) =>
+    page.locator(".pf-chat-virtual-row").filter({ hasText: text });
+  const intro = virtualRow("Running the gate now");
+  const outro = virtualRow("Every check passed");
+  const thinking = virtualRow("Thinking");
+  const webRow = virtualRow("playwright toHaveScreenshot");
+  const introToThinking = await gapBelow(intro, thinking);
+  const webToOutro = await gapBelow(webRow, outro);
+
+  for (const gap of runGaps) {
+    expect(gap).toBeLessThan(introToThinking);
+    expect(gap).toBeLessThan(webToOutro);
+  }
+
+  // Wait out ChatTimeline's deferred measurement path before pinning pixels.
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 150)));
+
+  await expect(page.locator(".pf-chat-view")).toHaveScreenshot("agent-chat-tool-run.png", {
+    maxDiffPixelRatio: 0.025,
+    animations: "disabled",
+  });
+});

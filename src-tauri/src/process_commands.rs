@@ -288,6 +288,23 @@ pub async fn list_pi_kit_runs() -> Result<Vec<PiKitRunEntry>, String> {
     .map_err(|error| error.to_string())
 }
 
+/// Bounded variant: every active run plus the `limit` most recent ended ones,
+/// with the total on disk. The panel polls this every few seconds, so its cost
+/// must not scale with run history (#363).
+#[tauri::command]
+pub async fn list_pi_kit_run_page(limit: usize) -> Result<PiKitRunPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resolve_pi_kit_runs_dir()
+            .map(|dir| pickforge_core::agents::list_pi_kit_run_page(&dir, limit))
+            .unwrap_or_else(|| PiKitRunPage {
+                runs: Vec::new(),
+                total: 0,
+            })
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Reduce a completed (or failed) status-command run to a tri-state signal.
 /// Split out from [`probe_agent_auth`] as a pure function so the "logged in"
 /// / "logged out" / "command missing" / "timeout" shapes are unit-testable

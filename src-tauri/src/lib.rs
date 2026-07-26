@@ -334,6 +334,7 @@ pub fn run() {
             process_commands::probe_pi_kit,
             process_commands::probe_agent_auth,
             process_commands::list_pi_kit_runs,
+            process_commands::list_pi_kit_run_page,
             process_commands::abandon_pi_kit_lane,
             process_commands::write_forge_context,
             process_commands::clear_forge_context,

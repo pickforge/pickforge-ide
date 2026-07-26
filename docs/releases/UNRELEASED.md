@@ -106,6 +106,12 @@ reset this file.
   permissions are still bypassed only when the user explicitly selects bypass
   mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
+- The default-off `pikitLanes` panel no longer re-reads and re-parses every run
+  on disk every four seconds, or grow without bound (#363 PR 2). It shows every
+  ACTIVE run plus the five most recent ended ones, with the rest behind a
+  scrollable "view all" dialog. Active runs are deliberately never capped: run
+  ids sort by start time, so a strict newest-N page would hide a long-running
+  run — exactly the one still worth acting on.
 - Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
   started while the re-fold was fetching history had its just-sent message
   wiped from the timeline, because the commit replaced the timeline wholesale

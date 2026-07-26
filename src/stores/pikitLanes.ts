@@ -4,7 +4,7 @@
 import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { errorText } from "../lib/errors";
-import { abandonPiKitLane, listPiKitRuns, type PiKitRunEntry } from "../lib/process";
+import { abandonPiKitLane, listPiKitRunPage, listPiKitRuns, type PiKitRunEntry } from "../lib/process";
 
 // Modest refresh cadence while the Lanes panel is open; polling stops the
 // moment it's closed (see stopPiKitLanesPolling). pi-kit rewrites the status
@@ -28,19 +28,29 @@ const POLL_MS = 4000;
 // order — but if lanes ever reorder mid-run, a row keeps its identity while its
 // contents become a different lane's. Anything that later attaches per-lane
 // local state (expansion, focus, animation) must key it explicitly.
+/** How much ENDED history the panel keeps on screen. Active runs are never
+ *  capped. A starting value, not a measured one — revisit against how many runs
+ *  are typically live at once (#363). */
+export const PIKIT_RUN_PAGE_LIMIT = 5;
+
 const [state, setState] = createStore<{ runs: PiKitRunEntry[] }>({ runs: [] });
+const [total, setTotal] = createSignal(0);
 const [loading, setLoading] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
 
 export const pikitRuns = (): PiKitRunEntry[] => state.runs;
+/** Every run on disk, including those this page omits — so "view all N" tells
+ *  the truth rather than counting what happens to be rendered. */
+export const pikitRunsTotal = total;
 export const pikitRunsLoading = loading;
 export const pikitRunsError = error;
 
 export async function loadPiKitRuns(): Promise<void> {
   setLoading(true);
   try {
-    const next = await listPiKitRuns();
-    setState("runs", reconcile(next, { key: "run" }));
+    const page = await listPiKitRunPage(PIKIT_RUN_PAGE_LIMIT);
+    setState("runs", reconcile(page.runs, { key: "run" }));
+    setTotal(page.total);
     setError(null);
   } catch (err) {
     setError(errorText(err));
@@ -72,6 +82,13 @@ export type AbandonResult = { ok: true; consumed: boolean } | { ok: false; error
 
 /** Writes the abandon request and refreshes the run list either way, so a
  * caller sees the latest lane states immediately after. */
+/** The complete run list, for the "view all" dialog. Deliberately a separate
+ *  one-shot read rather than widening the poll: the whole point of the page is
+ *  that the 4s cadence stops scaling with history. */
+export async function loadAllPiKitRuns(): Promise<PiKitRunEntry[]> {
+  return await listPiKitRuns();
+}
+
 export async function requestPiKitAbandon(
   run: string,
   lane: string | null,

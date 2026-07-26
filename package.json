@@ -15,6 +15,7 @@
     "tauri:dev:performance": "tauri dev --config src-tauri/tauri.performance.conf.json",
     "vrt": "playwright test",
     "e2e": "bun run tests/e2e/run.ts",
+    "e2e:claude": "bun run tests/e2e/claude-live.ts",
     "test:installer": "node tests/install-script.test.mjs",
     "lint": "eslint src tests --max-warnings 0 && node scripts/check-design-tokens.mjs",
     "test:unit": "vitest run && node tests/agent-schema-drift.test.mjs",

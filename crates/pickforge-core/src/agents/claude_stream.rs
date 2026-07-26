@@ -19,6 +19,9 @@ use crate::remote::RemoteLeaseHandle;
 const DEFAULT_ALLOWED_TOOLS: &str = "Bash,Edit,Write,Read,Glob,Grep,WebSearch,WebFetch,TodoWrite";
 const DEFAULT_PERMISSION_MODE: &str = "acceptEdits";
 const OUTPUT_TAIL_CHARS: usize = 2000;
+/// Argument summaries ride on a single collapsed row, so they are capped far
+/// shorter than an output tail — and capped in Rust, since the row is persisted.
+const INPUT_SUMMARY_CHARS: usize = 300;
 
 #[derive(Debug, Default)]
 pub struct ClaudeStreamParser {
@@ -237,8 +240,13 @@ impl ClaudeStreamParser {
         let input = self.tool_input(block);
         let remembered = if name == "Bash" {
             RememberedTool::Bash
+        } else if let Some((server, tool)) = mcp_parts(name) {
+            RememberedTool::Mcp {
+                server: server.to_string(),
+                tool: tool.to_string(),
+            }
         } else {
-            RememberedTool::Other
+            RememberedTool::Other(name.to_string())
         };
         self.tools.insert(item_id.to_string(), remembered);
 
@@ -277,7 +285,10 @@ impl ClaudeStreamParser {
                         server: server.to_string(),
                         tool: tool.to_string(),
                         status: ToolCallStatus::InProgress,
-                        detail: None,
+                        // The non-MCP branch below has always attached this;
+                        // the MCP branch dropped it, which is why an MCP row
+                        // rendered as one dead grey line (#362).
+                        detail: compact_input_summary(&input),
                     }]
                 } else {
                     vec![AgentEvent::ToolUse {
@@ -331,19 +342,46 @@ impl ClaudeStreamParser {
         }
 
         let item_id = string_at(block, "tool_use_id")?;
-        if self.tools.get(item_id) != Some(&RememberedTool::Bash) {
-            return None;
-        }
+        let remembered = self.tools.get(item_id)?;
+        let failed = bool_at(block, "is_error");
+        // Capped here rather than in the view: these rows are persisted, and an
+        // MCP payload can be far larger than a Bash output tail (#362, #365).
+        let detail = tool_result_text(block).map(|text| tail_chars(&text, OUTPUT_TAIL_CHARS));
 
-        Some(AgentEvent::CommandDone {
-            item_id: item_id.to_string(),
-            exit_code: None,
-            status: if bool_at(block, "is_error") {
-                CommandStatus::Failed
-            } else {
-                CommandStatus::Completed
+        Some(match remembered {
+            RememberedTool::Bash => AgentEvent::CommandDone {
+                item_id: item_id.to_string(),
+                exit_code: None,
+                status: if failed {
+                    CommandStatus::Failed
+                } else {
+                    CommandStatus::Completed
+                },
+                output_tail: detail,
             },
-            output_tail: tool_result_text(block).map(|text| tail_chars(&text, OUTPUT_TAIL_CHARS)),
+            // Every non-Bash tool used to be emitted InProgress and never
+            // updated — permanently "running" long after it finished.
+            RememberedTool::Mcp { server, tool } => AgentEvent::McpToolCall {
+                item_id: item_id.to_string(),
+                server: server.clone(),
+                tool: tool.clone(),
+                status: if failed {
+                    ToolCallStatus::Failed
+                } else {
+                    ToolCallStatus::Completed
+                },
+                detail,
+            },
+            RememberedTool::Other(name) => AgentEvent::ToolUse {
+                item_id: item_id.to_string(),
+                name: name.clone(),
+                status: if failed {
+                    ToolCallStatus::Failed
+                } else {
+                    ToolCallStatus::Completed
+                },
+                detail,
+            },
         })
     }
 
@@ -428,10 +466,16 @@ struct OpenBlock {
     partial_json: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a `tool_use` block was, kept so its later `tool_result` can be routed
+/// back to the right row. This used to collapse everything non-Bash to a single
+/// `Other`, discarding the name — so even if the Bash-only guard in
+/// `map_tool_result` were lifted, there was nothing left to route with
+/// (#362, #365).
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RememberedTool {
     Bash,
-    Other,
+    Mcp { server: String, tool: String },
+    Other(String),
 }
 
 #[derive(Debug, Clone)]
@@ -980,9 +1024,53 @@ fn mcp_parts(name: &str) -> Option<(&str, &str)> {
     name.strip_prefix("mcp__")?.split_once("__")
 }
 
+/// A one-line argument summary for a tool row.
+///
+/// This used to be a four-key allowlist (`file_path`, `notebook_path`,
+/// `pattern`, `description`). `AskUserQuestion`, `Task`, `Skill`, `Glob`,
+/// `ToolSearch` and `Read`-with-offset carry none of them, so their rows had no
+/// detail, a disabled chevron, and a dead button (#365). Known keys still win —
+/// they are the human-meaningful ones — and anything else falls back to a
+/// compact rendering of the whole input, capped in Rust because these rows are
+/// persisted.
 fn compact_input_summary(input: &Value) -> Option<String> {
-    input_string(input, &["file_path", "notebook_path", "pattern", "description"])
-        .filter(|summary| !summary.is_empty())
+    if let Some(known) = input_string(
+        input,
+        &["command", "file_path", "notebook_path", "pattern", "description", "query", "url"],
+    )
+    .filter(|summary| !summary.is_empty())
+    {
+        return Some(tail_chars(&known, INPUT_SUMMARY_CHARS));
+    }
+
+    let object = input.as_object()?;
+    if object.is_empty() {
+        return None;
+    }
+    let rendered = object
+        .iter()
+        .map(|(key, value)| match value {
+            Value::String(text) => format!("{key}: {text}"),
+            other => format!("{key}: {other}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let trimmed = rendered.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(head_chars(trimmed, INPUT_SUMMARY_CHARS))
+}
+
+/// First `max` characters, char-boundary safe, with an ellipsis when cut. The
+/// meaningful part of an argument list is at the FRONT, unlike a command's
+/// output tail.
+fn head_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max).collect();
+    format!("{head}…")
 }
 
 fn tool_result_text(block: &Value) -> Option<String> {
@@ -1025,6 +1113,7 @@ mod tests {
     use std::{os::unix::fs::PermissionsExt, thread};
 
     use super::*;
+    use serde_json::json;
 
     fn fixture_events(name: &str) -> Vec<AgentEvent> {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1363,6 +1452,159 @@ mod tests {
         );
 
         assert!(events.is_empty());
+    }
+
+    /// Drives the parser over inline stream-json lines, the shape the SDK
+    /// bridge forwards verbatim.
+    fn events_from(lines: &[&str]) -> Vec<AgentEvent> {
+        let mut parser = ClaudeStreamParser::new();
+        lines.iter().flat_map(|line| parser.push_line(line)).collect()
+    }
+
+    fn tool_use_line(id: &str, name: &str, input: serde_json::Value) -> String {
+        json!({
+            "type": "assistant",
+            "message": {
+                "content": [{ "type": "tool_use", "id": id, "name": name, "input": input }]
+            }
+        })
+        .to_string()
+    }
+
+    fn tool_result_line(id: &str, content: &str, is_error: bool) -> String {
+        json!({
+            "type": "user",
+            "message": {
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": content,
+                    "is_error": is_error
+                }]
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn mcp_call_carries_an_arg_summary_and_reaches_a_terminal_status() {
+        // Before #362 the MCP branch dropped the summary its non-MCP sibling
+        // kept, and `map_tool_result` refused every non-Bash tool — so the row
+        // rendered as one dead grey line and never resolved.
+        let events = events_from(&[
+            &tool_use_line("t1", "mcp__pickforge-lanes__lanes_wait", json!({ "run": "run-7" })),
+            &tool_result_line("t1", "lane finished", false),
+        ]);
+
+        let started = events.iter().find_map(|event| match event {
+            AgentEvent::McpToolCall { item_id, server, tool, status, detail } if item_id == "t1" => {
+                Some((server.clone(), tool.clone(), status.clone(), detail.clone()))
+            }
+            _ => None,
+        });
+        let (server, tool, status, detail) = started.expect("mcp start");
+        assert_eq!(server, "pickforge-lanes");
+        assert_eq!(tool, "lanes_wait");
+        assert_eq!(status, ToolCallStatus::InProgress);
+        assert_eq!(detail.as_deref(), Some("run: run-7"));
+
+        let done = events.iter().rev().find_map(|event| match event {
+            AgentEvent::McpToolCall { item_id, status, detail, .. }
+                if item_id == "t1" && *status != ToolCallStatus::InProgress =>
+            {
+                Some((status.clone(), detail.clone()))
+            }
+            _ => None,
+        });
+        assert_eq!(done, Some((ToolCallStatus::Completed, Some("lane finished".to_string()))));
+    }
+
+    #[test]
+    fn a_failed_mcp_call_resolves_as_failed_not_running_forever() {
+        let events = events_from(&[
+            &tool_use_line("t1", "mcp__srv__do", json!({ "a": 1 })),
+            &tool_result_line("t1", "boom", true),
+        ]);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::McpToolCall { status: ToolCallStatus::Failed, .. }
+        )));
+    }
+
+    #[test]
+    fn a_generic_tool_reaches_a_terminal_status_with_its_own_name() {
+        // `RememberedTool` collapsed everything non-Bash to `Other`, discarding
+        // the name, so a completion could not be routed even in principle.
+        let events = events_from(&[
+            &tool_use_line("t1", "Task", json!({ "description": "scout the parser" })),
+            &tool_result_line("t1", "done scouting", false),
+        ]);
+
+        let done = events.iter().rev().find_map(|event| match event {
+            AgentEvent::ToolUse { item_id, name, status, detail }
+                if item_id == "t1" && *status != ToolCallStatus::InProgress =>
+            {
+                Some((name.clone(), status.clone(), detail.clone()))
+            }
+            _ => None,
+        });
+        assert_eq!(
+            done,
+            Some(("Task".to_string(), ToolCallStatus::Completed, Some("done scouting".to_string())))
+        );
+    }
+
+    #[test]
+    fn a_bash_result_still_maps_to_command_done_not_a_tool_row() {
+        let events = events_from(&[
+            &tool_use_line("t1", "Bash", json!({ "command": "bun test" })),
+            &tool_result_line("t1", "ok", false),
+        ]);
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::CommandDone { .. })));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolUse { status: ToolCallStatus::Completed, .. })));
+    }
+
+    #[test]
+    fn an_unknown_tool_result_is_still_ignored() {
+        // No matching tool_use means nothing to route to.
+        let events = events_from(&[&tool_result_line("ghost", "orphan", false)]);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn summary_falls_back_to_the_whole_input_for_tools_with_no_known_key() {
+        // AskUserQuestion, Skill, ToolSearch and friends carry none of the old
+        // four keys, so their rows had no detail and a dead chevron (#365).
+        let summary = compact_input_summary(&json!({ "questions": ["a", "b"], "mode": "single" }));
+        let summary = summary.expect("summary");
+        assert!(summary.contains("questions"), "{summary}");
+        assert!(summary.contains("mode: single"), "{summary}");
+    }
+
+    #[test]
+    fn summary_prefers_a_known_key_over_the_whole_input() {
+        let summary = compact_input_summary(&json!({
+            "file_path": "/src/main.rs",
+            "offset": 40
+        }));
+        assert_eq!(summary.as_deref(), Some("/src/main.rs"));
+    }
+
+    #[test]
+    fn summary_is_capped_and_empty_input_yields_none() {
+        let long = "x".repeat(INPUT_SUMMARY_CHARS * 2);
+        let summary = compact_input_summary(&json!({ "note": long })).expect("summary");
+        assert!(summary.chars().count() <= INPUT_SUMMARY_CHARS + 1, "{}", summary.chars().count());
+        assert!(summary.ends_with('…'));
+
+        assert_eq!(compact_input_summary(&json!({})), None);
+        assert_eq!(compact_input_summary(&Value::Null), None);
     }
 
     #[test]

@@ -97,6 +97,44 @@ function expansionToggle(
 // when the flag is on. Flag off: the reducer never sets
 // `turnComplete`/groups events either, so this is already the legacy
 // per-event card; the explicit flag check here is defense in depth.
+/** `mcpToolDetail` gates the richer rows (#362, #365): a persisted row's shape
+ *  changed and the parser only emits completions on newer builds, so main stays
+ *  releasable while this is dark. Same precedent as `changesReview` gating the
+ *  receipt card. Split out of `renderItem` to keep it under the complexity cap. */
+function renderToolUseItem(
+  item: Extract<AgentTimelineItem, { type: "toolUse" }>,
+  rowKey: string,
+  expansion: RowExpansion | undefined,
+): JSX.Element {
+  return (
+    <ToolUseCard
+      name={item.name}
+      detail={item.detail}
+      status={flagEnabled("mcpToolDetail") ? item.status : undefined}
+      open={expansionOpen(expansion, rowKey)}
+      onToggle={expansionToggle(expansion, rowKey)}
+    />
+  );
+}
+
+function renderMcpItem(
+  item: Extract<AgentTimelineItem, { type: "mcpToolCall" }>,
+  rowKey: string,
+  expansion: RowExpansion | undefined,
+): JSX.Element {
+  const gated = () => flagEnabled("mcpToolDetail");
+  return (
+    <McpCard
+      server={item.server}
+      tool={item.tool}
+      detail={gated() ? item.detail : undefined}
+      status={gated() ? item.status : undefined}
+      open={expansionOpen(expansion, rowKey)}
+      onToggle={expansionToggle(expansion, rowKey)}
+    />
+  );
+}
+
 function renderFileChangeItem(
   item: Extract<AgentTimelineItem, { type: "fileChange" }>,
   rowKey: string,
@@ -176,10 +214,14 @@ function renderItem(
       );
     case "fileChange":
       return renderFileChangeItem(item, rowKey, chatId, expansion, projectRoot, changesReceipts);
+    // `mcpToolDetail` gates the richer rows (#362, #365): a persisted row's
+    // shape changed, and the parser only emits completions on newer builds, so
+    // main stays releasable while this is dark. Same precedent as
+    // `changesReview` gating the receipt card above.
     case "toolUse":
-      return <ToolUseCard name={item.name} detail={item.detail} />;
+      return renderToolUseItem(item, rowKey, expansion);
     case "mcpToolCall":
-      return <McpCard server={item.server} tool={item.tool} />;
+      return renderMcpItem(item, rowKey, expansion);
     case "webSearch":
       return <WebSearchCard query={item.query} />;
     case "plan":

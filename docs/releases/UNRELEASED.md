@@ -125,6 +125,11 @@ reset this file.
   at card scale (`$0.41`, sub-cent as `<$0.01`) instead of the composer's four
   decimals, and the branch reads one step up the text ramp so it is legible as
   an identifier beside `plan M/N` rather than one grey run.
+- MCP and tool rows in chat carry their arguments, result and a real terminal
+  status behind the new default-off `mcpToolDetail` flag (#362, #365): the row
+  resolves in place from WORKING to done or failed instead of staying
+  permanently "running", its chevron opens the full payload, and the toggle now
+  survives scrolling away and back.
 - Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
   started while the re-fold was fetching history had its just-sent message
   wiped from the timeline, because the commit replaced the timeline wholesale

@@ -17,8 +17,14 @@ const DECLARATION = /(?:transition|animation)(?:-timing-function)?\s*:\s*([^;{}]
 // either today — this keeps it that way rather than fixing a live violation
 // (#359). Matched on the quoted string so a `var(--pf-ease-*)` reference still
 // passes through the same carve-out as CSS.
+// `[,:=]` rather than `:` alone so the imperative forms are caught too —
+// `el.style.transition = "..."` and `setProperty("transition", "...")` are as
+// easy to reach for as the JSX style object. Interpolated values
+// (`` `opacity 1s ${CURVE}` ``) still evade: a regex gate cannot chase
+// dataflow, and that is a stated limit rather than a gap worth pretending to
+// close.
 const TS_DECLARATION =
-  /(?:transition|animation|animationTimingFunction|transitionTimingFunction|easing)\s*:\s*(`[^`]*`|"[^"]*"|'[^']*')/gi;
+  /(?:transition|animation|animationTimingFunction|transitionTimingFunction|easing)["']?\s*[,:=]\s*(`[^`]*`|"[^"]*"|'[^']*')/gi;
 const VAR_REFERENCE = /var\(\s*--[a-zA-Z0-9-]+\s*(?:,[^()]*)?\)/gi;
 const RAW_EASING = /\b(?:cubic-bezier|ease-in-out|ease-in|ease-out|ease\b|linear(?=\s*\())/i;
 

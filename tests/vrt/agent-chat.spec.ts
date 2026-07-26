@@ -211,6 +211,8 @@ test("agent chat tool-run density keeps a burst tighter than its prose boundarie
     maxDiffPixelRatio: 0.025,
     animations: "disabled",
   });
+});
+
 // #372: every disclosure row in the transcript animates the same way. Before
 // this, only THINKING used <Collapse>; CMD/TOOL/MCP/WEB hard-unmounted with
 // <Show>, so the body popped into existence and everything below snapped down,
@@ -237,6 +239,12 @@ test("agent chat: a command row's disclosure rotates one chevron and carries the
   await expect(commandRow).not.toHaveClass(/pf-chat-line--open/);
   await expect(commandRow.locator(".pf-chat-line-body")).toHaveCount(0);
   const closedTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
+  // The disclosure frame mounts even while closed, so a flex `gap` on the row
+  // would apply to it at zero height and silently pad every compact row
+  // (measured 29px -> 33px before that gap moved inside the body). The
+  // virtualizer's COMPACT_COMMAND_PX estimate is calibrated on this number.
+  const closedHeight = await commandRow.evaluate((el) => el.getBoundingClientRect().height);
+  expect(closedHeight).toBeLessThanOrEqual(32);
 
   await toggle.click();
 
@@ -253,6 +261,15 @@ test("agent chat: a command row's disclosure rotates one chevron and carries the
   await expect(frame).toHaveCount(1);
   const transition = await frame.evaluate((el) => getComputedStyle(el).transitionProperty);
   expect(transition).toContain("grid-template-rows");
+
+  // The chevron must TRANSITION, not merely end up rotated — without this a
+  // deleted transition rule leaves every other assertion green, since a
+  // chevron with no transition also reports 0s under reduced motion.
+  const chevronTransition = await chevron.evaluate(
+    (el) => getComputedStyle(el).transitionProperty,
+  );
+  expect(chevronTransition).toContain("transform");
+
 
   await toggle.click();
   await expect(commandRow).not.toHaveClass(/pf-chat-line--open/);

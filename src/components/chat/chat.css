@@ -689,7 +689,12 @@
 .pf-chat-line {
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-xs);
+  /* No `gap` here. `Disclosure` mounts its frame unconditionally, so a CLOSED
+     row now has a second (zero-height) flex child — and flex gap applies
+     between items regardless of their height, which silently added 4px to
+     every compact row (measured 29px -> 33px) and undercut the row-height
+     constants in chatTimelineVirtual.ts. The open-state spacing lives inside
+     the collapsing body instead, where it animates with it. */
   border-radius: var(--pf-radius-sm);
   background: var(--pf-item-fill);
   min-width: 0;
@@ -793,7 +798,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-xs);
-  padding: 0 var(--pf-space-sm) var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
 
 /* ---- Changes receipt (#231 PR3): one compact card per completed turn.

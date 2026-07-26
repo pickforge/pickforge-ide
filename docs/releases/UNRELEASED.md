@@ -119,6 +119,11 @@ reset this file.
   scrollable "view all" dialog. Active runs are deliberately never capped: run
   ids sort by start time, so a strict newest-N page would hide a long-running
   run — exactly the one still worth acting on.
+- MCP and tool rows in chat carry their arguments, result and a real terminal
+  status behind the new default-off `mcpToolDetail` flag (#362, #365): the row
+  resolves in place from WORKING to done or failed instead of staying
+  permanently "running", its chevron opens the full payload, and the toggle now
+  survives scrolling away and back.
 - Fixed a race in the default-off `changesReview` re-fold (#368): a turn that
   started while the re-fold was fetching history had its just-sent message
   wiped from the timeline, because the commit replaced the timeline wholesale

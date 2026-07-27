@@ -197,3 +197,37 @@ now live in:
   round-trip and Tier B build/install/launch smoke.
 - **#37 Web** — `tests/e2e/run.ts` (device-free: `npm run dev` + reachability
   probe; always runs).
+
+## Live Claude bridge tier (#364)
+
+```sh
+PICKFORGE_E2E_CLAUDE=1 bun run e2e:claude
+```
+
+Drives the **real** `claude` binary through the **real** bridge, forces an
+`AskUserQuestion`, answers it through the same `approve` op the GUI uses, and
+asserts the tool's own result text.
+
+This exists because nothing else in the repo reaches the CLI: the bridge unit
+tests mock the SDK and put a zero-byte `claude` on PATH, the Rust tests spawn
+`#!/bin/sh` fakes, VRT runs against `tauriMock.ts`, and `bun run e2e` mocks
+`invoke`. The contract that matters — that returning
+`{behavior: "allow", updatedInput: {...input, answers}}` makes the tool report
+answers rather than *"The user did not answer the questions."* — could only be
+asserted against a reading of the SDK, never against the SDK itself.
+
+Verified load-bearing: disabling the answers branch in
+`permissionResultForDecision` makes this fail with the real refusal string.
+
+- Unset gate → SKIP, exit 0. CI stays green without credentials.
+- Gate set but `claude` missing → FAIL FAST. A silent pass would be worse than
+  no test.
+- Costs a real API call; pinned to a cheap model
+  (`PICKFORGE_E2E_CLAUDE_MODEL`, default `haiku`) per the repo's dogfooding
+  convention.
+- `PICKFORGE_E2E_CLAUDE_DEBUG=1` prints the request id it answers.
+
+**Note on the turn-end signal:** wait for a raw `result` message, not
+`turnClosed`. The bridge emits `turnClosed` only when the whole query iterator
+ends, because a session stays open for follow-up sends — waiting on it hangs
+until the timeout even though the turn succeeded.

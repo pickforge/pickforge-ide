@@ -113,6 +113,12 @@ reset this file.
   permissions are still bypassed only when the user explicitly selects bypass
   mode.
 - Removed the `piAgents` flag after Pi native chat shipped default-on in v0.2.0.
+- A `pickforge-lanes` MCP call in chat now expands to the run's lane cards —
+  the same cards the Settings panel shows, not a second copy (#362 PR 3, behind
+  the default-off `mcpToolDetail` flag). Lanes are live while the call is in
+  flight, so watching a `lanes_wait` is worth something, and frozen once it
+  finishes so a replayed message does not rewrite itself from a run that has
+  moved on. Abandon stays in Settings.
 - The working row now names what is running and how long it has been running,
   behind the new default-off `turnActivity` flag (#365). During a long MCP call
   the chat used to show a bare "Working" dot with no way to tell thinking from

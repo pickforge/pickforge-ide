@@ -3,6 +3,8 @@ import { compactInline, hasHiddenDetail } from "../../lib/chatDisplay";
 import { IconChevronRight } from "../icons";
 import type { ToolCallStatus } from "../../stores/agentChat";
 import { Disclosure, StatusPill, type StatusIntent } from "../ui";
+import { pikitRowIsLive, pikitRunRef } from "../../lib/pikitRunRef";
+import { PiKitRunLanes } from "../pikit/PiKitRunLanes";
 import "./chat.css";
 
 const STATUS_INTENT: Record<ToolCallStatus, StatusIntent> = {
@@ -23,7 +25,15 @@ export function McpCard(props: {
   const open = () => props.open ?? localOpen();
   const toggle = () => (props.onToggle ? props.onToggle() : setLocalOpen((v) => !v));
   const detail = () => props.detail ?? "";
-  const canExpand = () => hasHiddenDetail(detail(), 120);
+  const row = () => ({
+    server: props.server,
+    tool: props.tool,
+    detail: props.detail,
+    status: props.status,
+  });
+  const runRef = () => pikitRunRef(row());
+  const live = () => pikitRowIsLive(row());
+  const canExpand = () => hasHiddenDetail(detail(), 120) || runRef() !== null;
 
   return (
     <div class="pf-chat-line" classList={{ "pf-chat-line--open": open() }}>
@@ -64,11 +74,18 @@ export function McpCard(props: {
         </Show>
       </button>
       <Disclosure open={open()}>
-        <Show when={detail()}>
-          <div class="pf-chat-line-body">
+        <div class="pf-chat-line-body">
+          {/* A pickforge-lanes call renders the run's lanes the way Settings
+              does — same component, so the two cannot drift (#362). Live while
+              the call is in flight, frozen afterwards, so a replayed row does
+              not quietly rewrite itself from a run that has moved on. */}
+          <Show when={runRef()}>
+            {(run) => <PiKitRunLanes run={run()} live={live()} />}
+          </Show>
+          <Show when={detail()}>
             <pre class="pf-chat-tail">{detail()}</pre>
-          </div>
-        </Show>
+          </Show>
+        </div>
       </Disclosure>
     </div>
   );

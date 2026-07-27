@@ -6,8 +6,9 @@
 // token usage.
 import { For, Show, type JSX, createSignal, onCleanup, onMount } from "solid-js";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { Disclosure, ForgeEmptyState, MonoEyebrow } from "../ui";
-import { IconChevronRight, IconGrid, IconRefresh } from "../icons";
+import { RunCard, type AbandonTarget } from "./PiKitRunCard";
+import { ForgeEmptyState, MonoEyebrow } from "../ui";
+import { IconGrid, IconRefresh } from "../icons";
 import type { PiKitRunEntry } from "../../lib/process";
 import {
   loadAllPiKitRuns,
@@ -20,143 +21,11 @@ import {
   startPiKitLanesPolling,
   stopPiKitLanesPolling,
 } from "../../stores/pikitLanes";
-import {
-  abandonDisabledReason,
-  abandonHint,
-  formatCost,
-  formatDuration,
-  formatTokens,
-  laneDetail,
-  laneStatusTone,
-  orphanNote,
-  runLabel,
-  runStatusTone,
-} from "./pikitLaneDisplay";
 import "./pikitLanes.css";
-
-interface AbandonTarget {
-  run: string;
-  lane: string | null;
-  label: string;
-}
 
 interface Notice {
   text: string;
   error: boolean;
-}
-
-// eslint-disable-next-line max-lines-per-function -- single cohesive panel; see codebase-design note in PR.
-function RunCard(props: {
-  entry: PiKitRunEntry;
-  onAbandon: (target: AbandonTarget) => void;
-}): JSX.Element {
-  const [open, setOpen] = createSignal(false);
-  const entry = () => props.entry;
-  const status = () => entry().status;
-  const runAbandonReason = () => abandonDisabledReason(entry());
-  const runAbandonHint = () => abandonHint(entry());
-
-  return (
-    <section
-      class="pf-pikit-card"
-      classList={{ "pf-pikit-card--open": open() }}
-      aria-label="pi-kit run"
-    >
-      <button
-        type="button"
-        class="pf-pikit-summary"
-        aria-expanded={open()}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span class="pf-pikit-summary-chevron" aria-hidden="true">
-          <IconChevronRight size={12} />
-        </span>
-        <span class="pf-pikit-summary-title">
-          <IconGrid size={13} />
-          <span>{entry().run}</span>
-        </span>
-        <span class="pf-pikit-summary-meta">
-          <Show when={status()}>
-            {(s) => (
-              <>
-                {s().lanes.length} lane{s().lanes.length === 1 ? "" : "s"} · {formatCost(s().totals.cost)} ·{" "}
-                {formatDuration(s().durationMs)}
-              </>
-            )}
-          </Show>
-        </span>
-        <span class="pf-pikit-status" style={{ "--pf-pikit-status": runStatusTone(entry()) }}>
-          <span class="pf-pikit-dot" />
-          {runLabel(entry())}
-        </span>
-      </button>
-      <Disclosure open={open()}>
-        <div class="pf-pikit-body">
-          <Show when={status()} fallback={<div class="pf-pikit-empty">No status details available.</div>}>
-            {(s) => (
-              <div class="pf-pikit-lanes">
-                <For each={s().lanes}>
-                  {(lane) => {
-                    const reason = () => abandonDisabledReason(entry(), lane);
-                    const hint = () => abandonHint(entry());
-                    return (
-                      <div class="pf-pikit-lane">
-                        <span
-                          class="pf-pikit-lane-status"
-                          style={{ "--pf-pikit-status": laneStatusTone(lane.state) }}
-                        >
-                          <span class="pf-pikit-dot" />
-                          {lane.state}
-                        </span>
-                        <span class="pf-pikit-lane-main">
-                          <span class="pf-pikit-lane-title">{lane.lane}</span>
-                          <span class="pf-pikit-lane-meta">
-                            {lane.model} · {lane.effort} · {formatTokens(lane.tokensIn)}/
-                            {formatTokens(lane.tokensOut)} tok · {formatCost(lane.cost)} ·{" "}
-                            {formatDuration(lane.durationMs)}
-                          </span>
-                          <span class="pf-pikit-lane-detail">{laneDetail(lane)}</span>
-                        </span>
-                        <button
-                          type="button"
-                          class="pf-text-btn pf-pikit-abandon"
-                          disabled={reason() !== null}
-                          title={reason() ?? hint() ?? "Request that pi-kit abandon this lane"}
-                          onClick={() =>
-                            props.onAbandon({ run: entry().run, lane: lane.lane, label: lane.lane })
-                          }
-                        >
-                          Abandon
-                        </button>
-                      </div>
-                    );
-                  }}
-                </For>
-              </div>
-            )}
-          </Show>
-          <Show when={orphanNote(entry())}>
-            {(note) => <div class="pf-pikit-orphan-note">{note()}</div>}
-          </Show>
-          <Show when={status() && status()!.lanes.length > 0}>
-            <button
-              type="button"
-              class="pf-text-btn"
-              disabled={runAbandonReason() !== null}
-              title={
-                runAbandonReason() ??
-                runAbandonHint() ??
-                "Request that pi-kit abandon every active lane in this run"
-              }
-              onClick={() => props.onAbandon({ run: entry().run, lane: null, label: "all lanes" })}
-            >
-              Abandon all lanes
-            </button>
-          </Show>
-        </div>
-      </Disclosure>
-    </section>
-  );
 }
 
 /** The complete run list, behind the panel's "view all" affordance. Reuses

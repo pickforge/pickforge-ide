@@ -236,3 +236,12 @@
   overflow-y: auto;
   min-height: 0;
 }
+
+/* A run's lanes rendered inside a chat's MCP row (#362). The card keeps its own
+   frame; this just stops it inheriting the chat body's monospace tail styling
+   and gives it room from the argument summary below it. */
+.pf-pikit-inline {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--pf-space-sm);
+}

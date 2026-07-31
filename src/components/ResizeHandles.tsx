@@ -1,10 +1,11 @@
 import { For } from "solid-js";
-import { isTauri } from "../lib/platform";
+import { hostPlatform, isTauri } from "../lib/platform";
 
 // A frameless window (decorations: false) loses the OS resize border and its
 // resize cursors. These thin edge + corner zones restore the affordance: each
 // shows the matching resize cursor and starts a native resize-drag on press,
-// so the window resizes exactly like a decorated one. Rendered only under Tauri.
+// so the window resizes exactly like a decorated one. Rendered only under Tauri,
+// and never on macOS — the window is decorated there and resizes natively.
 const HANDLES = [
   { dir: "North", cls: "n" },
   { dir: "South", cls: "s" },
@@ -17,7 +18,7 @@ const HANDLES = [
 ] as const;
 
 export function ResizeHandles() {
-  if (!isTauri()) return null;
+  if (!isTauri() || hostPlatform() === "macos") return null;
 
   const start = (dir: string) => async (e: MouseEvent) => {
     if (e.button !== 0) return;

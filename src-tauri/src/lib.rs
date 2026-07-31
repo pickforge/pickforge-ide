@@ -24,6 +24,7 @@ mod test_support;
 mod voice_commands;
 mod vm_commands;
 mod watch_commands;
+mod window_commands;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -243,6 +244,10 @@ fn setup_app(
     let _ = app
         .asset_protocol_scope()
         .allow_directory(agent_chat_commands::stash_image_dir(), true);
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("main") {
+        window_commands::position_at_default(&window);
+    }
     Ok(())
 }
 
@@ -414,6 +419,8 @@ pub fn run() {
             voice_commands::voice_speak_cancel,
             telemetry_commands::telemetry_get,
             telemetry_commands::telemetry_set,
+            #[cfg(target_os = "macos")]
+            window_commands::set_traffic_light_bar_height,
             #[cfg(target_os = "linux")]
             graphics_commands::linux_graphics_get,
             #[cfg(target_os = "linux")]

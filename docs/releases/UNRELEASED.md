@@ -9,7 +9,8 @@ reset this file.
 - The macOS window now uses native chrome: system rounded corners, shadow,
   and traffic lights via a titlebar overlay (the custom window-control
   buttons and edge resize handles are macOS-native now). Windows/Linux keep
-  the existing frameless chrome.
+  the existing frameless chrome. The traffic lights remain centered through
+  resizing, fullscreen transitions, and interface zoom changes.
 - The Codex agent-model picker now merges live-discovered models (`codex
   debug models --bundled`) with the curated static table, so new Codex
   releases can show up without a PickForge update. Curated entries keep

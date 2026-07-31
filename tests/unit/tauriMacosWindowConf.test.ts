@@ -3,9 +3,10 @@
 // This guards against drift: a field edited in the base config but forgotten in
 // the macOS overlay would silently not apply on macOS.
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-const MACOS_ONLY_FIELDS = ["decorations", "titleBarStyle", "hiddenTitle", "trafficLightPosition"];
+const MACOS_ONLY_FIELDS = ["decorations", "titleBarStyle", "hiddenTitle"];
 
 function mainWindow(path: string): Record<string, unknown> {
   const conf = JSON.parse(readFileSync(path, "utf8")) as {
@@ -28,5 +29,18 @@ describe("tauri.macos.conf.json window entry", () => {
     expect(macos.decorations).toBe(true);
     expect(macos.titleBarStyle).toBe("Overlay");
     expect(macos.hiddenTitle).toBe(true);
+    expect(macos.trafficLightPosition).toBeUndefined();
+  });
+
+  it("keeps the native startup height aligned with the titlebar token", () => {
+    const tokensPath = createRequire(import.meta.url).resolve("@pickforge/brand/tokens.css");
+    const token = readFileSync(tokensPath, "utf8").match(/--pf-titlebar-h:\s*(\d+)px/);
+    const rust = readFileSync("src-tauri/src/window_commands.rs", "utf8");
+    const smoke = readFileSync("tests/macos/trafficLightAlignment.applescript", "utf8");
+
+    const barHeight = Number(token?.[1]);
+    expect(barHeight).toBeGreaterThan(0);
+    expect(rust).toContain(`const DEFAULT_BAR_HEIGHT: f64 = ${barHeight}.0;`);
+    expect(smoke).toContain(`set baseTitlebarHeight to ${barHeight}`);
   });
 });

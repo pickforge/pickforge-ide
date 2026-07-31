@@ -55,7 +55,10 @@ migrated away. See `plans/rust-migration/`.)
   That file grants Tauri core/plugin permissions; app-defined commands are
   reachable without ACL entries, and adding one would switch the app to
   default-deny and break every command not migrated at the same time.
-  `tauri.conf.json` is the app manifest.
+  `tauri.conf.json` is the app manifest. Platform overlays
+  (`tauri.macos.conf.json`) merge as RFC 7396 — arrays are replaced wholesale,
+  so an overlaid `windows` entry must restate every base field; a unit test
+  pins the macOS entry to the base one.
 - `src/` — SolidJS frontend.
   - `screens/` — `Onboarding`, `Settings`, `History`, `RunHistory`, and
     `workbench/` (Workbench, InspectorPanel, ProjectsChatsPanel, FileExplorer).

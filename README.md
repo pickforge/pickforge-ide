@@ -42,8 +42,11 @@ Requires a [Rust toolchain](https://rustup.rs) and [Bun](https://bun.sh) 1.2+. P
 on [Tauri v2](https://tauri.app) — a Rust core (`crates/pickforge-core`) behind a
 Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 
-The window uses custom chrome (`decorations: false`) — one draggable title bar
-with the brand, nav, status, and min/maximize/close controls. On Linux/Wayland,
+The window uses custom chrome (`decorations: false`) on Windows/Linux — one
+draggable title bar with the brand, nav, status, and min/maximize/close
+controls. macOS is decorated instead (`src-tauri/tauri.macos.conf.json`: overlay
+title bar, hidden title), so the system draws the rounded corners, shadow, and
+traffic lights over the same title bar content. On Linux/Wayland,
 the window app_id is forced to the bundle identifier `dev.pickforge.app` at
 startup via `gtk::glib::set_prgname` in `src-tauri/src/lib.rs` (`enableGTKAppId`
 alone doesn't set the xdg_toplevel app_id under WebKitGTK — GTK derives it from

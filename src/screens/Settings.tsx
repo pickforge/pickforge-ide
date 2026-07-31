@@ -2157,27 +2157,24 @@ const AppearanceContent = () => (
         <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
       </div>
     </div>
-    <div class="pf-settings-row">
-      <span class="pf-settings-label">
-        Window controls
-        <Show when={hostPlatform() === "macos"}>
-          <span class="pf-settings-hint-inline">macOS · always left</span>
-        </Show>
-      </span>
-      <div class="pf-seg" classList={{ "pf-seg--disabled": hostPlatform() === "macos" }}>
-        <For each={["auto", "left", "right"] as ControlsSide[]}>
-          {(s) => (
-            <button
-              classList={{ active: windowControlsSide() === s }}
-              disabled={hostPlatform() === "macos"}
-              onClick={() => setWindowControlsSide(s)}
-            >
-              {s === "auto" ? "Auto" : s === "left" ? "Left" : "Right"}
-            </button>
-          )}
-        </For>
+    {/* macOS has native traffic lights — there are no app-drawn controls to place. */}
+    <Show when={hostPlatform() !== "macos"}>
+      <div class="pf-settings-row">
+        <span class="pf-settings-label">Window controls</span>
+        <div class="pf-seg">
+          <For each={["auto", "left", "right"] as ControlsSide[]}>
+            {(s) => (
+              <button
+                classList={{ active: windowControlsSide() === s }}
+                onClick={() => setWindowControlsSide(s)}
+              >
+                {s === "auto" ? "Auto" : s === "left" ? "Left" : "Right"}
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-    </div>
+    </Show>
   </>
 );
 

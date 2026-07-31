@@ -13,8 +13,9 @@ async function appWindow() {
 
 export function WindowControls() {
   // The web build (and Playwright VRT) has no window chrome — keep it identical
-  // to today by rendering nothing.
-  if (hostPlatform() === "web") return null;
+  // to today by rendering nothing. macOS uses the native traffic lights (the
+  // window is decorated with an overlay titlebar there), so no custom controls.
+  if (hostPlatform() === "web" || hostPlatform() === "macos") return null;
 
   const [maximized, setMaximized] = createSignal(false);
 
@@ -104,18 +105,11 @@ export function WindowControls() {
     </button>
   );
 
-  // macOS renders controls on the LEFT and follows the traffic-light action
-  // order close → minimize → maximize (left→right). Windows/Linux render on the
-  // right with minimize → maximize → close.
-  const isMac = hostPlatform() === "macos";
-
   return (
     <div class="pf-winctl" role="group" aria-label="Window controls">
-      <Show when={isMac} fallback={<><Minimize /><Maximize /><Close /></>}>
-        <Close />
-        <Minimize />
-        <Maximize />
-      </Show>
+      <Minimize />
+      <Maximize />
+      <Close />
     </div>
   );
 }

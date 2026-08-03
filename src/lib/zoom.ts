@@ -3,6 +3,7 @@
 // zoom raises the effective device-pixel-ratio and re-rasterizes everything
 // (UI + terminal) crisply. Ctrl/Cmd +/-/0, 0.25 steps, persisted.
 import { createSignal } from "solid-js";
+import { applyTrafficLightBarHeight } from "./trafficLights";
 
 const KEY = "pickforge.zoom";
 const MIN = 0.5;
@@ -39,11 +40,16 @@ async function applyToWebview(z: number): Promise<void> {
   }
 }
 
+async function applyInterfaceZoom(z: number): Promise<void> {
+  await applyToWebview(z);
+  await applyTrafficLightBarHeight(z);
+}
+
 function commit(z: number): void {
   const c = clampStep(z);
   setZoom(c);
   localStorage.setItem(KEY, String(c));
-  void applyToWebview(c);
+  void applyInterfaceZoom(c);
 }
 
 export function zoomIn(): void {
@@ -58,7 +64,7 @@ export function zoomReset(): void {
 
 /** Re-apply the persisted zoom to the webview (call once the app is mounted). */
 export function applyPersistedZoom(): void {
-  void applyToWebview(zoom());
+  void applyInterfaceZoom(zoom());
 }
 
 /** True if a keydown is a zoom shortcut; performs the zoom and returns true. */

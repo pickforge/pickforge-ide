@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "repository": "pickforge/pickforge",
+  "repository": "pickforge/pickforge-ide",
   "appName": "PickForge",
   "tauriConfig": "src-tauri/tauri.conf.json",
   "collect": {

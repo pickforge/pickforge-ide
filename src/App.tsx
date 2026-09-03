@@ -8,6 +8,7 @@ import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { startStudioUpdateCheck, studioUpdateState } from "./stores/studioUpdate";
 import { activeUpdateInfo } from "./lib/studioUpdateView";
 import { StudioUpdateDialog } from "./components/StudioUpdateDialog";
+import { RetirementNotice } from "./components/RetirementNotice";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WindowControls } from "./components/WindowControls";
 import { ResizeHandles } from "./components/ResizeHandles";
@@ -298,6 +299,7 @@ export function App() {
       {/* Drag starts only after the pointer moves so the second primary press
           remains available to toggle maximize before Tauri takes over. */}
       <AppTitlebar brandOnRight={brandOnRight} />
+      <RetirementNotice />
 
       <div class="pf-body">
         {/* Workbench stays mounted (display toggled) so its terminals/shells

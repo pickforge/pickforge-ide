@@ -45,7 +45,6 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version="${RELEASE_TAG#v}"
-          release_notes="Download the installer for your platform below. PickForge auto-updates from this release."
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; reusing it."
@@ -53,8 +52,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --draft \
               --title "PickForge v${version}" \
-              --notes "$release_notes" \
-              --generate-notes
+              --notes-file docs/releases/v0.2.1.md
           fi
 
   build:
@@ -220,6 +218,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version="${RELEASE_TAG#v}"
+          # The release is cut before the repository rename so v0.2.0 can
+          # complete one final update smoke. RUNBOOK.md regenerates this
+          # manifest with canonical pickforge-ide asset URLs after the rename.
           download_base="https://github.com/pickforge/pickforge/releases/download/${RELEASE_TAG}"
 
           rm -rf release-assets latest.json

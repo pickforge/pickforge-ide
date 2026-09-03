@@ -42,10 +42,10 @@ impl MirrorManager {
         &self,
         serial: &str,
         session: MirrorSession,
-    ) -> Result<Option<MirrorSession>, MirrorSession> {
+    ) -> Result<Option<MirrorSession>, Box<MirrorSession>> {
         let mut sessions = self.0.lock().await;
         if self.is_shutting_down() {
-            return Err(session);
+            return Err(Box::new(session));
         }
         Ok(sessions.insert(serial.to_string(), session))
     }
@@ -106,7 +106,7 @@ pub async fn mirror_start(
         Ok(Some(old)) => stop_session(old).await,
         Ok(None) => {}
         Err(session) => {
-            stop_session(session).await;
+            stop_session(*session).await;
             return Err("mirror manager is shutting down".to_string());
         }
     }
@@ -386,7 +386,7 @@ mod shutdown_tests {
             Err(raced) => raced,
             Ok(_) => panic!("shutdown gate must reject raced session"),
         };
-        stop_session(raced).await;
+        stop_session(*raced).await;
         assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
     }
 }

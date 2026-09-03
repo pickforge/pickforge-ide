@@ -51,10 +51,10 @@ impl OsLogManager {
         &self,
         udid: &str,
         session: OsLogSession,
-    ) -> Result<Option<OsLogSession>, OsLogSession> {
+    ) -> Result<Option<OsLogSession>, Box<OsLogSession>> {
         let mut sessions = self.0.lock().await;
         if self.is_shutting_down() {
-            return Err(session);
+            return Err(Box::new(session));
         }
         Ok(sessions.insert(udid.to_string(), session))
     }
@@ -173,7 +173,7 @@ pub async fn oslog_start(
         Ok(Some(old)) => stop_child(old).await,
         Ok(None) => {}
         Err(session) => {
-            stop_child(session).await;
+            stop_child(*session).await;
             return Err("os_log manager is shutting down".to_string());
         }
     }
@@ -362,7 +362,7 @@ mod tests {
             Err(raced) => raced,
             Ok(_) => panic!("shutdown gate must reject raced session"),
         };
-        stop_child(raced).await;
+        stop_child(*raced).await;
         assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
     }
 }

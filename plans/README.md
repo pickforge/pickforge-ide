@@ -6,6 +6,7 @@ Generated on 2026-06-15. The source-of-truth roadmap is:
 | --- | --- | --- | --- | --- | --- |
 | 001 | Make PickForge a multi-framework local agent suite | P1 | XL | — | WIP — Milestone 1 (configurable context storage) complete; suite green (858), Codex-reviewed. Milestones 2–10 remain. |
 | 002 | Agent chat GUI (Claude Code + Codex, structured chat) | P1 | XL | — | Draft — research done (protocols verified against installed CLIs), v1–v3 phased. |
+| 003 | Suite monetization | P2 | M | 002 | Source of truth - one Forge Pass; official builds and updates stay free; PickArena stays unpaywalled. |
 
 Update `plans/001-multi-framework-agent-suite-roadmap.md` as tasks land.
 

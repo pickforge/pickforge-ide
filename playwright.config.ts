@@ -17,6 +17,19 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:1420",
     viewport: { width: 1280, height: 820 },
+    // Existing visual baselines represent the steady state after the one-time
+    // retirement notice. screens.spec.ts separately proves its first launch.
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: "http://localhost:1420",
+          localStorage: [
+            { name: "pickforge.retirementNoticeDismissed.v0.2.1", value: "true" },
+          ],
+        },
+      ],
+    },
   },
   // Baselines are regenerated on the CI runner (update-vrt-baselines.yml) so PR
   // runs diff CI-rendered pixels against CI-rendered pixels. This tolerance is

@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> **PickForge IDE was retired on September 3, 2026.** It is replaced by the new
+> [Pickforge](https://pickforge.dev). [v0.2.1](https://github.com/pickforge/pickforge-ide/releases/tag/v0.2.1)
+> is the final release. Existing installs keep working offline, but receive no
+> further updates. This repository is archived and read-only.
+
 <p align="center">
   <img src="assets/branding/pickforge-lockup-horizontal.svg" alt="PickForge" width="560">
 </p>

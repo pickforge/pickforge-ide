@@ -45,10 +45,10 @@ impl LogcatManager {
         &self,
         serial: &str,
         session: LogcatSession,
-    ) -> Result<Option<LogcatSession>, LogcatSession> {
+    ) -> Result<Option<LogcatSession>, Box<LogcatSession>> {
         let mut sessions = self.0.lock().await;
         if self.is_shutting_down() {
-            return Err(session);
+            return Err(Box::new(session));
         }
         Ok(sessions.insert(serial.to_string(), session))
     }
@@ -128,7 +128,7 @@ pub async fn logcat_start(
         Ok(Some(old)) => stop_child(old).await,
         Ok(None) => {}
         Err(session) => {
-            stop_child(session).await;
+            stop_child(*session).await;
             return Err("logcat manager is shutting down".to_string());
         }
     }
@@ -315,7 +315,7 @@ mod tests {
             Err(raced) => raced,
             Ok(_) => panic!("shutdown gate must reject raced session"),
         };
-        stop_child(raced).await;
+        stop_child(*raced).await;
         assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
     }
 }
